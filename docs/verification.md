@@ -54,6 +54,27 @@ touch handlers, not native iOS/Safari. Scrolled-up, following, and mobile screen
 are retained in `test-results/conversation-*.png` and
 `test-results/mobile-conversation-reading.png`.
 
+Answer checks cover Markdown structure, unfinished fences, escaped HTML, image
+placeholders without remote requests, and the shared HTTPS URL policy. Browser
+checks compare copied responses and follow-up context to the original Markdown,
+verify code-only copying, failures, empty fences, partial answers, 320px horizontal
+code scrolling, and asynchronous copy feedback after command changes. Evidence:
+`test-results/formatted-answer.png`, `mobile-formatted-answer.png`, and
+`narrow-code-answer.png`.
+
+The Electron test focuses its exact window on the private compositor, activates
+Copy command using `wtype`, then reads the private clipboard with `wl-paste`.
+Native input is necessary to supply a Wayland selection serial. It also checks
+that renderer clipboard reads remain denied; `electron-copy.png` captures the
+result. Only the trusted local main frame can request clipboard writes. Tests do
+not launch a real external browser or validate macOS clipboard behavior.
+
+Renderer behavior follows [react-markdown](https://github.com/remarkjs/react-markdown)
+with remark-gfm and no raw-HTML plugin. Permission names and callbacks follow
+[Electron session documentation](https://www.electronjs.org/docs/latest/api/session).
+Completed answers are memoized; active answers still reparse on each chunk, so
+very large output rendering performance has not been benchmarked.
+
 ## Isolated UI runner
 
 Start the frontend, then run `pnpm test:ui`. `scripts/test-ui.py`:
@@ -97,4 +118,4 @@ Stop the fixture, Java, and web servers with Ctrl+C when finished. The test runn
 - Distributable installers, signing, updates, and a bundled JRE remain future work.
 - No inference benchmarks or actual-model generation were run during setup.
 - No internet sharing/authentication or persistent database is present.
-- Production CSP allows inline scripts for Start's hydration bootstrap. The Electron renderer has no Node bridge and denies permission requests.
+- Production CSP allows inline scripts for Start's hydration bootstrap. The Electron renderer has no Node bridge. It allows clipboard writes only from the trusted local main frame; clipboard reads and other permission requests are denied.

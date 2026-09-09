@@ -18,14 +18,21 @@ if (process.env.HOSTAI_SOFTWARE_RENDERING === '1') {
 // npm's development binary has no root-owned SUID helper. Use Chromium's
 // unprivileged user-namespace sandbox on Linux; renderer sandboxing stays on.
 if (process.platform === 'linux' && !app.isPackaged) app.commandLine.appendSwitch('disable-setuid-sandbox')
-const allowedExternalHosts = new Set(['docs.ollama.com', 'ollama.com', 'github.com'])
 let mainWindow
 
-function openDocumentation(value) {
+async function openLink(value) {
   try {
-    const url = new URL(value)
-    if (url.protocol === 'https:' && allowedExternalHosts.has(url.hostname) && !url.username && !url.password) void shell.openExternal(url.href)
-  } catch { /* Ignore invalid navigation. */ }
+    const { externalUrl } = await import('../shared/external-url.mjs')
+    const url = externalUrl(value)
+    if (url) await shell.openExternal(url)
+  } catch { /* Invalid URLs and unavailable system browsers leave the workspace open. */ }
+}
+function canWriteClipboard(contents, permission, requestingUrl, isMainFrame) {
+  try {
+    return contents === mainWindow.webContents && permission === 'clipboard-sanitized-write' &&
+      isMainFrame === true && new URL(requestingUrl).origin === address.origin &&
+      new URL(contents.getURL()).origin === address.origin
+  } catch { return false }
 }
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -33,11 +40,15 @@ async function createWindow() {
     backgroundColor: '#f5f7fa', show: true,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false, spellcheck: false },
   })
-  mainWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-  mainWindow.webContents.session.setPermissionCheckHandler(() => false)
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => { openDocumentation(url); return { action: 'deny' } })
+  mainWindow.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) =>
+    callback(canWriteClipboard(contents, permission, details.requestingUrl, details.isMainFrame)))
+  mainWindow.webContents.session.setPermissionCheckHandler((contents, permission, origin, details) =>
+    canWriteClipboard(contents, permission, origin, details.isMainFrame))
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => { void openLink(url); return { action: 'deny' } })
   mainWindow.webContents.on('will-navigate', (event, value) => {
-    if (new URL(value).origin !== address.origin) { event.preventDefault(); openDocumentation(value) }
+    try {
+      if (new URL(value).origin !== address.origin) { event.preventDefault(); void openLink(value) }
+    } catch { event.preventDefault() }
   })
   mainWindow.webContents.on('will-attach-webview', event => event.preventDefault())
   await mainWindow.loadURL(address.href)

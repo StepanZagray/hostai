@@ -13,11 +13,21 @@ import {
   User,
 } from "lucide-react";
 import { css } from "../../styled-system/css";
-import { Badge, Button, CodeBlock, PageHeading, button, muted, panel } from "../components/ui";
+import {
+  Badge,
+  Button,
+  CodeBlock,
+  CopyButton,
+  PageHeading,
+  button,
+  muted,
+  panel,
+} from "../components/ui";
 import { useHost } from "../lib/host-context";
 import { readChatStream } from "../lib/api";
 import { chatUnavailableReason } from "../lib/model-admission";
 import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
+import { Answer } from "../components/answer";
 import { useConversationScroll } from "../lib/use-conversation-scroll";
 
 export const Route = createFileRoute("/playground")({
@@ -286,20 +296,38 @@ function Playground() {
                         <h3 className={css({ fontWeight: 750, fontSize: "xs", mb: "2" })}>
                           {message.role === "user" ? "You" : message.turn.model}
                         </h3>
-                        <p
-                          className={css({
-                            whiteSpace: "pre-wrap",
-                            overflowWrap: "anywhere",
-                            fontSize: "sm",
-                            lineHeight: 1.9,
-                          })}
-                        >
-                          {message.content.trim()
-                            ? message.content
-                            : message.turn.state === "streaming"
-                              ? "Thinking…"
-                              : "No response text returned."}
-                        </p>
+                        {message.role === "assistant" && message.content.trim() ? (
+                          <Answer text={message.content} />
+                        ) : (
+                          <p
+                            className={css({
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                              fontSize: "sm",
+                              lineHeight: 1.9,
+                            })}
+                          >
+                            {message.content.trim()
+                              ? message.content
+                              : message.turn.state === "streaming"
+                                ? "Thinking…"
+                                : "No response text returned."}
+                          </p>
+                        )}
+                        {message.role === "assistant" && message.content.trim() && (
+                          <div className={css({ mt: "2" })}>
+                            <CopyButton
+                              text={message.content}
+                              disabled={message.turn.state === "streaming"}
+                              label={
+                                message.turn.state === "failed" ||
+                                message.turn.state === "cancelled"
+                                  ? "Copy partial response"
+                                  : "Copy response"
+                              }
+                            />
+                          </div>
+                        )}
                         {message.role === "user" && (message.turn.omittedTurns ?? 0) > 0 && (
                           <p className={css({ mt: "2", fontSize: "xs", color: "muted" })}>
                             Sent with {message.turn.omittedTurns} earlier{" "}

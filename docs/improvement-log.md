@@ -183,8 +183,46 @@ input/reflow. Desktop and mobile states were visually inspected. Java integratio
 was skipped because gateway/proxy behavior did not change; no actual model ran.
 Touch coverage exercises event handling in Chromium, not a native mobile browser.
 
+## Readable answers and copying
+
+With Opus 5 High advice and review, assistant answers now render Markdown and GFM
+lists/tables with accessible, horizontally scrollable code blocks. Original
+response text remains the source for whole-response copying and outgoing context.
+Unfinished fences render naturally; failed/cancelled answers retain the adjacent
+context exclusion notice and expose Copy partial response. Empty code cannot be
+copied. Copy status belongs to its source text and ignores stale async results.
+
+Images become alt-text placeholders without a request. Raw HTML is escaped, and
+only credential-free HTTPS links activate. Browser and desktop share this URL
+policy; desktop now supports answer references beyond the previous three docs
+hosts. Invalid navigation and unavailable system browsers cannot throw out of the
+handler. External browser handoff itself was not exercised.
+
+The review caught duplicated inactive autolinks and empty-code copying. Its claim
+that raw HTML vanished was contradicted by the installed renderer's raw-to-text
+transform and a regression test; no additional HTML plugin was added. Plain-text
+soft line breaks stay visible. Completed answer parsing is memoized, but active
+answers still parse per chunk; no large-output performance claim is made.
+
+Isolated desktop verification exposed the existing blanket clipboard-write deny.
+Both permission handlers now allow only sanitized writes from the trusted main
+frame and local origin. A native key event supplies the private Wayland clipboard
+serial, and wl-paste checks the actual copied command. Reads remain denied. No
+live desktop or clipboard was accessed. New runner prerequisites are wtype and
+wl-clipboard.
+
+Pinned dependencies are react-markdown 10.1.0 and remark-gfm 4.0.1. The test glob
+now includes TSX so renderer unit tests actually run; Panda excludes those tests.
+The existing Vite-plus alias still causes pnpm's peer checker to report Vite
+version mismatches in Vitest/mocker; this predates the Markdown dependencies.
+
+Validation: 80 web unit tests, type checking/lint/formatting, production build,
+and 34 isolated UI/Electron scenarios passed. Desktop, formatted answers, and
+mobile/code overflow states were visually inspected. The Java integration case
+was skipped because gateway behavior did not change. No actual model ran;
+macOS clipboard and external browser launch remain unverified.
+
 ## Next candidates to investigate
 
-- Answers currently display as plain text even when the user requests code.
-  Inspect readable formatting and copying of generated output next, preserving
-  the distinction between completed and interrupted responses.
+- Large streamed answers still reparse on each chunk. Measure realistic bounded
+  fixture output before deciding whether rendering needs scheduling or throttling.

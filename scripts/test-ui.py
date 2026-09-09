@@ -55,7 +55,7 @@ def sandbox(env, writable_repo=False):
 
 
 try:
-    for name in ['sway', 'swaymsg', 'bwrap', 'grim', 'chromium']:
+    for name in ['sway', 'swaymsg', 'bwrap', 'grim', 'chromium', 'wtype', 'wl-paste']:
         if not shutil.which(name):
             raise RuntimeError(f'{name} is required for isolated UI verification.')
     version = subprocess.check_output(['sway', '--version'], text=True).strip()

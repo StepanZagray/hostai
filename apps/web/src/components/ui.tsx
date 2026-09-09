@@ -1,4 +1,4 @@
-import { useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Check, Copy, ArrowUpRight, Circle } from "lucide-react";
 import { css, cva } from "../../styled-system/css";
 
@@ -166,18 +166,31 @@ export function CopyButton({
   text,
   label = "Copy",
   compact = false,
+  disabled = false,
 }: {
   text: string;
   label?: string;
   compact?: boolean;
+  disabled?: boolean;
 }) {
-  const [result, setResult] = useState("");
+  const [copyState, setCopyState] = useState<{ text: string; result: string } | null>(null);
+  const sequence = useRef(0);
+  useEffect(
+    () => () => {
+      sequence.current++;
+    },
+    [],
+  );
+  const result = copyState?.text === text ? copyState.result : "";
   async function copy() {
+    const attempt = ++sequence.current;
+    setCopyState({ text, result: "Copying…" });
     try {
       await navigator.clipboard.writeText(text);
-      setResult("Copied");
+      if (attempt === sequence.current) setCopyState({ text, result: "Copied" });
     } catch {
-      setResult("Select and copy the text manually");
+      if (attempt === sequence.current)
+        setCopyState({ text, result: "Select and copy the text manually" });
     }
   }
   return (
@@ -187,13 +200,14 @@ export function CopyButton({
       <Button
         variant="ghost"
         onClick={() => void copy()}
-        aria-label={result === "Copied" ? "Copied" : label}
+        aria-label={label}
+        disabled={disabled || result === "Copying…"}
       >
         {result === "Copied" ? <Check /> : <Copy />}
-        {!compact && (result === "Copied" ? "Copied" : label)}
+        {!compact && label}
       </Button>
       <span role="status" className={css({ fontSize: "xs", color: "muted" })}>
-        {result && result !== "Copied" ? result : ""}
+        {result}
       </span>
     </span>
   );

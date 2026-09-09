@@ -96,6 +96,13 @@ Streaming follows the latest output until you scroll back to read. Use
 Keyboard users can focus the conversation pane and use its native scroll keys.
 Automatic scrolling stays inside that pane and preserves the surrounding page.
 
+Assistant answers support Markdown headings, lists, tables, and scrollable code
+blocks. Copy response preserves the original Markdown; Copy code copies the
+current block. Interrupted output is labeled Copy partial response and stays
+excluded from later prompts. Raw HTML displays as text and images display their
+alt text without downloading anything. Credential-free HTTPS links open separately
+(in the system browser on desktop). Code uses plain monospace without highlighting.
+
 Model discovery keeps unavailable entries visible with the gateway's reason.
 The playground defaults to a model that passes known gateway rules and blocks
 unsupported selections before Send. Availability changing on refresh preserves
@@ -115,7 +122,7 @@ pnpm backend:test   # Java tests; isolated HTTP runtime stub
 pnpm test:ui        # Requires a running frontend and the Linux tools below
 ```
 
-UI checks require Sway 1.12, bubblewrap, grim, Chromium, Python, and `/usr/bin/node`. The runner verifies a private headless software display before opening a browser or Electron, and cleans up its processes and temporary directory. It never uses an inherited desktop socket. See [verification details](docs/verification.md).
+UI checks require Sway 1.12, bubblewrap, grim, wtype, wl-clipboard, Chromium, Python, and `/usr/bin/node`. The runner verifies a private headless software display before opening a browser or Electron, and cleans up its processes and temporary directory. It never uses an inherited desktop socket. See [verification details](docs/verification.md).
 
 ## Compatibility note
 
