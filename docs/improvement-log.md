@@ -122,11 +122,42 @@ A focused browser check verifies full pasted-text preservation, blocked Enter,
 error recovery, and a successful next send. Request assertions in the new
 context browser scenario run outside route handlers so failures report directly.
 
+## Model admission feedback
+
+Discovery returned model names that chat refused, while the library labeled them
+local and enabled generation. A real HTTP regression confirmed missing admission
+feedback. Opus 5 High advised sharing one backend policy; the first advisory
+process exited without an answer, and a smaller retry completed successfully.
+`ModelAdmission` now drives both validation and the discovery DTO's explicit
+nullable `chatUnavailableReason`.
+
+Unavailable models remain visible with a reason and no chat link. The playground
+chooses the first allowed model by default, blocks unsupported explicit selections,
+and retains the chosen conversation when refresh changes admission. Overview
+readiness and setup completion use the same discovery metadata. Missing metadata
+is unknown, with an update/restart message, rather than permission to generate.
+These checks cover known gateway restrictions, not model capabilities or memory.
+
+Validation: 62 web unit tests, 24 Java tests, type checking/lint/formatting,
+production build, and 24 distinct isolated browser/Electron/integration scenarios
+passed across full and focused runs. A prior label assertion was updated from
+installed to discovered. The real Java integration scenario includes a cloud
+fixture entry, verifies its reason and the allowed default, then checks streaming
+and cancellation through Java. No model was downloaded or run. The new library
+and blocked playground states were visually inspected, including mobile.
+
+The final Opus review identified two mixed-state problems, now covered by browser
+checks: runtime setup stays available when connectivity and model admission both
+fail, and API examples require an allowed selected model. Its proposed narrowing
+of the existing `-cloud` restriction was not adopted; this cycle preserves the
+existing admission policy while making its decisions visible.
+
+The suspected mobile heading clipping was not reproduced by settled geometry
+checks across all five routes at 320px. The check waits for fonts and host state;
+viewport and full-page captures were inspected. No heading CSS was changed.
+
 ## Next candidates to investigate
 
-- Discovery currently accepts cloud-model names that chat validation rejects.
-  The review raised this and `OllamaGateway.models()` confirms it; pre-send model
-  compatibility feedback remains unimplemented.
-- The context-limit mobile screenshot exposes a clipped page description at
-  320px. Inspect heading sizing and long-conversation scroll behavior next;
-  neither is changed by the context-limit work.
+- Long streamed responses currently call scrollIntoView on every update. Check
+  whether reading earlier text is interrupted and whether scrolling can stay
+  within the conversation pane. No scroll behavior change is included here.

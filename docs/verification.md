@@ -32,6 +32,17 @@ The error state is captured in `test-results/prompt-too-long.png`.
 
 `pnpm build && pnpm test:http` launches the built Node/Start server and an HTTP backend stub on ephemeral loopback ports. It verifies byte-preserving forwarding and real 413/504 responses for oversized or stalled uploads, then checks that the server still handles another request. This catches incoming-socket teardown bugs that mocked Fetch streams cannot reproduce. Both processes and all sockets are closed afterward. CI runs this suite after building; it needs no display or Java service.
 
+Model admission checks compare discovery reasons with request validation at name
+length/syntax/cloud boundaries. Real HTTP tests verify restricted names remain
+visible but cannot contact inference. Browser checks cover mixed libraries,
+allowed defaults, direct unsupported selections, all-unavailable libraries,
+missing metadata, and preservation of a conversation after a policy change.
+The Java integration fixture includes a cloud entry before the local test model:
+the UI must display its restriction, choose the local default, then stream and
+cancel through the real gateway. All inference responses remain fixture data.
+Evidence includes `test-results/models-admission.png` and
+`test-results/playground-admission.png`.
+
 ## Isolated UI runner
 
 Start the frontend, then run `pnpm test:ui`. `scripts/test-ui.py`:

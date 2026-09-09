@@ -29,6 +29,7 @@ async function hostFixture(page: Page, connected = true) {
                 parameterSize: "0.6B",
                 quantization: "Q4_K_M",
                 modifiedAt: new Date().toISOString(),
+                chatUnavailableReason: null,
               },
             ]
           : [],
@@ -67,7 +68,7 @@ test("model search, navigation and streamed conversation", async ({ page }) => {
     });
   });
   await page.goto("/models");
-  await page.getByRole("textbox", { name: "Search installed models" }).fill("missing");
+  await page.getByRole("textbox", { name: "Search models" }).fill("missing");
   await expect(page.getByRole("heading", { name: "No matching models" })).toBeVisible();
   await page.getByRole("button", { name: "Clear search" }).click();
   await page.getByRole("link", { name: "Try in playground" }).click();
@@ -252,12 +253,12 @@ test("model count stays unknown until discovery finishes", async ({ page }) => {
   });
   try {
     await page.goto("/models");
-    await expect(page.getByText("Checking installed models…", { exact: true })).toBeVisible();
-    await expect(page.getByText("0 installed models", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Checking runtime models…", { exact: true })).toBeVisible();
+    await expect(page.getByText("0 discovered models", { exact: true })).toHaveCount(0);
   } finally {
     finishDiscovery();
   }
-  await expect(page.getByText("0 installed models", { exact: true })).toBeVisible();
+  await expect(page.getByText("0 discovered models", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Your library starts here" })).toBeVisible();
 });
 
@@ -335,6 +336,7 @@ test("model disappearance cannot silently switch an existing conversation", asyn
             parameterSize: "",
             quantization: "",
             modifiedAt: "",
+            chatUnavailableReason: null,
           },
         ],
       },
@@ -547,4 +549,189 @@ test("oversized new messages remain editable and show validation before sending"
   await send.click();
   await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
   expect(calls).toBe(1);
+});
+
+test("page headings stay inside the mobile content area", async ({ page }) => {
+  await hostFixture(page);
+  await page.setViewportSize({ width: 320, height: 1000 });
+  for (const path of ["/", "/models", "/playground", "/activity", "/connection"]) {
+    await page.goto(path);
+    await expect(page.getByText("Gateway online", { exact: true })).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    const description = page.getByRole("heading", { level: 1 }).locator("..").locator("p");
+    await expect(description).toBeVisible();
+    const bounds = await description.evaluate((element) => {
+      const text = document.createRange();
+      text.selectNodeContents(element);
+      const main = document.querySelector("main")!.getBoundingClientRect();
+      return {
+        left: text.getBoundingClientRect().left,
+        right: text.getBoundingClientRect().right,
+        mainLeft: main.left,
+        mainRight: main.right,
+        viewport: document.documentElement.clientWidth,
+      };
+    });
+    expect(bounds.left).toBeGreaterThanOrEqual(bounds.mainLeft);
+    expect(bounds.right).toBeLessThanOrEqual(bounds.mainRight);
+    expect(bounds.mainRight).toBeLessThanOrEqual(bounds.viewport);
+    if (path === "/playground") {
+      await page.screenshot({ path: "test-results/mobile-playground-heading.png", fullPage: true });
+      await page.screenshot({ path: "test-results/mobile-playground-viewport.png" });
+    }
+  }
+});
+
+const cloudReason = "Cloud models are not supported by this local gateway.";
+function discoveredModel(name: string, chatUnavailableReason: string | null) {
+  return {
+    name,
+    chatUnavailableReason,
+    sizeBytes: 0,
+    parameterSize: "",
+    quantization: "",
+    modifiedAt: "",
+  };
+}
+
+test("unsupported models stay visible while the playground chooses an eligible default", async ({
+  page,
+}) => {
+  await hostFixture(page);
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        connected: true,
+        models: [
+          discoveredModel("remote:cloud", cloudReason),
+          discoveredModel("local:small", null),
+        ],
+      },
+    }),
+  );
+  const sent: { model: string }[] = [];
+  await page.route("**/api/chat", (route) => {
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: '{"content":"Local answer","done":true}\n',
+    });
+  });
+  await page.goto("/models");
+  await expect(page.getByRole("heading", { name: "remote:cloud", exact: true })).toBeVisible();
+  await expect(page.getByText(cloudReason, { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Try in playground" })).toHaveCount(1);
+  await page.screenshot({ path: "test-results/models-admission.png", fullPage: true });
+  await page.getByRole("link", { name: "Playground", exact: true }).click();
+  const model = page.getByRole("combobox", { name: "Model", exact: true });
+  await expect(model).toHaveValue("local:small");
+  await model.selectOption("remote:cloud");
+  await page.getByRole("button", { name: "API example", exact: true }).click();
+  await expect(
+    page.getByText("Select a model available to try to see its API example.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("pre")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toContainText(cloudReason);
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await page.screenshot({ path: "test-results/playground-admission.png", fullPage: true });
+  await model.selectOption("local:small");
+  await expect(page.locator("pre")).toContainText("local:small");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Hello");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Local answer", { exact: true })).toBeVisible();
+  expect(sent.map((request) => request.model)).toEqual(["local:small"]);
+});
+
+for (const [name, reason] of [
+  ["remote:cloud", cloudReason],
+  ["bad name", "This model name is not supported by the gateway."],
+] as const) {
+  test(`an explicit unsupported model cannot submit: ${name}`, async ({ page }) => {
+    await hostFixture(page);
+    await page.route("**/api/models", (route) =>
+      route.fulfill({ json: { connected: true, models: [discoveredModel(name, reason)] } }),
+    );
+    let calls = 0;
+    await page.route("**/api/chat", (route) => {
+      calls++;
+      return route.abort();
+    });
+    await page.setViewportSize({ width: 320, height: 1000 });
+    await page.goto("/playground?model=" + encodeURIComponent(name));
+    await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(name);
+    await expect(page.getByRole("alert")).toContainText(reason);
+    await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeDisabled();
+    if (name === "remote:cloud")
+      await page.screenshot({ path: "test-results/mobile-model-admission.png", fullPage: true });
+    await page.locator("form").evaluate((form) => (form as HTMLFormElement).requestSubmit());
+    expect(calls).toBe(0);
+    await page.goto("/");
+    await expect(page.getByText("0 available to try", { exact: true })).toBeVisible();
+    await expect(page.getByText("Ready to run", { exact: true })).toHaveCount(0);
+  });
+}
+
+test("changed admission preserves the selected conversation and missing metadata stays unknown", async ({
+  page,
+}) => {
+  await hostFixture(page);
+  let blocked = false;
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        connected: true,
+        models: [
+          discoveredModel(
+            "chosen:small",
+            blocked ? "This model is currently unavailable for chat." : null,
+          ),
+          discoveredModel("other:small", null),
+        ],
+      },
+    }),
+  );
+  await page.route("**/api/chat", (route) => {
+    blocked = true;
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: '{"content":"Keep this answer","done":true}\n',
+    });
+  });
+  await page.goto("/playground");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Remember this");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "This model is currently unavailable for chat.",
+  );
+  await expect(page.getByText("Keep this answer", { exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    "chosen:small",
+  );
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await page.route("**/api/models", (route) =>
+    route.fulfill({ json: { connected: true, models: [{ name: "old:small", sizeBytes: 0 }] } }),
+  );
+  await page.goto("/playground?model=old%3Asmall");
+  await expect(page.getByRole("alert")).toContainText("Model availability is unknown.");
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+});
+
+test("runtime setup remains available when the selected model is also unsupported", async ({
+  page,
+}) => {
+  await hostFixture(page, false);
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: { connected: true, models: [discoveredModel("remote:cloud", cloudReason)] },
+    }),
+  );
+  await page.goto("/playground");
+  await expect(page.getByText("Runtime not ready", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText(cloudReason);
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await page.screenshot({ path: "test-results/runtime-and-model-unavailable.png", fullPage: true });
+  await page.getByRole("link", { name: "Set up your host", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Connection & setup", exact: true }),
+  ).toBeVisible();
 });

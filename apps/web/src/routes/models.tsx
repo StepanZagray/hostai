@@ -4,6 +4,7 @@ import { ArrowRight, Box, Search, RefreshCw, Terminal } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
 import { formatBytes } from "../lib/api";
+import { chatUnavailableReason } from "../lib/model-admission";
 import {
   Badge,
   Button,
@@ -24,7 +25,7 @@ function Models() {
     <>
       <PageHeading
         title="Your model library"
-        description="Discover what’s installed. Find the right model for your next idea."
+        description="Browse your runtime’s models and see which ones are available to try."
         action={
           <Button disabled={refreshing} onClick={() => void refresh()}>
             <RefreshCw />
@@ -57,7 +58,7 @@ function Models() {
         >
           <Search size={17} />
           <input
-            aria-label="Search installed models"
+            aria-label="Search models"
             disabled={loading}
             placeholder="Search your models…"
             value={search}
@@ -67,10 +68,10 @@ function Models() {
         </label>
         <span className={muted}>
           {loading
-            ? "Checking installed models…"
+            ? "Checking runtime models…"
             : errors.models
               ? "Model count unavailable"
-              : `${models.length} installed ${models.length === 1 ? "model" : "models"}`}
+              : `${models.length} discovered ${models.length === 1 ? "model" : "models"}`}
         </span>
       </div>
       <section className={panel} aria-busy={loading}>
@@ -132,7 +133,11 @@ function Models() {
                   >
                     <Box size={22} />
                   </span>
-                  <Badge tone="good">Installed</Badge>
+                  <Badge tone={chatUnavailableReason(model) === null ? "good" : "warning"}>
+                    {chatUnavailableReason(model) === null
+                      ? "Available to try"
+                      : "Unavailable for chat"}
+                  </Badge>
                 </div>
                 <h2
                   className={css({
@@ -145,9 +150,7 @@ function Models() {
                 >
                   {model.name}
                 </h2>
-                <p className={muted}>
-                  Local model · {model.parameterSize || "Unknown parameter size"}
-                </p>
+                <p className={muted}>{model.parameterSize || "Unknown parameter size"}</p>
                 <div
                   className={css({
                     display: "flex",
@@ -160,14 +163,20 @@ function Models() {
                   <span>{formatBytes(model.sizeBytes)}</span>
                   <span>{model.quantization || "Quantization unavailable"}</span>
                 </div>
-                <Link
-                  to="/playground"
-                  search={{ model: model.name }}
-                  className={button({ variant: "secondary" })}
-                >
-                  Try in playground
-                  <ArrowRight size={14} />
-                </Link>
+                {chatUnavailableReason(model) !== null ? (
+                  <p className={css({ color: "warning", fontSize: "sm" })}>
+                    {chatUnavailableReason(model)}
+                  </p>
+                ) : (
+                  <Link
+                    to="/playground"
+                    search={{ model: model.name }}
+                    className={button({ variant: "secondary" })}
+                  >
+                    Try in playground
+                    <ArrowRight size={14} />
+                  </Link>
+                )}
               </article>
             ))}
           </div>

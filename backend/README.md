@@ -90,15 +90,22 @@ Converts Ollama's `/api/tags`: `size` → `sizeBytes`,
     "sizeBytes": 5000000000,
     "parameterSize": "8B",
     "quantization": "Q4_K_M",
-    "modifiedAt": "2026-09-01T12:00:00Z"
+    "modifiedAt": "2026-09-01T12:00:00Z",
+    "chatUnavailableReason": null
   }],
   "connected": true
 }
 ```
 
+`chatUnavailableReason` is explicitly `null` when the model name passes known
+gateway restrictions, or a user-facing reason when it does not. Discovery keeps
+cloud names and names outside the length/syntax limits visible; chat rejects them
+using the same `ModelAdmission` policy before acquiring an inference slot. A null
+reason does not prove chat capabilities, available memory, or model quality.
+
 Unavailable, timed-out, or malformed upstream metadata gives HTTP 200 with
-`{"models":[],"connected":false}`. Missing optional model metadata is an empty
-string. An available server with no models gives `connected:true` with an empty
+`{"models":[],"connected":false}`. Missing optional descriptive model metadata is an empty
+string; admission metadata always supplies a null or a reason. An available server with no models gives `connected:true` with an empty
 list. Connectivity is determined independently on each metadata request.
 
 ### `GET /api/requests`

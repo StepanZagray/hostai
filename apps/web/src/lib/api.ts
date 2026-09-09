@@ -16,6 +16,7 @@ export interface Model {
   parameterSize: string;
   quantization: string;
   modifiedAt: string;
+  chatUnavailableReason: string | null;
 }
 export interface RequestRecord {
   id: string;

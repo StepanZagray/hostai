@@ -91,6 +91,13 @@ token window. Oversized new messages remain editable with a visible error until
 you shorten them. The conversation keeps its selected model if discovery changes.
 Switching models or clearing the conversation starts fresh.
 
+Model discovery keeps unavailable entries visible with the gateway's reason.
+The playground defaults to a model that passes known gateway rules and blocks
+unsupported selections before Send. Availability changing on refresh preserves
+the selected conversation. This does not probe model capabilities or memory.
+After updating the web app, restart the updated Java gateway too: missing
+admission metadata is shown as unknown and cannot enable generation.
+
 The frontend proxy accepts at most 256 KiB per chat upload and allows ten seconds to receive it. On early rejection, the production server sends the complete error response, then discards at most another 1 MiB for up to 250 ms before closing the connection. This gives clients still uploading a chance to receive the error. Metadata requests time out after ten seconds. Chats have a 610-second proxy deadline, giving Java's default ten-minute generation limit time to return an explicit error. If you override Java's generation timeout, keep it below the proxy deadline. The browser finishes on the first `done:true` record and releases the response stream.
 
 ## Checks

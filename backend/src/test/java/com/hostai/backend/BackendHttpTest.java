@@ -56,6 +56,7 @@ class BackendHttpTest {
     @BeforeEach
     void setUp() {
         STUB.mode = Mode.NORMAL;
+        STUB.extraModels = List.of();
         STUB.calls.set(0);
         STUB.lastBody.set(null);
         client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2))
@@ -98,11 +99,28 @@ class BackendHttpTest {
         Map<String, Object> models = body(get("/api/models"));
         assertThat(models).containsEntry("connected", true);
         assertThat((List<?>) models.get("models")).hasSize(2);
-        assertThat(map(((List<?>) models.get("models")).getFirst())).containsExactlyInAnyOrderEntriesOf(Map.of(
+        assertThat(map(((List<?>) models.get("models")).getFirst())).containsAllEntriesOf(Map.of(
                 "name", "local-test:latest", "sizeBytes", 5_000_000_000L, "parameterSize", "8B",
                 "quantization", "Q4_K_M", "modifiedAt", "2026-09-01T12:00:00Z"));
+        assertThat(map(((List<?>) models.get("models")).getFirst())).containsEntry("chatUnavailableReason", null);
         assertThat(map(((List<?>) models.get("models")).get(1))).containsEntry("parameterSize", "")
                 .containsEntry("quantization", "").containsEntry("modifiedAt", "");
+    }
+
+    @Test
+    void discoveryExplainsRejectedModelNamesWithoutContactingInference() throws Exception {
+        List<String> blocked = List.of("remote:cloud", "remote-cloud", "bad name", "x".repeat(129));
+        STUB.extraModels = blocked;
+        List<?> models = (List<?>) body(get("/api/models")).get("models");
+        assertThat(models).hasSize(6);
+        for (int i = 0; i < blocked.size(); i++) {
+            Map<String, Object> model = map(models.get(i + 2));
+            assertThat(model).containsEntry("name", blocked.get(i));
+            assertThat(model.get("chatUnavailableReason")).isInstanceOf(String.class);
+            assertThat((String) model.get("chatUnavailableReason")).isNotBlank();
+            assertProblem(post(CHAT.replace("local-test:latest", blocked.get(i))), 400);
+        }
+        assertThat(STUB.calls.get()).isZero();
     }
 
     @Test
@@ -301,6 +319,7 @@ class BackendHttpTest {
 
     private static final class Stub implements AutoCloseable {
         volatile Mode mode = Mode.NORMAL;
+        volatile List<String> extraModels = List.of();
         final AtomicInteger calls = new AtomicInteger();
         final AtomicInteger connections = new AtomicInteger();
         final AtomicReference<Map<String, Object>> lastBody = new AtomicReference<>();
@@ -313,12 +332,15 @@ class BackendHttpTest {
                                 .sendString(Mono.just("{\"version\":\"stub-only\"}")))
                         .get("/api/tags", (request, response) -> response
                                 .status(mode == Mode.OFFLINE ? 503 : 200).header("Content-Type", "application/json")
-                                .sendString(Mono.just("""
-                                        {"models":[{"name":"local-test:latest","size":5000000000,
-                                        "modified_at":"2026-09-01T12:00:00Z","digest":"ignored",
-                                        "details":{"parameter_size":"8B","quantization_level":"Q4_K_M"}},
-                                        {"name":"minimal","size":0}]}
-                                        """)))
+                                .sendString(Mono.fromSupplier(() -> {
+                                    var models = new java.util.ArrayList<Map<String, Object>>();
+                                    models.add(Map.of("name", "local-test:latest", "size", 5_000_000_000L,
+                                            "modified_at", "2026-09-01T12:00:00Z", "digest", "ignored",
+                                            "details", Map.of("parameter_size", "8B", "quantization_level", "Q4_K_M")));
+                                    models.add(Map.of("name", "minimal", "size", 0));
+                                    for (String name : extraModels) models.add(Map.of("name", name, "size", 0));
+                                    return JSON.writeValueAsString(Map.of("models", models));
+                                })))
                         .post("/api/chat", (request, response) -> {
                             connections.incrementAndGet();
                             request.withConnection(connection -> connection.onDispose()

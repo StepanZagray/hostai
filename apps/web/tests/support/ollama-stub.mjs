@@ -7,6 +7,7 @@ const server = createServer(async (req, res) => {
     return res.end(
       JSON.stringify({
         models: [
+          { name: "test-remote:cloud", size: 0 },
           {
             name: "test-model:small",
             size: 800000000,

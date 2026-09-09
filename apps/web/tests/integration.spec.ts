@@ -5,7 +5,16 @@ test("shared UI streams through Java and releases a cancelled request", async ({
     process.env.HOSTAI_INTEGRATION !== "1",
     "Requires Java pointed at the explicit isolated Ollama fixture.",
   );
-  await page.goto("/playground");
+  await page.goto("/models");
+  await expect(page.getByRole("heading", { name: "test-remote:cloud", exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Cloud models are not supported by this local gateway.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Try in playground" })).toHaveCount(1);
+  await page.getByRole("link", { name: "Playground", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    "test-model:small",
+  );
   await expect(page.getByText("Local inference ready", { exact: true })).toBeVisible();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Integration check");
   await page.getByRole("button", { name: "Send message" }).click();

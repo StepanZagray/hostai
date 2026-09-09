@@ -18,7 +18,7 @@ public final class Api {
     private Api() {}
 
     public record ChatRequest(
-            @NotBlank @Size(max = 128) @Pattern(regexp = "[a-zA-Z0-9][a-zA-Z0-9._:/-]*") String model,
+            @NotBlank String model,
             @NotNull @Size(min = 1, max = 64) List<@NotNull @Valid Message> messages,
             @NotNull @DecimalMin("0.0") @DecimalMax("2.0") Double temperature,
             @NotNull @Min(1) @Max(8192) Integer maxTokens) {
@@ -35,10 +35,10 @@ public final class Api {
             return temperature == null || Double.isFinite(temperature);
         }
 
-        @AssertTrue(message = "Cloud model names are not supported by this local gateway")
+        @AssertTrue(message = "This model name is not supported by the local gateway")
         @JsonIgnore
-        public boolean isLocalModel() {
-            return model == null || !(model.endsWith(":cloud") || model.endsWith("-cloud"));
+        public boolean isModelSupported() {
+            return ModelAdmission.reason(model) == null;
         }
     }
 
@@ -59,7 +59,7 @@ public final class Api {
                          long totalRequests, long failedRequests) {}
 
     public record Model(String name, long sizeBytes, String parameterSize,
-                        String quantization, String modifiedAt) {}
+                        String quantization, String modifiedAt, String chatUnavailableReason) {}
 
     public record Models(List<Model> models, boolean connected) {}
 

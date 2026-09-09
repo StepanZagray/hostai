@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
+import { chatUnavailableReason } from "../lib/model-admission";
 import {
   Badge,
   Button,
@@ -30,12 +31,13 @@ export const Route = createFileRoute("/")({ component: Overview });
 
 function Overview() {
   const { status, models, requests, loading, refreshing, errors, refresh } = useHost();
-  const ready = !!status?.ollamaConnected && models.length > 0;
+  const eligibleModels = models.filter((model) => chatUnavailableReason(model) === null);
+  const ready = !!status?.ollamaConnected && eligibleModels.length > 0;
   const metrics = [
     {
-      label: "Available models",
+      label: "Discovered models",
       value: loading ? "…" : !errors.models ? String(models.length).padStart(2, "0") : "—",
-      sub: errors.models ? "Discovery unavailable" : "Installed on your machine",
+      sub: errors.models ? "Discovery unavailable" : `${eligibleModels.length} available to try`,
       icon: Box,
     },
     {
@@ -242,7 +244,7 @@ function Overview() {
               {
                 title: "Download a model that fits your hardware",
                 command: "ollama pull qwen3:0.6b",
-                done: models.length > 0,
+                done: eligibleModels.length > 0,
               },
             ].map((step, i) => (
               <div key={step.title}>

@@ -61,7 +61,7 @@ public class OllamaGateway {
                         return new Api.Model(model.name(), model.size(),
                                 details == null ? "" : text(details.parameterSize()),
                                 details == null ? "" : text(details.quantizationLevel()),
-                                text(model.modifiedAt()));
+                                text(model.modifiedAt()), ModelAdmission.reason(model.name()));
                     }).toList();
                     return new Api.Models(models, true);
                 })

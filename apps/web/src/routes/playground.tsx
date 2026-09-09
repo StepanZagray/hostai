@@ -15,6 +15,7 @@ import { css } from "../../styled-system/css";
 import { Badge, Button, CodeBlock, PageHeading, button, muted, panel } from "../components/ui";
 import { useHost } from "../lib/host-context";
 import { readChatStream } from "../lib/api";
+import { chatUnavailableReason } from "../lib/model-admission";
 import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
 
 export const Route = createFileRoute("/playground")({
@@ -27,8 +28,12 @@ function Playground() {
   const { model: requestedModel } = Route.useSearch();
   const { models, status, refresh } = useHost();
   const [chosenModel, setChosenModel] = useState(requestedModel ?? "");
-  const model = chosenModel || (models[0]?.name ?? "");
-  const modelAvailable = models.some((m) => m.name === model);
+  const defaultModel = models.find((item) => chatUnavailableReason(item) === null) ?? models[0];
+  const model = chosenModel || (defaultModel?.name ?? "");
+  const selectedModel = models.find((item) => item.name === model);
+  const modelAvailable = !!selectedModel;
+  const modelError = selectedModel ? chatUnavailableReason(selectedModel) : null;
+  const modelBlocked = !!status?.ollamaConnected && modelError !== null;
   const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const messages = turns.flatMap((turn) => [
     { role: "user", content: turn.prompt, turn },
@@ -51,7 +56,7 @@ function Playground() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [turns]);
-  const ready = !!status?.ollamaConnected && modelAvailable;
+  const ready = !!status?.ollamaConnected && modelAvailable && modelError === null;
   async function send() {
     if (abort.current || !ready || !prompt.trim()) return;
     if (draft.error !== null) return;
@@ -116,9 +121,13 @@ function Playground() {
       {showApi && (
         <section className={`${panel} ${css({ p: "5", mb: "5" })}`}>
           <h2 className={css({ fontWeight: 700, mb: "3" })}>Call your local gateway</h2>
-          <CodeBlock
-            code={`curl -N http://127.0.0.1:8080/api/chat \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify({ model: model || "your-model-name", messages: [{ role: "user", content: "Hello!" }], temperature, maxTokens })}'`}
-          />
+          {!modelAvailable || modelError !== null ? (
+            <p className={muted}>Select a model available to try to see its API example.</p>
+          ) : (
+            <CodeBlock
+              code={`curl -N http://127.0.0.1:8080/api/chat \\\n  -H 'Content-Type: application/json' \\\n  -d '${JSON.stringify({ model: model || "your-model-name", messages: [{ role: "user", content: "Hello!" }], temperature, maxTokens })}'`}
+            />
+          )}
           <p className={`${muted} ${css({ mt: "3" })}`}>
             Returns newline-delimited JSON. This local development endpoint does not require an API
             key.
@@ -199,7 +208,9 @@ function Playground() {
                 <p className={`${muted} ${css({ maxW: "330px" })}`}>
                   {ready
                     ? "Ask a question, work through an idea, or put your model to the test."
-                    : "Connect Ollama and install a model to start a conversation on your machine."}
+                    : modelBlocked
+                      ? "Choose another model to start a conversation. The selected model is unavailable for chat."
+                      : "Connect Ollama and install a model to start a conversation on your machine."}
                 </p>
                 {ready ? (
                   <div
@@ -218,8 +229,11 @@ function Playground() {
                     ))}
                   </div>
                 ) : (
-                  <Link to="/connection" className={button({ variant: "secondary" })}>
-                    Set up your host
+                  <Link
+                    to={modelBlocked ? "/models" : "/connection"}
+                    className={button({ variant: "secondary" })}
+                  >
+                    {modelBlocked ? "Review model library" : "Set up your host"}
                     <ArrowRight size={14} />
                   </Link>
                 )}
@@ -288,6 +302,11 @@ function Playground() {
             <div ref={bottom} />
           </div>
           <div className={css({ p: "4", pt: 0 })}>
+            {modelError && (
+              <p role="alert" className={css({ mb: "3", color: "warning", fontSize: "xs" })}>
+                {modelError} Choose another model from Run settings.
+              </p>
+            )}
             {!busy && draft.error === null && draft.omittedTurns > 0 && (
               <p
                 role="status"
@@ -345,7 +364,13 @@ function Playground() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 disabled={!ready || busy}
-                placeholder={ready ? "Message your model…" : "Your model will be ready after setup"}
+                placeholder={
+                  ready
+                    ? "Message your model…"
+                    : modelBlocked
+                      ? "Choose another model to chat"
+                      : "Your model will be ready after setup"
+                }
                 rows={2}
                 className={css({
                   bg: "transparent",
@@ -449,7 +474,10 @@ function Playground() {
             {model && !modelAvailable && <option value={model}>{model} (unavailable)</option>}
             {!model && !models.length && <option value="">No models available</option>}
             {models.map((m) => (
-              <option key={m.name}>{m.name}</option>
+              <option key={m.name} value={m.name}>
+                {m.name}
+                {chatUnavailableReason(m) !== null ? " (unavailable for chat)" : ""}
+              </option>
             ))}
           </select>
           <label
@@ -509,9 +537,11 @@ function Playground() {
             <Badge tone={ready ? "good" : "warning"}>
               {ready
                 ? "Local inference ready"
-                : status?.ollamaConnected && model && !modelAvailable
-                  ? "Selected model unavailable"
-                  : "Runtime not ready"}
+                : modelBlocked
+                  ? "Selected model cannot chat"
+                  : status?.ollamaConnected && model && !modelAvailable
+                    ? "Selected model unavailable"
+                    : "Runtime not ready"}
             </Badge>
             <p className={`${muted} ${css({ fontSize: "11px", mt: "3" })}`}>
               Conversations live in this tab and clear when you leave the playground.
