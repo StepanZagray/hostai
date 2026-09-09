@@ -88,8 +88,45 @@ review's concern about consecutive user messages was checked by running the
 Java integration scenario. Its Ollama endpoint remains a test stub; no real model
 compatibility or inference-quality claim follows from those tests.
 
+## Conversation request limits
+
+A regression reproduced 32 completed exchanges producing a rejected 65-message
+request. With Opus 5 High advice, request preparation now retains a contiguous
+suffix of whole turns within all four gateway limits: 64 messages, 16,384 UTF-16
+units per message, 65,536 combined units, and 262,144 serialized UTF-8 bytes.
+An oversized historical answer drops its turn and all older turns. Incomplete
+answers still contribute only their user prompt. The new prompt is never
+shortened, and the display transcript is not mutated.
+
+The composer discloses omissions before Send, explicitly saying when only the
+new message fits. The request uses that exact prepared body; its omission count
+stays attached to the sent user message after completion. These are transport
+and validation limits, not the model's token window or a quality guarantee.
+
+Validation: 62 unit tests, type checking/lint/formatting, production build, and
+17 distinct isolated browser/Electron scenarios passed across the full and focused
+runs. Tests cover exact boundaries, JSON escaping, Unicode, contiguous whole-turn
+removal, and preservation of
+incomplete-turn behavior. Browser checks verify both complete history omission
+and retention of recent turns, the actual request body, disclosure before Send,
+persistent annotations, mobile wrapping, and Clear. Desktop and mobile evidence
+was visually inspected in `test-results/context-limit-*.png`. The Java integration
+scenario was skipped this cycle; Java and proxy code were unchanged, and no real
+model was run.
+
+The Opus review confirmed the fitting algorithm and exact boundary arithmetic.
+It also identified the textarea's old 16,000-character cutoff, which silently
+shortened pasted text before validation. That cutoff is removed: oversized new
+messages remain editable, show an error, and cannot be sent until shortened.
+A focused browser check verifies full pasted-text preservation, blocked Enter,
+error recovery, and a successful next send. Request assertions in the new
+context browser scenario run outside route handlers so failures report directly.
+
 ## Next candidates to investigate
 
-- Long conversations can exceed the gateway's message-count and content limits.
-  Establish a visible context-limit policy so another send does not repeatedly
-  fail until the user clears the entire conversation. This is not implemented yet.
+- Discovery currently accepts cloud-model names that chat validation rejects.
+  The review raised this and `OllamaGateway.models()` confirms it; pre-send model
+  compatibility feedback remains unimplemented.
+- The context-limit mobile screenshot exposes a clipped page description at
+  320px. Inspect heading sizing and long-conversation scroll behavior next;
+  neither is changed by the context-limit work.

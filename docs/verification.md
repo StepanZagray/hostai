@@ -18,6 +18,18 @@ model changes, and Clear. The full Java integration scenario verifies follow-up
 context after cancellation; browser interception separately tests cancellation
 before headers, truncated responses, and duplicate submission. None run a model.
 
+Context-budget tests check exact gateway boundaries: 64 messages, 16,384 UTF-16
+units per message, 65,536 combined units, and 262,144 serialized UTF-8 bytes.
+They cover whole-turn removal, contiguous recent history, JSON escape expansion,
+Unicode preservation, and invalid new prompts. An isolated browser scenario
+checks omission disclosure before Send, the actual outgoing context, retention
+of the full transcript and sent-message annotation, mobile wrapping, and Clear.
+Context-limit screenshots are retained in `test-results/`. These tests do not
+measure token counts or a real model's context capacity. A separate browser check
+inserts an oversized new prompt, confirms it remains intact with a validation
+error, blocks Enter submission, and sends successfully after the user shortens it.
+The error state is captured in `test-results/prompt-too-long.png`.
+
 `pnpm build && pnpm test:http` launches the built Node/Start server and an HTTP backend stub on ephemeral loopback ports. It verifies byte-preserving forwarding and real 413/504 responses for oversized or stalled uploads, then checks that the server still handles another request. This catches incoming-socket teardown bugs that mocked Fetch streams cannot reproduce. Both processes and all sockets are closed afterward. CI runs this suite after building; it needs no display or Java service.
 
 ## Isolated UI runner

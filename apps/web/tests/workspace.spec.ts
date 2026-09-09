@@ -453,3 +453,98 @@ test("duplicate submissions admit one request and stopping before headers allows
   await expect(page.getByText("Retry succeeded", { exact: true })).toBeVisible();
   expect(calls).toBe(2);
 });
+
+test("context limits disclose omissions before sending and retain the visible transcript", async ({
+  page,
+}) => {
+  await hostFixture(page);
+  const longAnswer = "A detailed answer. ".repeat(920);
+  const sent: { role: string; content: string }[][] = [];
+  let calls = 0;
+  await page.route("**/api/chat", (route) => {
+    calls++;
+    sent.push(route.request().postDataJSON().messages);
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body:
+        JSON.stringify({
+          content: calls === 1 ? longAnswer : `Short answer ${calls}`,
+          done: true,
+          outputTokens: 7,
+        }) + "\n",
+    });
+  });
+  await page.goto("/playground");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const send = page.getByRole("button", { name: "Send message" });
+  await input.fill("Start");
+  await send.click();
+  await expect(page.getByText(longAnswer.trim(), { exact: true })).toBeAttached();
+  await input.fill("Follow up");
+  const preview = page.getByRole("status").filter({ hasText: "will be omitted" });
+  await expect(preview).toContainText("1 earlier turn will be omitted");
+  await expect(preview).toContainText("Only your new message will be sent.");
+  expect(calls).toBe(1);
+  await page.screenshot({ path: "test-results/context-limit-preview.png", fullPage: true });
+  await send.click();
+  await expect(page.getByText("Short answer 2", { exact: true })).toBeVisible();
+  expect(sent[1]).toEqual([{ role: "user", content: "Follow up" }]);
+  await expect(page.getByText("Sent with 1 earlier turn omitted.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "7 output tokens" })).toBeVisible();
+  await expect(page.getByText(longAnswer.trim(), { exact: true })).toBeAttached();
+  await page.screenshot({ path: "test-results/context-limit-sent.png", fullPage: true });
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await input.fill("Continue");
+  await expect(preview).toContainText("The most recent turns will be sent.");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: "test-results/context-limit-mobile.png", fullPage: true });
+  await send.click();
+  await expect(page.getByText("Short answer 3", { exact: true })).toBeVisible();
+  expect(sent[2]).toEqual([
+    { role: "user", content: "Follow up" },
+    { role: "assistant", content: "Short answer 2" },
+    { role: "user", content: "Continue" },
+  ]);
+  expect(calls).toBe(3);
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await input.fill("Fresh start");
+  await expect(preview).toHaveCount(0);
+  await expect(page.getByText("Sent with 1 earlier turn omitted.", { exact: true })).toHaveCount(0);
+});
+
+test("oversized new messages remain editable and show validation before sending", async ({
+  page,
+}) => {
+  await hostFixture(page);
+  let calls = 0;
+  await page.route("**/api/chat", (route) => {
+    calls++;
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: '{"content":"Accepted","done":true}\n',
+    });
+  });
+  await page.goto("/playground");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  const send = page.getByRole("button", { name: "Send message" });
+  const prompt = "An overlong message. ".repeat(900);
+  await expect(input).toBeEditable();
+  await input.focus();
+  await page.keyboard.insertText(prompt);
+  await expect(input).toHaveValue(prompt);
+  await expect(page.getByRole("alert")).toHaveText(
+    "This message is too long. Shorten it before sending.",
+  );
+  await expect(send).toBeDisabled();
+  await page.screenshot({ path: "test-results/prompt-too-long.png", fullPage: true });
+  await input.press("Enter");
+  expect(calls).toBe(0);
+  await expect(page.getByRole("alert")).toHaveCount(1);
+  await input.fill("Shorter message");
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await send.click();
+  await expect(page.getByText("Accepted", { exact: true })).toBeVisible();
+  expect(calls).toBe(1);
+});

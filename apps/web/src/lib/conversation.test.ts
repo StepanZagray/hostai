@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
-import { chatHistory, type ConversationTurn } from "./conversation";
+import { prepareChatRequest, type ConversationTurn } from "./conversation";
+
+const settings = { temperature: 0.7, maxTokens: 128 };
+function prepare(turns: ConversationTurn[], model: string, prompt: string) {
+  const request = prepareChatRequest(turns, model, prompt, settings);
+  if (request.error !== null) throw new Error(request.error);
+  return request;
+}
+function chatHistory(turns: ConversationTurn[], model: string, prompt: string) {
+  return prepare(turns, model, prompt).messages;
+}
 
 const completed: ConversationTurn = {
   id: "one",
@@ -10,6 +20,17 @@ const completed: ConversationTurn = {
 };
 
 describe("conversation context", () => {
+  it("keeps long conversations within the gateway message limit", () => {
+    const turns = Array.from({ length: 32 }, (_, i) => ({ ...completed, id: String(i) }));
+    const request = prepareChatRequest(turns, completed.model, "Next", {
+      temperature: 0.7,
+      maxTokens: 128,
+    });
+    expect(request.error).toBeNull();
+    if (request.error !== null) throw new Error(request.error);
+    expect(request.messages.length).toBe(63);
+    expect(request.omittedTurns).toBe(1);
+  });
   it("keeps completed exchanges in order and excludes display metadata", () => {
     expect(
       chatHistory(
@@ -62,5 +83,109 @@ describe("conversation context", () => {
     expect(chatHistory([completed], "other-model", "Hello")).toEqual([
       { role: "user", content: "Hello" },
     ]);
+  });
+});
+
+describe("request context budgets", () => {
+  it("admits exactly 64 messages, then removes one oldest user-only turn", () => {
+    const turns = Array.from({ length: 64 }, (_, i) => ({
+      ...completed,
+      id: String(i),
+      prompt: `Question ${i}`,
+      state: "failed" as const,
+    }));
+    const atLimit = prepare(turns.slice(1), completed.model, "Next");
+    expect(atLimit.messages).toHaveLength(64);
+    expect(atLimit.omittedTurns).toBe(0);
+    const overLimit = prepare(turns, completed.model, "Next");
+    expect(overLimit.messages).toEqual(atLimit.messages);
+    expect(overLimit.omittedTurns).toBe(1);
+  });
+
+  it("keeps exactly 65536 content code units and drops a whole turn above it", () => {
+    const older = { ...completed, prompt: "a".repeat(16384), response: "b".repeat(16383) };
+    const newer = {
+      ...completed,
+      id: "two",
+      prompt: "c".repeat(16384),
+      response: "d".repeat(16384),
+    };
+    const atLimit = prepare([older, newer], completed.model, "x");
+    expect(atLimit.messages.reduce((n, message) => n + message.content.length, 0)).toBe(65536);
+    expect(atLimit.omittedTurns).toBe(0);
+    const overLimit = prepare([older, newer], completed.model, "xx");
+    expect(overLimit.omittedTurns).toBe(1);
+    expect(overLimit.messages).toEqual([
+      { role: "user", content: newer.prompt },
+      { role: "assistant", content: newer.response },
+      { role: "user", content: "xx" },
+    ]);
+  });
+
+  it("stops at an oversized historical answer without reviving older context", () => {
+    const boundary = { ...completed, id: "boundary", response: "a".repeat(16384) };
+    const newest = { ...completed, id: "newest", prompt: "Recent", response: "Recent answer" };
+    expect(prepare([completed, boundary, newest], completed.model, "Next").includedTurns).toBe(3);
+    const turns = [completed, { ...boundary, response: boundary.response + "a" }, newest];
+    const original = structuredClone(turns);
+    const request = prepare(turns, completed.model, "Next");
+    expect(request.omittedTurns).toBe(2);
+    expect(request.messages).toEqual(chatHistory([newest], completed.model, "Next"));
+    expect(turns).toEqual(original);
+  });
+
+  it("measures exact serialized body bytes including escaping and request settings", () => {
+    const turn = { ...completed, prompt: "\0".repeat(16384), response: "\0".repeat(16384) };
+    const prefix = "\0".repeat(10000);
+    const initialBody = JSON.stringify({
+      model: completed.model,
+      messages: [
+        { role: "user", content: turn.prompt },
+        { role: "assistant", content: turn.response },
+        { role: "user", content: prefix },
+      ],
+      ...settings,
+    });
+    const prompt = prefix + "a".repeat(262144 - new TextEncoder().encode(initialBody).length);
+    const atLimit = prepare([turn], completed.model, prompt);
+    expect(prompt.length).toBeLessThanOrEqual(16384);
+    expect(atLimit.omittedTurns).toBe(0);
+    expect(new TextEncoder().encode(atLimit.body)).toHaveLength(262144);
+    expect(JSON.parse(atLimit.body)).toEqual({
+      model: completed.model,
+      messages: atLimit.messages,
+      ...settings,
+    });
+    const overLimit = prepare([turn], completed.model, prompt + "a");
+    expect(overLimit.omittedTurns).toBe(1);
+    expect(overLimit.messages).toEqual([{ role: "user", content: prompt + "a" }]);
+  });
+
+  it("counts UTF-16 units without cutting Unicode or trimming the newest message", () => {
+    const turn = { ...completed, response: "🙂".repeat(8192) };
+    const prompt = "  Next 🙂 漢字\n";
+    expect(prepare([turn], completed.model, prompt).includedTurns).toBe(1);
+    const request = prepare([{ ...turn, response: turn.response + "🙂" }], completed.model, prompt);
+    expect(request.omittedTurns).toBe(1);
+    expect(request.messages).toEqual([{ role: "user", content: prompt }]);
+    expect(JSON.parse(request.body).messages).toEqual(request.messages);
+  });
+
+  it("does not charge incomplete assistant output against the context budget", () => {
+    const turn = { ...completed, state: "cancelled" as const, response: "a".repeat(20000) };
+    const request = prepare([turn], completed.model, "Try again");
+    expect(request.omittedTurns).toBe(0);
+    expect(request.messages).toEqual([
+      { role: "user", content: turn.prompt },
+      { role: "user", content: "Try again" },
+    ]);
+  });
+
+  it("rejects invalid new prompts instead of shortening them", () => {
+    expect(prepareChatRequest([], completed.model, " \n", settings).error).toBe("Enter a message.");
+    expect(prepare([], completed.model, "a".repeat(16384)).messages[0].content).toHaveLength(16384);
+    expect(prepareChatRequest([], completed.model, "a".repeat(16385), settings).error).toMatch(
+      /too long/,
+    );
   });
 });

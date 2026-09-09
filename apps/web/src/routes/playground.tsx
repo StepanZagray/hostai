@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowUp,
@@ -15,7 +15,7 @@ import { css } from "../../styled-system/css";
 import { Badge, Button, CodeBlock, PageHeading, button, muted, panel } from "../components/ui";
 import { useHost } from "../lib/host-context";
 import { readChatStream } from "../lib/api";
-import { chatHistory, type ConversationTurn } from "../lib/conversation";
+import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
 
 export const Route = createFileRoute("/playground")({
   validateSearch: (search: Record<string, unknown>): { model?: string } => ({
@@ -41,6 +41,10 @@ function Playground() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [showApi, setShowApi] = useState(false);
+  const draft = useMemo(
+    () => prepareChatRequest(turns, model, prompt.trim(), { temperature, maxTokens }),
+    [turns, model, prompt, temperature, maxTokens],
+  );
   const abort = useRef<AbortController | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
   useEffect(() => () => abort.current?.abort(), []);
@@ -50,14 +54,15 @@ function Playground() {
   const ready = !!status?.ollamaConnected && modelAvailable;
   async function send() {
     if (abort.current || !ready || !prompt.trim()) return;
+    if (draft.error !== null) return;
     const turn: ConversationTurn = {
       id: crypto.randomUUID(),
       model,
       prompt: prompt.trim(),
       response: "",
       state: "streaming",
+      omittedTurns: draft.omittedTurns,
     };
-    const history = chatHistory(turns, model, turn.prompt);
     const updateTurn = (response: string, state: ConversationTurn["state"]) => {
       setTurns((current) =>
         current.map((item) => (item.id === turn.id ? { ...item, response, state } : item)),
@@ -77,7 +82,7 @@ function Playground() {
         method: "POST",
         signal: current.signal,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, messages: history, temperature, maxTokens }),
+        body: draft.body,
       });
       await readChatStream(response, (chunk) => {
         answer += chunk.content;
@@ -258,6 +263,12 @@ function Playground() {
                           ? "Thinking…"
                           : "No response text returned."}
                     </p>
+                    {message.role === "user" && (message.turn.omittedTurns ?? 0) > 0 && (
+                      <p className={css({ mt: "2", fontSize: "xs", color: "muted" })}>
+                        Sent with {message.turn.omittedTurns} earlier{" "}
+                        {message.turn.omittedTurns === 1 ? "turn" : "turns"} omitted.
+                      </p>
+                    )}
                     {message.role === "assistant" &&
                       message.turn.state !== "streaming" &&
                       (message.turn.state !== "completed" || !message.content.trim()) && (
@@ -277,6 +288,31 @@ function Playground() {
             <div ref={bottom} />
           </div>
           <div className={css({ p: "4", pt: 0 })}>
+            {!busy && draft.error === null && draft.omittedTurns > 0 && (
+              <p
+                role="status"
+                className={css({
+                  mb: "3",
+                  p: "3",
+                  borderRadius: "6px",
+                  bg: "warningSoft",
+                  color: "warning",
+                  fontSize: "xs",
+                })}
+              >
+                {draft.omittedTurns} earlier {draft.omittedTurns === 1 ? "turn" : "turns"} will be
+                omitted to fit the request limits.{" "}
+                {draft.includedTurns === 0
+                  ? "Only your new message will be sent. "
+                  : "The most recent turns will be sent. "}
+                Your full conversation stays visible.
+              </p>
+            )}
+            {!busy && prompt.trim() && draft.error !== null && (
+              <p role="alert" className={css({ mb: "3", color: "danger", fontSize: "xs" })}>
+                {draft.error}
+              </p>
+            )}
             {error && (
               <p
                 role="alert"
@@ -309,7 +345,6 @@ function Playground() {
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
                 disabled={!ready || busy}
-                maxLength={16000}
                 placeholder={ready ? "Message your model…" : "Your model will be ready after setup"}
                 rows={2}
                 className={css({
@@ -348,7 +383,7 @@ function Playground() {
                   <Button
                     type="submit"
                     variant="primary"
-                    disabled={!ready || !prompt.trim()}
+                    disabled={!ready || draft.error !== null}
                     aria-label="Send message"
                   >
                     <ArrowUp />
