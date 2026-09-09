@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.reactive.result.method.annotation.ResponseEntityExceptionHandler;
 import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.server.ServerWebInputException;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Mono;
 
 @RestControllerAdvice
@@ -35,6 +36,17 @@ public class ApiErrors extends ResponseEntityExceptionHandler {
     @ExceptionHandler(DataBufferLimitException.class)
     public ResponseEntity<ProblemDetail> tooLarge() {
         return problem(HttpStatus.PAYLOAD_TOO_LARGE, "Request body must not exceed 262144 bytes.");
+    }
+
+    @Override
+    protected Mono<ResponseEntity<Object>> handleResponseStatusException(
+            ResponseStatusException error, HttpHeaders headers, HttpStatusCode status,
+            ServerWebExchange exchange) {
+        if (status.value() == 413) {
+            return createResponseEntity(ProblemDetail.forStatusAndDetail(status,
+                    "Request body must not exceed 262144 bytes."), headers, status, exchange);
+        }
+        return super.handleResponseStatusException(error, headers, status, exchange);
     }
 
     @Override

@@ -1,0 +1,16 @@
+diff --git a/dist/esm/vite/dev-server-plugin/plugin.js b/dist/esm/vite/dev-server-plugin/plugin.js
+index a254198e794ea97e80ca69bd98cb19b3b919f0f9..51baa1343058faa9945090c461e2c86ba78d03da 100644
+--- a/dist/esm/vite/dev-server-plugin/plugin.js
++++ b/dist/esm/vite/dev-server-plugin/plugin.js
+@@ -1,6 +1,10 @@
+ import { ENTRY_POINTS, VITE_ENVIRONMENT_NAMES } from "../../constants.js";
+ import { CSS_MODULES_REGEX, collectDevStyles, normalizeCssModuleCacheKey } from "./dev-styles.js";
+-import { isRunnableDevEnvironment } from "vite";
++// Vite+ can load a different class identity than the plugin's Vite import.
++// Check the API used below instead of instanceof (TanStack/router#7614).
++function isRunnableDevEnvironment(environment) {
++	return environment != null && typeof environment.runner?.import === "function";
++}
+ import { NodeRequest, sendNodeResponse } from "srvx/node";
+ //#region src/vite/dev-server-plugin/plugin.ts
+ function devServerPlugin({ getConfig: _getConfig, devSsrStylesEnabled, installDevServerMiddleware }) {

@@ -1,0 +1,12 @@
+packages:
+  - apps/*
+overrides:
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.1
+  vitest: 4.1.11
+allowBuilds:
+  esbuild: true
+  electron: true
+minimumReleaseAgeExclude:
+  - electron@44.3.0
+patchedDependencies:
+  '@tanstack/start-plugin-core@1.171.40': patches/@tanstack__start-plugin-core@1.171.40.patch

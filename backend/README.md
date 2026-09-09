@@ -1,6 +1,6 @@
 # HostAI backend
 
-Java 26, Spring Boot 4.1.1, Maven Wrapper 3.3.4 / Maven 3.9.11. No preview
+Java 26, Spring Boot 4.1.1, Maven Wrapper 3.3.4 / Maven 3.9.12. No preview
 features. This is an **unauthenticated localhost prototype**, bound to
 `127.0.0.1:8080`. There is no tunnel, remote access, account system, or durable
 database. Request history and counters live only in memory and reset on restart.

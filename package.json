@@ -1,0 +1,19 @@
+{
+  "name": "hostai",
+  "private": true,
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "dev": "pnpm --filter @hostai/web dev",
+    "build": "pnpm --filter @hostai/web build",
+    "check": "pnpm --filter @hostai/web check",
+    "test": "pnpm --filter @hostai/web test",
+    "test:ui": "python3 scripts/test-ui.py",
+    "desktop:dev": "node scripts/workspace.mjs desktop --dev",
+    "desktop:start": "node scripts/workspace.mjs desktop",
+    "start": "node scripts/workspace.mjs browser",
+    "build:all": "pnpm build && pnpm backend:build",
+    "backend:build": "node scripts/backend.mjs build",
+    "backend:dev": "node scripts/backend.mjs dev",
+    "backend:test": "node scripts/backend.mjs test"
+  }
+}

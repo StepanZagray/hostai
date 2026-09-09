@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.output/
+.tanstack/
+styled-system/
+target/
+.env
+.env.*
+!.env.example
+test-results/
+playwright-report/
+*.log
