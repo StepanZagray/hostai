@@ -152,3 +152,56 @@ test("copy feedback belongs to the current command even when writes finish out o
   await page.getByRole("slider", { name: /Temperature/ }).fill("1.1");
   await expect(status).toHaveCount(0);
 });
+
+test("multi-chunk formatting catches up to the complete original answer", async ({ page }) => {
+  await hostFixture(page);
+  type StreamingWindow = typeof window & { pushAnswer: (content: string, done: boolean) => void };
+  await page.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      if (String(input) !== "/api/chat") return original(input, init);
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            (window as StreamingWindow).pushAnswer = (content, done) => {
+              controller.enqueue(
+                new TextEncoder().encode(JSON.stringify({ content, done }) + "\n"),
+              );
+              if (done) controller.close();
+            };
+          },
+        }),
+      );
+    };
+    Object.defineProperty(navigator, "clipboard", {
+      value: {
+        writeText: async (text: string) => {
+          (window as ClipboardWindow).copiedText = text;
+        },
+      },
+    });
+  });
+  await page.goto("/playground");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("A detailed answer");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await page.waitForFunction(() => typeof (window as StreamingWindow).pushAnswer === "function");
+  const opening = "## Opening\n\n";
+  await page.evaluate((content) => (window as StreamingWindow).pushAnswer(content, false), opening);
+  await expect(page.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  const middle = "- **An explanation** with `code`.\n".repeat(150) + "\n";
+  await page.evaluate((content) => (window as StreamingWindow).pushAnswer(content, false), middle);
+  await expect(page.getByRole("listitem")).toHaveCount(150);
+  const end = "## Final section\n\n```js\nconst finished = true;\n```\n\nThe answer is complete.";
+  await page.evaluate((content) => (window as StreamingWindow).pushAnswer(content, true), end);
+  await expect(page.getByRole("heading", { name: "Final section", exact: true })).toBeVisible();
+  await expect(page.getByLabel("js code", { exact: true })).toHaveText("const finished = true;\n");
+  await expect(page.getByText("The answer is complete.", { exact: true })).toBeVisible();
+  await expect(
+    page.getByLabel("Conversation messages", { exact: true }).locator('[aria-busy="true"]'),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Copy response", exact: true }).click();
+  expect(await page.evaluate(() => (window as ClipboardWindow).copiedText)).toBe(
+    opening + middle + end,
+  );
+  await page.screenshot({ path: "test-results/deferred-answer-complete.png", fullPage: true });
+});

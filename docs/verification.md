@@ -72,8 +72,44 @@ not launch a real external browser or validate macOS clipboard behavior.
 Renderer behavior follows [react-markdown](https://github.com/remarkjs/react-markdown)
 with remark-gfm and no raw-HTML plugin. Permission names and callbacks follow
 [Electron session documentation](https://www.electronjs.org/docs/latest/api/session).
-Completed answers are memoized; active answers still reparse on each chunk, so
-very large output rendering performance has not been benchmarked.
+The expensive answer renderer is memoized behind `useDeferredValue`. Incoming
+text and copy state stay current while React can defer formatting under load.
+The answer wrapper exposes `aria-busy` until it catches up. Each actual parse is
+still synchronous; this does not eliminate large-document stalls.
+
+## Rendering measurements
+
+With a production build running on port 3001:
+
+```sh
+HOSTAI_TEST_URL=http://127.0.0.1:3001 HOSTAI_RENDER_BENCH=1 python3 scripts/test-ui.py --grep 'measure .* streaming rendering'
+```
+
+These opt-in diagnostics stream 16,000 ASCII characters in 1,000 chunks, nominally
+10ms apart, from a fixture worker served on the same origin. Worker timestamps
+record achieved cadence independently of the UI thread. The initial blob-worker
+approach was rejected by production CSP; the fixture requires no policy change.
+A single conversation follows output at 1440×1100, using Chromium's artificial
+4× CPU slowdown and the isolated software renderer. Prose also goes through the
+Markdown parser; it is a different content shape, not a parser-free baseline.
+
+JSON artifacts `test-results/render-*-4x-*.json` record browser version, fixture
+parameters, frame gaps, >50ms main-thread tasks, worker delivery delays and DOM
+mutation batches. Mutation batches are not React commit counts. The fixture
+checks whole-response copying against its exact source after measurement and
+waits for deferred formatting to settle. Its clipboard is a test-local stub;
+the separate Electron scenario checks the actual private clipboard.
+
+Timing is diagnostic, not a hardware-dependent test gate or an inference benchmark.
+Single-run differences are exploratory, not a guaranteed speedup across devices.
+This does not measure INP, real network cancellation, deep conversation histories,
+or arbitrary unbounded answers. All workers, observers, animation callbacks and
+CDP sessions are disposed. The existing UI suite covers Stop, stream failures,
+Clear, model changes and scrolling separately.
+
+Sources: [React deferred rendering](https://react.dev/reference/react/useDeferredValue),
+[Chromium CPU throttling](https://chromedevtools.github.io/devtools-protocol/tot/Emulation/#method-setCPUThrottlingRate),
+and [long-task timing](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceLongTaskTiming).
 
 ## Isolated UI runner
 

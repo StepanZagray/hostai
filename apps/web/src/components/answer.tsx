@@ -1,4 +1,4 @@
-import { Children, isValidElement, memo, type ReactNode } from "react";
+import { Children, isValidElement, memo, useDeferredValue, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { css } from "../../styled-system/css";
@@ -91,8 +91,9 @@ const components: Components = {
   ),
 };
 
-// Memoizing by the source string avoids parsing completed answers on every chunk.
-export const Answer = memo(function Answer({ text }: { text: string }) {
+// Keep the expensive parser behind a memo boundary: urgent updates with the
+// previous deferred value must not parse it again.
+const FormattedAnswer = memo(function FormattedAnswer({ text }: { text: string }) {
   return (
     <div
       className={css({
@@ -137,3 +138,13 @@ export const Answer = memo(function Answer({ text }: { text: string }) {
     </div>
   );
 });
+
+export function Answer({ text }: { text: string }) {
+  // Prioritize interaction and fresh request state over another full Markdown parse.
+  const displayedText = useDeferredValue(text);
+  return (
+    <div aria-busy={displayedText !== text}>
+      <FormattedAnswer text={displayedText} />
+    </div>
+  );
+}

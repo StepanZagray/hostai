@@ -222,7 +222,45 @@ mobile/code overflow states were visually inspected. The Java integration case
 was skipped because gateway behavior did not change. No actual model ran;
 macOS clipboard and external browser launch remain unverified.
 
+## Scheduling streamed answer formatting
+
+A production-app fixture measured one 16,000-character answer across 1,000
+worker-paced chunks. Without artificial slowdown, dense Markdown produced a
+33ms p95 frame gap versus 16ms for prose; neither had >50ms main-thread tasks.
+Thus a zero long-task count alone would have missed the scheduling difference.
+Under Chromium's artificial 4× CPU slowdown, Markdown produced 117ms p95 frame
+gaps and a 151ms maximum in the initial run. Prose still uses the same parser;
+this comparison isolates content complexity, not all parser overhead.
+
+Following Opus 5 High advice, `Answer` now defers only the displayed string and
+passes it to a memoized formatting component. The memo boundary prevents urgent
+renders with the old deferred text from parsing that text again. Raw accumulated
+state, terminal handling and response copying stay unchanged. `aria-busy` marks
+the formatting catch-up. Completed turns retain memoization.
+
+The first deferred run reduced the dense fixture's p95 frame gap from 117ms to
+67ms and its maximum from 151ms to 109ms at 4× slowdown. This is a partial,
+exploratory result on a software-rendered test display; individual synchronous
+parses can still block, and the displayed answer can lag received text. The
+change does not claim a model-speed or real-device responsiveness benchmark.
+
+Two follow-up runs waited for `aria-busy` to clear before stopping measurement:
+dense Markdown p95 callback gaps were 66ms and 57ms, with maxima of 107ms and
+120ms. They recorded 50 and 49 >50ms tasks versus 70 in the initial baseline.
+Worker delivery spanned 9,990ms in both; both copied all 16,000 source characters.
+These few runs support the direction, not a precise cross-device speedup.
+
+The final Opus review identified the terminal-DOM measurement boundary and a
+multi-chunk coverage gap. Both are now explicit checks. Validation: 80 unit tests,
+type checking/lint/formatting, production build, 35 distinct browser/Electron
+scenarios across full/focused runs, and both diagnostic scenarios repeated twice.
+Completed deferred output was visually inspected. The unchanged Java integration
+was skipped, and no actual model ran.
+
 ## Next candidates to investigate
 
-- Large streamed answers still reparse on each chunk. Measure realistic bounded
-  fixture output before deciding whether rendering needs scheduling or throttling.
+The user requested an end-to-end UX investigation for both roles: model download,
+selection, server startup, safe internet sharing, host discovery, connection and
+chat. Finish this rendering cycle, then trace those journeys against actual
+functionality. Current internet sharing, authentication, remote client access and
+host discovery are unimplemented; downloading still relies on Ollama's own tools.
