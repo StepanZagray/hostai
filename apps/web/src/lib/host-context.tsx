@@ -7,15 +7,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { getJson, type HostStatus, type Model, type RequestRecord } from "./api";
+import { readHostSnapshot, type HostSnapshot } from "./host-refresh";
 
-interface HostData {
-  status: HostStatus | null;
-  models: Model[];
-  requests: RequestRecord[];
+interface HostData extends HostSnapshot {
   loading: boolean;
   refreshing: boolean;
-  error: string | null;
   refresh: () => Promise<void>;
 }
 const HostContext = createContext<HostData | null>(null);
@@ -27,7 +23,7 @@ export function HostProvider({ children }: { children: ReactNode }) {
     requests: [],
     loading: true,
     refreshing: false,
-    error: null,
+    errors: { status: null, models: null, requests: null },
   });
   const controller = useRef<AbortController | null>(null);
   const refresh = useCallback(async () => {
@@ -36,30 +32,12 @@ export function HostProvider({ children }: { children: ReactNode }) {
     controller.current = current;
     setData((d) => ({ ...d, refreshing: true }));
     try {
-      const [status, modelData, requestData] = await Promise.all([
-        getJson<HostStatus>("/api/status", current.signal),
-        getJson<{ models: Model[] }>("/api/models", current.signal),
-        getJson<{ requests: RequestRecord[] }>("/api/requests", current.signal),
-      ]);
-      if (!current.signal.aborted)
-        setData({
-          status,
-          models: modelData.models,
-          requests: requestData.requests,
-          loading: false,
-          refreshing: false,
-          error: null,
-        });
+      const snapshot = await readHostSnapshot(current.signal);
+      if (controller.current === current && !current.signal.aborted)
+        setData({ ...snapshot, loading: false, refreshing: false });
     } catch (error) {
-      if (!current.signal.aborted)
-        setData({
-          status: null,
-          models: [],
-          requests: [],
-          loading: false,
-          refreshing: false,
-          error: error instanceof Error ? error.message : "Could not reach your host.",
-        });
+      // Superseded refreshes and unmounts must never replace the current snapshot.
+      if (!current.signal.aborted) throw error;
     }
   }, []);
   useEffect(() => {

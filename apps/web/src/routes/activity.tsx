@@ -8,7 +8,7 @@ import { useHost } from "../lib/host-context";
 
 export const Route = createFileRoute("/activity")({ component: Activity });
 function Activity() {
-  const { requests, refresh, refreshing } = useHost();
+  const { requests, refresh, refreshing, loading, errors } = useHost();
   const [filter, setFilter] = useState("all");
   return (
     <>
@@ -55,7 +55,11 @@ function Activity() {
         <p className={muted}>Latest 50 requests · Current gateway session</p>
       </div>
       <section className={panel}>
-        <RequestTable requests={requests.filter((r) => filter === "all" || r.status === filter)} />
+        <RequestTable
+          requests={requests.filter((r) => filter === "all" || r.status === filter)}
+          error={errors.requests}
+          loading={loading}
+        />
       </section>
       <p className={`${muted} ${css({ mt: "5" })}`}>
         Only request metadata is recorded. History is stored in memory and resets when the gateway

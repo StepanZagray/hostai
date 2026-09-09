@@ -29,13 +29,13 @@ import { RequestTable } from "../components/request-table";
 export const Route = createFileRoute("/")({ component: Overview });
 
 function Overview() {
-  const { status, models, requests, loading, refreshing, error, refresh } = useHost();
+  const { status, models, requests, loading, refreshing, errors, refresh } = useHost();
   const ready = !!status?.ollamaConnected && models.length > 0;
   const metrics = [
     {
       label: "Available models",
-      value: loading ? "…" : status ? String(models.length).padStart(2, "0") : "—",
-      sub: status?.ollamaConnected ? "Installed on your machine" : "Connect Ollama to discover",
+      value: loading ? "…" : !errors.models ? String(models.length).padStart(2, "0") : "—",
+      sub: errors.models ? "Discovery unavailable" : "Installed on your machine",
       icon: Box,
     },
     {
@@ -168,30 +168,6 @@ function Overview() {
           </div>
         </div>
       </section>
-      {error && (
-        <div
-          role="alert"
-          className={css({
-            mb: "6",
-            py: "3",
-            px: "4",
-            borderRadius: "8px",
-            color: "warning",
-            bg: "warningSoft",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: "3",
-            flexWrap: "wrap",
-            fontSize: "xs",
-          })}
-        >
-          <span>{error}</span>
-          <Link to="/connection" className={css({ fontWeight: 750, textDecoration: "underline" })}>
-            View setup
-          </Link>
-        </div>
-      )}
       <section
         aria-label="Host metrics"
         aria-busy={loading}
@@ -329,7 +305,7 @@ function Overview() {
             </Link>
           }
         />
-        <RequestTable requests={requests.slice(0, 5)} />
+        <RequestTable requests={requests.slice(0, 5)} error={errors.requests} loading={loading} />
       </section>
     </>
   );

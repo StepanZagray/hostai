@@ -9,13 +9,17 @@ export function Topology() {
     { name: "This workspace", detail: "Browser client", icon: Laptop, ready: true },
     {
       name: "HostAI gateway",
-      detail: status ? "Connected" : "Not connected",
+      detail: status ? "Connected" : "Status unavailable",
       icon: Route,
       ready: !!status,
     },
     {
       name: "Ollama runtime",
-      detail: status?.ollamaConnected ? "Ready for requests" : "Waiting for runtime",
+      detail: !status
+        ? "Status unavailable"
+        : status.ollamaConnected
+          ? "Ready for requests"
+          : "Waiting for runtime",
       icon: Box,
       ready: !!status?.ollamaConnected,
     },

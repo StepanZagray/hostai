@@ -43,7 +43,7 @@ function Connection() {
             title="Host connection"
             action={
               <Badge tone={status ? "good" : "warning"}>
-                {status ? "Connected" : "Not connected"}
+                {status ? "Connected" : "Unavailable"}
               </Badge>
             }
           />
@@ -66,7 +66,7 @@ function Connection() {
           >
             <div>
               <dt>Inference runtime</dt>
-              <dd>{status?.ollamaUrl ?? "Not connected"}</dd>
+              <dd>{status?.ollamaUrl ?? "Unavailable"}</dd>
             </div>
             <div>
               <dt>Gateway version</dt>

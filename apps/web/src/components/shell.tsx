@@ -28,7 +28,8 @@ const navigation = [
 export function Shell() {
   const [menuOpen, setMenuOpen] = useState(false);
   const path = useRouterState({ select: (s) => s.location.pathname });
-  const { status, loading } = useHost();
+  const { status, loading, errors, refreshing, refresh } = useHost();
+  const refreshErrors = Object.values(errors).filter((error) => error !== null);
   const current = navigation.find((n) => n.to === path)?.label ?? "Workspace";
   return (
     <div className={css({ minH: "100dvh", display: "flex" })}>
@@ -284,7 +285,7 @@ export function Shell() {
               Local access only
             </span>
             <Badge tone={status ? "good" : "neutral"}>
-              {loading ? "Connecting" : status ? "Gateway online" : "Gateway offline"}
+              {loading ? "Connecting" : status ? "Gateway online" : "Gateway unavailable"}
             </Badge>
           </div>
         </header>
@@ -297,6 +298,33 @@ export function Shell() {
             minH: "calc(100dvh - 116px)",
           })}
         >
+          {refreshErrors.length > 0 && (
+            <div
+              role="alert"
+              className={css({
+                mb: "6",
+                p: "4",
+                borderRadius: "8px",
+                bg: "warningSoft",
+                color: "warning",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "3",
+                flexWrap: "wrap",
+                fontSize: "xs",
+              })}
+            >
+              <div>
+                {refreshErrors.map((error) => (
+                  <p key={error}>{error}</p>
+                ))}
+              </div>
+              <Button disabled={refreshing} onClick={() => void refresh()}>
+                Retry refresh
+              </Button>
+            </div>
+          )}
           <Outlet />
         </main>
         <footer

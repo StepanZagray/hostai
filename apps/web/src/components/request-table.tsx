@@ -3,7 +3,25 @@ import { css } from "../../styled-system/css";
 import type { RequestRecord } from "../lib/api";
 import { Badge, EmptyState } from "./ui";
 
-export function RequestTable({ requests }: { requests: RequestRecord[] }) {
+export function RequestTable({
+  requests,
+  error,
+  loading = false,
+}: {
+  requests: RequestRecord[];
+  error?: string | null;
+  loading?: boolean;
+}) {
+  if (loading || error)
+    return (
+      <EmptyState
+        icon={<Activity size={22} />}
+        title={loading ? "Loading request activity" : "Request activity unavailable"}
+        description={
+          loading ? "Checking your gateway…" : "Refresh to try loading request history again."
+        }
+      />
+    );
   if (!requests.length)
     return (
       <EmptyState

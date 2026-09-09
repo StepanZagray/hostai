@@ -17,7 +17,7 @@ import {
 
 export const Route = createFileRoute("/models")({ component: Models });
 function Models() {
-  const { models, status, loading, refreshing, refresh } = useHost();
+  const { models, loading, refreshing, refresh, errors } = useHost();
   const [search, setSearch] = useState("");
   const filtered = models.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()));
   return (
@@ -66,7 +66,11 @@ function Models() {
           />
         </label>
         <span className={muted}>
-          {models.length} installed {models.length === 1 ? "model" : "models"}
+          {loading
+            ? "Checking installed models…"
+            : errors.models
+              ? "Model count unavailable"
+              : `${models.length} installed ${models.length === 1 ? "model" : "models"}`}
         </span>
       </div>
       <section className={panel} aria-busy={loading}>
@@ -76,17 +80,17 @@ function Models() {
             title="Looking for your models"
             description="Checking your local runtime…"
           />
+        ) : errors.models ? (
+          <EmptyState
+            icon={<Box size={26} />}
+            title="Model discovery unavailable"
+            description="Your installed models could not be checked. Check Ollama and retry the refresh."
+          />
         ) : !models.length ? (
           <EmptyState
             icon={<Box size={26} />}
-            title={
-              status?.ollamaConnected ? "Your library starts here" : "Connect your model runtime"
-            }
-            description={
-              status?.ollamaConnected
-                ? "Download your first model with Ollama, then refresh this library. Start small and choose a model that fits your machine."
-                : "Once Ollama is running, your installed models will appear here automatically."
-            }
+            title="Your library starts here"
+            description="Download your first model with Ollama, then refresh this library. Start small and choose a model that fits your machine."
             action={
               <Link to="/connection" className={button({ variant: "primary" })}>
                 View setup

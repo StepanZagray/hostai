@@ -6,6 +6,12 @@ Backend tests run against an ephemeral loopback HTTP stub. They cover discovery,
 
 Browser scenarios cover offline setup, filtering models, streamed conversations, errors, and responsive navigation at 320/768/1024/1440 pixels. Completed and overloaded playground screenshots are retained in `test-results/`. The Electron smoke test opens the actual shared app and checks navigation and absence of Node integration in the renderer.
 
+Refresh tests cover all combinations of endpoint failure, unavailable versus empty
+model discovery, cancellation, and recovery. Browser checks verify that a failed
+history refresh leaves chat usable, failed status/discovery cannot claim readiness,
+and keyboard retry restores the affected view. Partial-refresh and unavailable-model
+screenshots are retained with the other UI evidence.
+
 `pnpm build && pnpm test:http` launches the built Node/Start server and an HTTP backend stub on ephemeral loopback ports. It verifies byte-preserving forwarding and real 413/504 responses for oversized or stalled uploads, then checks that the server still handles another request. This catches incoming-socket teardown bugs that mocked Fetch streams cannot reproduce. Both processes and all sockets are closed afterward. CI runs this suite after building; it needs no display or Java service.
 
 ## Isolated UI runner

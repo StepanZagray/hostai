@@ -34,12 +34,36 @@ unimplemented. The UI suite still requires the documented Linux isolation tools
 and is separate from CI. The proxy deadline is fixed; custom Java generation
 timeouts must remain below it.
 
+## Independent refresh failures
+
+Opus 5 High advised on endpoint independence and freshness. Refresh now keeps
+successful status/model/history results independently. Failed fields are cleared
+and labeled unavailable; cached values are not presented as current. In
+particular, a history failure leaves healthy chat usable, while failed status or
+model discovery cannot imply generation readiness. An available, empty model
+library remains distinct from failed discovery.
+
+A shared accessible notice identifies each failure and offers keyboard-accessible
+retry on every page. Activity and model views show unavailable states instead of
+claiming empty results, and unknown model counts use an unavailable label. Abort
+and controller-identity guards discard superseded refreshes.
+
+The focused Opus review also caught two display assumptions: a missing status
+check now reads unavailable, and an empty library follows successful discovery
+even when the separate status check fails. One review attempt exited without an
+answer; the retry completed. The backend contract was checked before accepting
+the review's claims about successful-but-unavailable responses.
+
+Validation: 47 unit tests, type checking/lint/formatting, production build, and
+ten isolated browser/Electron scenarios. Browser checks cover mixed endpoint
+outcomes, chat during a history failure, recovery, keyboard retry, and responsive
+layouts, and unknown counts during loading. The Java integration scenario was
+skipped in this cycle; proxy and Java code were not changed. Screenshots are in ignored `test-results/`.
+
 ## Next candidates to investigate
 
-- `host-context.tsx` clears status and models when any refresh endpoint fails.
-  Check how to show a partial refresh failure without disabling healthy inference.
 - `playground.tsx` retains partial failed assistant responses in `messages`, which
   is also reused as the next request's history despite the nearby exclusion
   comment. Establish the intended retry/history behavior with regression tests.
 
-These candidates have not been implemented in this cycle.
+This candidate has not been implemented yet.
