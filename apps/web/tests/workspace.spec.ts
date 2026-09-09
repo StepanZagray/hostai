@@ -172,7 +172,7 @@ test("failed model discovery is unavailable, not an empty library", async ({ pag
   await expect(page.getByText("Gateway online", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Model discovery unavailable" })).toBeVisible();
   await expect(page.getByText("Model count unavailable", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Your library starts here" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "No installed models yet" })).toHaveCount(0);
   await page.screenshot({ path: "test-results/models-unavailable.png", fullPage: true });
   await page.getByRole("link", { name: "Playground", exact: true }).click();
   await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
@@ -200,7 +200,7 @@ test("failed status refresh never claims readiness from a successful model fetch
   );
   await page.getByRole("button", { name: "Retry refresh" }).click();
   await page.getByRole("link", { name: "Models", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Your library starts here" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No installed models yet" })).toBeVisible();
 });
 
 test("model count stays unknown until discovery finishes", async ({ page }) => {
@@ -221,7 +221,7 @@ test("model count stays unknown until discovery finishes", async ({ page }) => {
     finishDiscovery();
   }
   await expect(page.getByText("0 discovered models", { exact: true })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Your library starts here" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No installed models yet" })).toBeVisible();
 });
 
 test("failed responses stay visible but are excluded from the next prompt", async ({ page }) => {

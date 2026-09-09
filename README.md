@@ -1,6 +1,6 @@
 # HostAI
 
-A local inference workspace with one frontend for **Electron and your browser**, backed by Java. Connect an existing Ollama runtime, browse installed models, stream conversations, and inspect request activity.
+A local inference workspace with one frontend for **Electron and your browser**, backed by Java. Connect an existing Ollama runtime, download a local model, stream conversations, and inspect request activity.
 
 This is a working local foundation. **Authentication, API keys, internet tunnels, persistent history, signed installers, and bundled Java runtimes are not implemented.** Both servers bind to loopback; do not publish this version to the internet. Runtime and request metrics come from the backend, never sample data.
 
@@ -55,7 +55,7 @@ For a machine without a usable GPU, launch with `HOSTAI_SOFTWARE_RENDERING=1 pnp
 
 ## Connect a model
 
-Start Ollama and install a model appropriate to your hardware using its own tools. HostAI discovers the installed models when you refresh. Default Ollama origin: `http://127.0.0.1:11434`.
+Start Ollama, then open **Models → Download a model**. Enter an explicit library tag such as `qwen3:0.6b`, check its requirements using the library link, and explicitly start the download. HostAI shows current-layer progress, cancellation and retry; completion refreshes the library and offers **Try downloaded model**. Terminal downloads with Ollama also appear after refresh. Default Ollama origin: `http://127.0.0.1:11434`.
 
 ```sh
 HOSTAI_OLLAMA_URL=http://127.0.0.1:11435 pnpm desktop:dev
@@ -110,7 +110,13 @@ the selected conversation. This does not probe model capabilities or memory.
 After updating the web app, restart the updated Java gateway too: missing
 admission metadata is shown as unknown and cannot enable generation.
 
-The frontend proxy accepts at most 256 KiB per chat upload and allows ten seconds to receive it. On early rejection, the production server sends the complete error response, then discards at most another 1 MiB for up to 250 ms before closing the connection. This gives clients still uploading a chance to receive the error. Metadata requests time out after ten seconds. Chats have a 610-second proxy deadline, giving Java's default ten-minute generation limit time to return an explicit error. If you override Java's generation timeout, keep it below the proxy deadline. The browser finishes on the first `done:true` record and releases the response stream.
+The frontend proxy accepts at most 256 KiB per chat upload and allows ten seconds to receive it. On early rejection, the production server sends the complete error response, then discards at most another 1 MiB for up to 250 ms before closing the connection. This gives clients still uploading a chance to receive the error. Metadata and download-management requests time out after ten seconds. Download jobs continue independently of those requests and page navigation. Chats have a 610-second proxy deadline, giving Java's default ten-minute generation limit time to return an explicit error. If you override Java's generation timeout, keep it below the proxy deadline. The browser finishes on the first `done:true` record and releases the response stream.
+
+Download jobs run one at a time and retain only the latest 20 records in memory.
+A gateway restart clears the records and stops its active request; Ollama keeps
+model files and may retain partial layers. Cancellation stops this gateway’s
+request, not a download another Ollama client also requested. There is no catalog
+search, disk/RAM fit estimate, automatic download resumption or public sharing.
 
 ## Checks
 
@@ -132,5 +138,5 @@ The `vite` peer-version warning is caused by the Vite+ alias exposing version `0
 
 
 The [host and client journey audit](docs/user-journeys.md) records current UX gaps
-and the path to downloads, safe sharing, host discovery and remote chat. Those
+and the path from local downloads to safe sharing, host discovery and remote chat. Those
 remote capabilities remain unimplemented; the audit is not a deployment guide.

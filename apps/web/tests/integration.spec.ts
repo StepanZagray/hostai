@@ -57,3 +57,38 @@ test("shared UI streams through Java and releases a cancelled request", async ({
   await page.getByRole("link", { name: "Request activity", exact: true }).click();
   await expect(page.getByRole("cell", { name: "completed", exact: true }).first()).toBeVisible();
 });
+
+test("downloads through the real proxy and Java, cancels, retries and chats with the installed fixture", async ({
+  page,
+}) => {
+  test.skip(
+    process.env.HOSTAI_INTEGRATION !== "1",
+    "Requires Java pointed at the explicit isolated Ollama fixture.",
+  );
+  await page.goto("/models");
+  const panel = page.getByRole("region", { name: "Model downloads", exact: true });
+  await page.getByLabel("Model and tag", { exact: true }).fill("fixture-download:small");
+  await panel.getByRole("button", { name: "Download model", exact: true }).click();
+  await expect(panel.getByRole("progressbar")).toHaveAttribute("value", "25000000");
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await page.goto("/models");
+  await expect(panel.getByRole("progressbar")).toHaveAttribute("value", "25000000");
+  await panel.getByRole("button", { name: "Cancel download", exact: true }).click();
+  await expect(panel.getByText("Cancelled", { exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "Retry download", exact: true }).click();
+  await expect(
+    panel.getByRole("link", { name: "Try downloaded model", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/download-integration-complete.png", fullPage: true });
+  await panel.getByRole("link", { name: "Try downloaded model", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    "fixture-download:small",
+  );
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("First prompt after download");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(
+    page.getByText("Hello from the isolated test runtime. Stream complete.", { exact: true }),
+  ).toBeVisible();
+});

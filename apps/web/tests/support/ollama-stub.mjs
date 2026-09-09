@@ -1,5 +1,7 @@
 // Explicit test fixture. Never used by the application or its normal launcher.
 import { createServer } from "node:http";
+const installed = new Set();
+const attempts = new Map();
 const server = createServer(async (req, res) => {
   res.setHeader("Content-Type", "application/json");
   if (req.url === "/api/version") return res.end(JSON.stringify({ version: "test-stub" }));
@@ -7,6 +9,7 @@ const server = createServer(async (req, res) => {
     return res.end(
       JSON.stringify({
         models: [
+          ...[...installed].map((name) => ({ name, size: 100000000 })),
           { name: "test-remote:cloud", size: 0 },
           {
             name: "test-model:small",
@@ -17,6 +20,36 @@ const server = createServer(async (req, res) => {
         ],
       }),
     );
+  if (req.url === "/api/pull" && req.method === "POST") {
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const { model } = JSON.parse(body);
+    // Only this fixture tag can be pulled. No network or model files are involved.
+    if (model !== "fixture-download:small") {
+      res.writeHead(400);
+      return res.end("{}");
+    }
+    const attempt = (attempts.get(model) || 0) + 1;
+    attempts.set(model, attempt);
+    res.setHeader("Content-Type", "application/x-ndjson");
+    res.write(
+      JSON.stringify({
+        status: "pulling layer",
+        digest: "sha256:fixture",
+        total: 100000000,
+        completed: 25000000,
+      }) + "\n",
+    );
+    const timer = setTimeout(
+      () => {
+        installed.add(model);
+        res.end('{"status":"verifying sha256 digest"}\n{"status":"success"}\n');
+      },
+      attempt === 1 ? 30000 : 2500,
+    );
+    res.on("close", () => clearTimeout(timer));
+    return;
+  }
   if (req.url === "/api/chat") {
     for await (const _chunk of req) {
       /* Drain request; fixture never logs prompts. */

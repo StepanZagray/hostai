@@ -62,8 +62,10 @@ public class ApiErrors extends ResponseEntityExceptionHandler {
             }
             cause = cause.getCause();
         }
+        String kind = exchange.getRequest().getPath().value().startsWith("/api/model-downloads")
+                ? "model download" : "chat";
         return createResponseEntity(ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
-                "Invalid chat request. Check the required fields and documented input limits."),
+                "Invalid " + kind + " request. Check the required fields and documented input limits."),
                 headers, HttpStatus.BAD_REQUEST, exchange);
     }
 

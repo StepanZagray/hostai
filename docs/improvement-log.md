@@ -282,11 +282,65 @@ correctly triggered discovery failure; it was corrected without weakening the
 application check. The full remote workflow remains unimplemented, no model was
 downloaded, and nothing was exposed to the internet.
 
+## Completing local model downloads
+
+Opus 5 High advised the download lifecycle. Fable High was attempted twice but
+rejected both calls with the account's resource-limit response; GPT-6 Astra XHigh
+implemented the bounded Java scope in an isolated worktree instead. Its socket
+sandbox prevented network tests, so the primary agent reviewed and integrated
+its changes and ran the full HTTP suite with isolated local runtime fixtures.
+No delegated model was credited for execution its account or sandbox rejected.
+
+The Models page now accepts explicit tagged library names and manages one download
+at a time. Jobs belong to the gateway, survive browser navigation, expose bounded
+current-layer progress and explicit cancel/retry, and retain at most 20 records.
+An uncertain start retains its request ID, with an explicit way to dismiss the
+entry; cancellation is never implied by dismissal. Completion refreshes model
+discovery and offers a deliberate handoff to chat. Setup links to this flow.
+Unknown counts stay indeterminate, malformed/status failures remain actionable,
+and stale GET responses cannot overwrite a completed cancellation.
+
+The first independent backend run found an overall-deadline connection leak:
+`takeUntilOther` with an error-producing timer forwarded failure without cancelling
+its main source in the installed Reactor version. A real socket regression also
+reproduced the same existing chat bug. Both paths now emit a deadline value to
+cancel the source, then translate completion into the explicit timeout error.
+The before-fix tests observed a live upstream socket after failure; the corrected
+suite verifies its closure. Pull idle timeout is independently five minutes to
+allow silent integrity verification; total pull time remains bounded at two hours.
+
+The new management endpoints require JSON and exact browser origin checks. The
+Java boundary also rejects non-loopback Host names, including a matching rebound
+Origin/Host pair; the production web server already had this Host restriction.
+These checks are not authentication. The UI/API remain unauthenticated and bound
+to loopback; no tunnel, sharing, directory, remote client or access grant exists.
+
+Opus's first final review could read only frontend files because the isolated
+backend worktree was outside its permitted scope. It correctly flagged raw JSON
+parse errors and a missing uncertain-request dismissal; those were addressed.
+Its insecure-LAN UUID warning does not apply to the supported loopback deployment,
+and its web Host warning was checked against the existing server guard. Malformed
+job lists still fail closed, because silently skipping an active job would enable
+misleading controls. Backend review was repeated after files were integrated and confirmed the deadline
+fix and subscription ownership. Its Host-header finding reflected a read made
+before the concurrently added guard/test; the final 71-test suite covers that case.
+Its statement that cache/history caveats were unsurfaced was checked against the
+existing cancellation text and history footer. Suggestions about future HTTP
+methods and fatal JVM errors were not treated as current defects. Cross-record
+counter inconsistency remains an explicit protocol failure; supported layer changes
+carry their digest, and unknown counts are already represented without a percentage.
+
+Verification evidence is recorded in verification.md. No model was downloaded or
+run, and no public endpoint was opened; integration uses only simulated Ollama
+responses. Download history/idempotency are intentionally not durable across
+restart or eviction, and cancellation cannot promise deletion of cached layers or
+termination of work another Ollama client requested.
+
 ## Next candidates to investigate
 
-Complete the host's download-to-first-chat loop, beginning with model lifecycle
-and a trustworthy progress/recovery surface. Preserve the full destination in
-[user-journeys.md](user-journeys.md): authenticated sharing and a distinct client
-connection/chat journey, then searchable public hosts. Local setup fixes do not
-substitute for those capabilities. Chat retry and conversation preservation are
-also concrete current UX gaps.
+Continue the full host/client destination in [user-journeys.md](user-journeys.md):
+requirements-aware model discovery, reliable conversation retry/preservation,
+then authenticated model serving with revocable invites and a distinct client
+connection/chat surface. Choose and verify a transport before implementing internet
+sharing, and add searchable public hosts on top of working private connections.
+The local download improvements do not substitute for those missing services.

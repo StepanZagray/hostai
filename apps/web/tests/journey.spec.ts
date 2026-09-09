@@ -32,7 +32,9 @@ test("setup recovers from a missing runtime through an empty library to chat", a
   await hostFixture(page, true, []);
   await page.getByRole("button", { name: "Check connection", exact: true }).click();
   await expect(setup).toContainText("Ollama is already connected");
-  await expect(setup).toContainText("ollama pull qwen3:0.6b");
+  await expect(
+    setup.getByRole("link", { name: "Download a local model", exact: true }),
+  ).toBeVisible();
   await page.screenshot({ path: "test-results/setup-empty-journey-mobile.png", fullPage: true });
   await hostFixture(page);
   await page.getByRole("button", { name: "Check connection", exact: true }).click();

@@ -2,10 +2,10 @@
 
 The intended product supports two people: a host owner making a local model
 available, and a client finding a host and chatting without managing inference
-software. The current product implements local discovery and chat. **In-app model
-downloads, remote client access, authentication, internet sharing and a public host
-directory are not implemented.** This audit describes the complete destination;
-the initial setup fixes below do not complete it.
+software. The current product implements explicit local model downloads, discovery and chat.
+**Remote client access, authentication, internet sharing and a public host directory
+are not implemented.** This audit describes the complete destination; the local
+setup and download improvements below do not complete it.
 
 Reviewed with Claude Opus 5 High on 9 September 2026. Code and isolated UI fixtures
 are the evidence. No real model was downloaded, inference benchmark run, tunnel
@@ -17,8 +17,8 @@ opened, or public endpoint deployed.
 | --- | --- | --- | --- |
 | Host: open HostAI | [Source launcher](../scripts/workspace.mjs) starts Java, UI, then Electron | Requires source checkout, Node/pnpm and Java; no distributable installer. Window appears only after services start. | Launch one app, see startup progress and recoverable errors before setup. |
 | Host: prepare inference | [Setup](../apps/web/src/routes/connection.tsx) shows Ollama commands | Ollama installation/startup are external; a failed status check is not proof that a process is stopped. | Detect existing runtime, explain the missing part, show only the action needed. |
-| Host: choose/download a model | [Library](../apps/web/src/routes/models.tsx) lists installed models and a pull command | No catalog, fit estimate, progress, cancellation, resumable job or download error state in HostAI. | Review model size/requirements, explicitly start download, see progress, recover, then test that same model. |
-| Host: refresh discovery | [HostProvider](../apps/web/src/lib/host-context.tsx) polls every 15 seconds while visible; manual refresh also exists | Download completion has no immediate handoff into selection. | Completion reveals the downloaded model and a clear Try action; avoid a second competing poller. |
+| Host: choose/download a model | [Library](../apps/web/src/routes/models.tsx) lists installed models and manages explicit tagged downloads | No catalog search, fit estimate or automatic recovery after a gateway restart. | Review model size/requirements, explicitly start download, see progress, recover, then test that same model. |
+| Host: refresh discovery | [HostProvider](../apps/web/src/lib/host-context.tsx) polls every 15 seconds while visible; manual refresh also exists | Download completion refreshes the library and offers an explicit Try action when the model is admitted. | Confirm the actual installed model before enabling Try; download status polls separately from host metadata. |
 | Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Admission means allowed to try, not successfully loaded or proven to fit memory. No explicit first-run test status. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
 | Host: start serving | [Java controller](../backend/src/main/java/com/hostai/backend/ApiController.java) serves local requests once the gateway starts | No independent model publication/start-stop state. Selecting a model in chat does not publish it. | Choose which model clients may use, test it, then enable serving deliberately. |
 | Host: share over internet | [Java config](../backend/src/main/resources/application.properties) and [web server](../apps/web/server.mjs) bind loopback | No identities, guest API, access grants, revocation, tunnel, TLS ingress or reachability verification. | Share a verified endpoint with selected clients; expose status and Stop sharing in the same place. |
@@ -52,10 +52,10 @@ model—not a generic metrics dashboard.
 
 ## Implementation priorities for the complete cycle
 
-1. **Complete local onboarding and model lifecycle.** Add a host-owned model catalog
-   and download job lifecycle: queued, downloading, verifying, complete, failed,
-   cancelled. Show downloaded/total bytes when known, an indeterminate state when
-   unknown, and cancellation/retry outcomes. A tag's file size is not a guarantee
+1. **Complete local onboarding and model lifecycle.** The explicit download job lifecycle now covers starting, downloading, verifying,
+   finalizing, completed, failed and cancelled, with one active request and no queue.
+   Current-layer counts are shown when known and progress is indeterminate otherwise.
+   Next, add catalog discovery and requirements/fit guidance before resource use. A tag's file size is not a guarantee
    of runtime memory fit. Keep custom Ollama endpoint commands consistent across
    overview, setup and library; the current examples still assume Ollama defaults.
    Check existing runtime/service ownership before adding Start/Stop controls.
@@ -115,3 +115,23 @@ UI evidence is retained under `test-results/setup-*-journey*.png`. Browser fixtu
 verify the missing-runtime → empty-library → model-selection path and the actual
 workspace origin. Full internet and remote-client journeys cannot be exercised
 until their missing services and access boundaries exist.
+
+## Local download cycle implemented
+
+Setup now opens the in-app download form. A host explicitly supplies a tagged
+Ollama library reference, starts one job, follows its current-layer progress,
+cancels or retries, and chooses **Try downloaded model** after library confirmation.
+Navigating away does not cancel the backend-owned job. A lost start response
+retains its request ID for retry within the backend's retained history. Neither
+idempotency nor job history survives a gateway restart or history eviction.
+
+Status refresh failures retain the last known progress with a stale-status message;
+explicit cancellation remains usable. Polling pauses while hidden and refreshes
+on visibility, every two seconds while active and less often while idle. The UI
+never starts a download just by choosing a model, opening a page or completing chat.
+Downloading does not load a model for inference or enable serving/sharing.
+
+The API uses Ollama's [documented pull stream](https://github.com/ollama/ollama/blob/main/docs/api.md#pull-a-model).
+Layer totals are not aggregate download size. Ollama may retain partial layers and
+multiple clients may share a pull, so cancellation is described as stopping this
+request. No real model was pulled during verification.

@@ -258,3 +258,58 @@ describe("same-origin API proxy", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 });
+
+describe("download management proxy", () => {
+  const id = "5ed717e7-26ce-4c7d-b2ea-aa03292cb572";
+  const mutation = (path: string, headers: HeadersInit = {}) =>
+    new Request(`${origin}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: "{}",
+    });
+  it.each(["/api/model-downloads", `/api/model-downloads/${id}/cancel`])(
+    "forwards %s with JSON negotiation",
+    async (path) => {
+      const fetch = backend();
+      await (await proxy({ request: mutation(path, { Origin: origin }) })).text();
+      expect(fetch.mock.calls[0][0].pathname).toBe(path);
+      expect(fetch.mock.calls[0][1].headers.Accept).toBe("application/json");
+    },
+  );
+  it.each([
+    "/api/model-downloads/not-a-job/cancel",
+    `/api/model-downloads/${id}/delete`,
+    `/api/model-downloads/${id}/cancel/extra`,
+  ])("rejects %s without upstream work", async (path) => {
+    const fetch = backend();
+    expect((await proxy({ request: mutation(path) })).status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects cross-site metadata even when Origin is absent", async () => {
+    const fetch = backend();
+    expect(
+      (
+        await proxy({
+          request: mutation("/api/model-downloads", { "Sec-Fetch-Site": "cross-site" }),
+        })
+      ).status,
+    ).toBe(403);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("bounds management requests independently of a running download", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, init) =>
+          new Promise((_resolve, reject) =>
+            init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }),
+          ),
+      ),
+    );
+    const response = proxy({ request: mutation("/api/model-downloads") });
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect((await response).status).toBe(504);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

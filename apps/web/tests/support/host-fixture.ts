@@ -34,5 +34,6 @@ export async function hostFixture(page: Page, connected = true, names = ["fixtur
       },
     }),
   );
+  await page.route("**/api/model-downloads", (route) => route.fulfill({ json: { downloads: [] } }));
   await page.route("**/api/requests", (route) => route.fulfill({ json: { requests: [] } }));
 }

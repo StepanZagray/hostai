@@ -161,3 +161,37 @@ Stop the fixture, Java, and web servers with Ctrl+C when finished. The test runn
 - No inference benchmarks or actual-model generation were run during setup.
 - No internet sharing/authentication or persistent database is present.
 - Production CSP allows inline scripts for Start's hydration bootstrap. The Electron renderer has no Node bridge. It allows clipboard writes only from the trusted local main frame; clipboard reads and other permission requests are denied.
+
+## Local download lifecycle
+
+On 9 September 2026, the tagged download-to-chat feature passed frontend
+check/build, 106 unit/protocol tests, 5 real-server HTTP tests, and 71 Java tests.
+The Java suite uses ephemeral loopback Ollama stubs and verifies explicit
+success, current-layer resets/unknown counts, input/origin/Host rejection,
+concurrent admission/idempotency, cancellation/disconnect/shutdown races, history
+eviction and actual upstream closure on idle/overall deadlines. A continuously
+streaming runtime reproduced an overall-deadline leak in both download and chat
+before the fix; the corrected suite observes zero remaining upstream connections.
+
+All 47 distinct ordinary UI/Electron/integration scenarios passed across the
+broad run and focused follow-up. Two optional rendering benchmarks were skipped.
+The broad run caught a scroll-test synchronization gap: a zero bottom distance
+also matched an answer that had not rendered yet. The test now waits for actual
+scrollable output before sending Home; all seven scroll scenarios passed three
+successive runs. Two earlier old-title assertions were updated for the new
+empty-library copy. These were not hidden with automatic test retries.
+
+The real browser → production proxy → Java → isolated Ollama fixture journey
+passed start, current-layer progress, navigation, explicit cancellation, retry
+with a fresh ID, installed-model refresh, explicit selection and streamed chat.
+The fixture listens only on 127.0.0.1:11435 and simulates `/api/pull`; it writes no
+model files and makes no external requests. No real model was downloaded or run.
+Fixtures also cover lost start responses, dismissal, malformed status, stale GET
+responses arriving after cancellation, and recovery while last-known progress
+remains visible. Progress/completion/mobile/recovery screenshots are retained in
+`test-results/download-*.png`; isolated-display proof is `test-results/isolation.json`.
+
+Downloads are intentionally one at a time with 20 in-memory records, no durable
+resume, no catalog search or hardware fit estimate. This validation does not
+prove performance or memory fit for real models. Authentication, internet sharing,
+tunnels, a host directory and a remote client journey remain unimplemented.

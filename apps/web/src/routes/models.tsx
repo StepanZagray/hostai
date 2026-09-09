@@ -1,5 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { ModelDownloads } from "../components/model-downloads";
 import { ArrowRight, Box, Search, RefreshCw, Terminal } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
@@ -33,6 +34,7 @@ function Models() {
           </Button>
         }
       />
+      <ModelDownloads />
       <div
         className={css({
           mb: "6",
@@ -90,8 +92,8 @@ function Models() {
         ) : !models.length ? (
           <EmptyState
             icon={<Box size={26} />}
-            title="Your library starts here"
-            description="Download your first model with Ollama, then refresh this library. Start small and choose a model that fits your machine."
+            title="No installed models yet"
+            description="Installed models appear here after Ollama finishes. You can start and track a download above."
             action={
               <Link to="/connection" className={button({ variant: "primary" })}>
                 View setup
@@ -200,7 +202,7 @@ function Models() {
             Add a model from your terminal
           </h2>
           <p className={muted}>
-            Downloads are managed by Ollama. HostAI discovers them after refresh.
+            You can also use Ollama directly. HostAI discovers installed models after refresh.
           </p>
         </div>
         <div className={css({ maxW: "full" })}>

@@ -37,7 +37,7 @@ public class BackendConfiguration implements WebFluxConfigurer {
     @Bean
     WebClient ollamaClient(LocalOllamaEndpoint endpoint) {
         // A new connection per exchange makes ownership/cancellation explicit. No proxy,
-        // redirects, automatic retry, model downloads, or discovery outside loopback.
+        // redirects, automatic retry, or discovery outside loopback. Pulls use a separate client.
         HttpClient transport = HttpClient.newConnection()
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 2_000)
                 .followRedirect(false)

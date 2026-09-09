@@ -52,17 +52,20 @@ async function readBody(request: Request, signal: AbortSignal): Promise<Uint8Arr
 
 export async function proxy({ request }: { request: Request }) {
   const url = new URL(request.url);
+  const isChat = url.pathname === "/api/chat";
+  const isDownload = url.pathname === "/api/model-downloads";
+  const isCancel =
+    /^\/api\/model-downloads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cancel$/i.test(
+      url.pathname,
+    );
   const allowed =
     request.method === "GET"
-      ? ["/api/status", "/api/models", "/api/requests"]
-      : request.method === "POST"
-        ? ["/api/chat"]
-        : [];
-  if (!allowed.includes(url.pathname))
-    return Response.json({ detail: "Endpoint not found." }, { status: 404 });
+      ? ["/api/status", "/api/models", "/api/requests"].includes(url.pathname) || isDownload
+      : request.method === "POST" && (isChat || isDownload || isCancel);
+  if (!allowed) return Response.json({ detail: "Endpoint not found." }, { status: 404 });
   if (request.method === "POST") {
     const origin = request.headers.get("origin");
-    if (origin && origin !== url.origin)
+    if ((origin && origin !== url.origin) || request.headers.get("sec-fetch-site") === "cross-site")
       return Response.json({ detail: "Cross-origin requests are not allowed." }, { status: 403 });
     if (
       request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !==
@@ -89,7 +92,7 @@ export async function proxy({ request }: { request: Request }) {
     const body = request.method === "POST" ? await readBody(request, abort.signal) : undefined;
     abort.signal.throwIfAborted();
     clearTimeout(timer);
-    timer = setTimeout(timeout, request.method === "GET" ? REQUEST_TIMEOUT_MS : CHAT_TIMEOUT_MS);
+    timer = setTimeout(timeout, isChat ? CHAT_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
     const upstream = await fetch(
       new URL(url.pathname, process.env.HOSTAI_BACKEND_URL || "http://127.0.0.1:8080"),
       {
@@ -98,7 +101,7 @@ export async function proxy({ request }: { request: Request }) {
         signal: abort.signal,
         headers: {
           "Content-Type": "application/json",
-          Accept: request.method === "POST" ? "application/x-ndjson" : "application/json",
+          Accept: isChat ? "application/x-ndjson" : "application/json",
         },
       },
     );

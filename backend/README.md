@@ -30,8 +30,9 @@ JAVA_HOME=/usr/lib/jvm/java-26-openjdk ./mvnw spring-boot:run
 whose host is `127.0.0.1`, `localhost`, or `[::1]` are accepted. Credentials,
 paths, queries, and fragments are rejected. `localhost` is pinned to
 `127.0.0.1` without DNS resolution. Redirects and automatic connection retries
-are disabled. HostAI never invokes Ollama's model pull/start endpoints or
-downloads a model. A chat may cause Ollama to load an already installed model.
+are disabled. An explicit model-download job invokes Ollama's `/api/pull`;
+metadata reads and chat never start a download. A chat may cause Ollama to load
+an already installed model.
 Known `:cloud` and `-cloud` model names are rejected. The operator must keep
 Ollama itself configured for local inference; a gateway cannot enforce what an
 independently configured upstream proxy does internally.
@@ -130,6 +131,93 @@ final `eval_count`, or remain null if absent, cancelled, or failed. History stor
 only these fields, never messages, prompts, responses, or upstream error bodies.
 A long-running entry can age out after 50 newer admissions while still occupying
 its inference slot.
+
+### Local model downloads
+
+`GET /api/model-downloads` returns `{"downloads":[Job]}`, newest admitted first.
+`POST /api/model-downloads` requires `Content-Type: application/json` and
+`{"requestId":"<UUID>","model":"model:tag"}`. A new job returns HTTP 202.
+Repeating a retained ID with the same model returns the current job with HTTP
+200, including terminal jobs; reusing that ID with a different model returns
+409. A distinct start while another pull is running also returns 409. There is
+one global download slot, separate from the two chat slots, and no queue.
+
+`POST /api/model-downloads/<UUID>/cancel` requires JSON `{}` and returns the
+job with HTTP 200. Cancelling any terminal job leaves it unchanged; an unknown
+or evicted ID returns 404. Retrying a cancelled or failed pull requires a new
+request ID. IDs must use the full hyphenated UUID representation.
+
+Every job includes every field below, including explicit null values:
+
+```json
+{
+  "id": "868fc77a-4dc2-40d1-8be6-58821056c7b0",
+  "model": "example:small",
+  "state": "running",
+  "phase": "starting",
+  "message": "Starting model download.",
+  "digest": null,
+  "completedBytes": null,
+  "totalBytes": null,
+  "createdAt": "2026-09-01T12:00:00Z",
+  "updatedAt": "2026-09-01T12:00:00Z",
+  "error": null
+}
+```
+
+`state` is `running`, `completed`, `failed`, or `cancelled`; `phase` is
+`starting`, `downloading`, `verifying`, or `finalizing`. Timestamps are ISO
+instants. Manifest discovery, layer download, digest verification, and manifest
+writing map to these phases with fixed messages. An unknown nonblank ongoing
+status uses `downloading` and `Downloading model.`; upstream status and error
+text are never echoed. Terminal cancellation/failure retains the last phase.
+
+Progress describes the current layer, never an aggregate percentage. Counts are
+nullable, nonnegative 64-bit integers; completed cannot exceed total when both
+are known. Missing completed is valid. A new digest clears previous counts;
+subsequent omitted counts retain the last known values for that same layer.
+Unknown totals remain null. Completing a job does not invent missing counts.
+Only an explicit Ollama `status: "success"` completes a download. Premature EOF,
+invalid/oversized records, upstream errors, and expired deadlines fail the job
+with a fixed, sanitized error message. Each NDJSON record is capped at 256 KiB.
+
+Pull names must be at most 128 characters and explicitly tagged:
+`model:tag` or `namespace/model:tag`. Repository names are lowercase ASCII
+letters/digits with `.`, `_`, or `-`; namespaces allow lowercase letters/digits
+separated by single `_` or `-`; tags allow ASCII letters/digits, `.`, `_`, `-`.
+Each component starts with a letter/digit. The download policy also applies
+`ModelAdmission` and rejects missing tags, schemes, custom registry hosts/ports,
+`localhost` namespaces, traversal (`..`), and known cloud model/tag suffixes.
+The gateway posts exactly `{"model":"...","stream":true}` to the configured,
+pinned loopback `/api/pull`, with no insecure flag, redirects, or automatic retry.
+
+The admitted job owns the upstream subscription. Browser disconnects and
+navigation do not cancel it. Explicit cancellation and service shutdown dispose
+the exchange, including cancellation racing with subscription attachment or a
+terminal callback. Cancellation closes this client's exchange; it cannot
+guarantee that an independently running Ollama process stops shared work or
+deletes partially cached layers. There is no resume/delete/installation-management
+API. History and idempotency cover only the 20 most recently admitted jobs and
+reset on restart. Evicted IDs may be admitted again.
+
+Download deadlines are independent of chat: connection timeout 2 seconds,
+first-record/idle timeout 5 minutes, overall timeout 2 hours. Tests can override
+`hostai.download-connect-timeout`, `hostai.download-idle-timeout`, and
+`hostai.download-overall-timeout` with positive durations. The transport also
+bounds silent reads, and the overall deadline applies even while records arrive.
+
+The Java boundary rejects Host names other than `127.0.0.1`, `localhost`, or `[::1]`,
+including a DNS-rebound request whose Origin matches an attacker Host. This does
+not authenticate local processes. Both management POST routes enforce JSON (415 otherwise).
+An `Origin` header must match the request's exact scheme, host, and effective
+port; another localhost port or hostname is not granted access. Cross-origin,
+opaque/multiple origins and cross-site Fetch Metadata are denied with 403,
+before a pull is admitted. No Origin is accepted for a trusted local proxy or
+CLI. A browser-facing proxy must perform its own origin check before stripping
+incoming browser Origin/Fetch Metadata headers on its Java request. No CORS
+origins are granted. These checks keep the existing loopback foundation; they
+do not add authentication or remote sharing. Download responses use
+`Cache-Control: no-store`.
 
 ### `POST /api/chat`
 
@@ -255,6 +343,19 @@ and during a silent stream, upstream socket closure, malformed/truncated streams
 timeouts, absence of generation retries, history privacy, CORS, and actuator
 exposure. Every client, stub server, and stub event loop is closed after use;
 Spring's test context is closed after the class.
+
+`ModelDownloadHttpTest` uses a separate ephemeral loopback runtime stub and
+backend to cover the download API, streamed layer progress, idempotency,
+concurrent starts, browser disconnects, cancellation/socket closure/retry,
+strict input and browser-header rejection, failure streams, and history
+eviction. `ModelDownloadLifecycleTest` uses loopback runtime exchanges with
+subscription gates and cached HTTP response replays to exercise synchronous
+termination, late subscription attachment, 100 terminal/cancel/shutdown races,
+and shortened idle/overall deadlines. Both suites close their exact runtime
+servers, clients, event loops, and executors. They never contact the real
+Ollama port or download a model. A sandbox which denies loopback socket creation
+cannot run these integration/lifecycle checks; compiling them is not evidence
+that they pass.
 
 `ChatServiceTest` exercises real gateway decoding with an in-memory HTTP exchange,
 including cancellation synchronously on the final record. It verifies that this

@@ -109,10 +109,12 @@ function Connection() {
             ) : (
               <>
                 <p className={`${muted} ${css({ mb: "3" })}`}>
-                  Download with Ollama, then check the connection. This example uses disk space and
-                  your internet connection; check its requirements before running it.
+                  Open the model library to choose a model and track its download. Check its disk
+                  and memory requirements before starting.
                 </p>
-                <CodeBlock code="ollama pull qwen3:0.6b" />
+                <Link to="/models" className={button({ variant: "secondary" })}>
+                  Download a local model
+                </Link>
               </>
             )}
           </div>

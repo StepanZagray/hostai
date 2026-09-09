@@ -83,6 +83,9 @@ test("streaming preserves a reader's position above the latest output", async ({
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Start fresh");
   await page.getByRole("button", { name: "Send message" }).click();
   await push(page, longAnswer, true);
+  // A short, not-yet-rendered answer also has a zero bottom gap. Wait for overflow
+  // before testing native scroll-away input on the newly mounted conversation.
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(500);
   await expect
     .poll(() =>
       pane.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop),
@@ -99,6 +102,9 @@ test("streaming preserves a reader's position above the latest output", async ({
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("New model");
   await page.getByRole("button", { name: "Send message" }).click();
   await push(page, longAnswer, true);
+  // A short, not-yet-rendered answer also has a zero bottom gap. Wait for overflow
+  // before testing native scroll-away input on the newly mounted conversation.
+  await expect.poll(() => pane.evaluate((element) => element.scrollTop)).toBeGreaterThan(500);
   await expect
     .poll(() =>
       pane.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop),
