@@ -43,6 +43,17 @@ cancel through the real gateway. All inference responses remain fixture data.
 Evidence includes `test-results/models-admission.png` and
 `test-results/playground-admission.png`.
 
+Scrolling scenarios use a browser-local controlled `ReadableStream` to place
+chunks precisely around input and layout events. Native wheel and keyboard checks
+cover reading above the newest output, Jump focus, follow-up submission, Clear,
+model changes, page-position preservation, and viewport resize. A rapid synthetic
+stream exercises native keyboard animation; its exact interval is cleared in
+`finally`. Deterministic event-order checks combine wheel/keyboard/touch intent
+with reflow before ResizeObserver can run. These validate Chromium behavior and
+touch handlers, not native iOS/Safari. Scrolled-up, following, and mobile screenshots
+are retained in `test-results/conversation-*.png` and
+`test-results/mobile-conversation-reading.png`.
+
 ## Isolated UI runner
 
 Start the frontend, then run `pnpm test:ui`. `scripts/test-ui.py`:

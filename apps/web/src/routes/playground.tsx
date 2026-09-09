@@ -2,6 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
+  ArrowDown,
   ArrowUp,
   Bot,
   Code2,
@@ -17,6 +18,7 @@ import { useHost } from "../lib/host-context";
 import { readChatStream } from "../lib/api";
 import { chatUnavailableReason } from "../lib/model-admission";
 import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
+import { useConversationScroll } from "../lib/use-conversation-scroll";
 
 export const Route = createFileRoute("/playground")({
   validateSearch: (search: Record<string, unknown>): { model?: string } => ({
@@ -51,11 +53,8 @@ function Playground() {
     [turns, model, prompt, temperature, maxTokens],
   );
   const abort = useRef<AbortController | null>(null);
-  const bottom = useRef<HTMLDivElement>(null);
+  const scroll = useConversationScroll(turns);
   useEffect(() => () => abort.current?.abort(), []);
-  useEffect(() => {
-    bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [turns]);
   const ready = !!status?.ollamaConnected && modelAvailable && modelError === null;
   async function send() {
     if (abort.current || !ready || !prompt.trim()) return;
@@ -173,133 +172,172 @@ function Playground() {
               Clear
             </Button>
           </div>
-          <div
-            className={css({ flex: 1, maxH: "570px", minH: "350px", overflowY: "auto", p: "5" })}
-            aria-label="Conversation messages"
-          >
-            {!messages.length ? (
-              <div
-                className={css({
-                  minH: "315px",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  textAlign: "center",
-                  gap: "3",
-                })}
-              >
-                <span
-                  className={css({
-                    p: "4",
-                    borderRadius: "15px",
-                    bg: "accentSoft",
-                    color: "accent",
-                    mb: "2",
-                  })}
-                >
-                  <Bot size={32} strokeWidth={1.5} />
-                </span>
-                <h3
-                  className={css({ fontSize: "20px", fontWeight: 750, letterSpacing: "-0.03em" })}
-                >
-                  What’s on your mind?
-                </h3>
-                <p className={`${muted} ${css({ maxW: "330px" })}`}>
-                  {ready
-                    ? "Ask a question, work through an idea, or put your model to the test."
-                    : modelBlocked
-                      ? "Choose another model to start a conversation. The selected model is unavailable for chat."
-                      : "Connect Ollama and install a model to start a conversation on your machine."}
-                </p>
-                {ready ? (
+          <div className={css({ position: "relative", flex: 1, minH: 0 })}>
+            <div
+              key={scroll.viewportKey}
+              ref={scroll.viewportRef}
+              onScroll={scroll.onScroll}
+              onWheel={scroll.onWheel}
+              onKeyDown={scroll.onKeyDown}
+              onTouchStart={scroll.onTouchStart}
+              onTouchMove={scroll.onTouchMove}
+              role="region"
+              tabIndex={0}
+              className={css({
+                maxH: "570px",
+                minH: "350px",
+                overflowY: "auto",
+                overscrollBehaviorY: "contain",
+                p: "5",
+                _focusVisible: { outline: "2px solid token(colors.accent)", outlineOffset: "-2px" },
+              })}
+              aria-label="Conversation messages"
+            >
+              <div ref={scroll.contentRef}>
+                {!messages.length ? (
                   <div
                     className={css({
+                      minH: "315px",
                       display: "flex",
-                      gap: "2",
-                      flexWrap: "wrap",
+                      flexDirection: "column",
+                      alignItems: "center",
                       justifyContent: "center",
-                      mt: "3",
+                      textAlign: "center",
+                      gap: "3",
                     })}
                   >
-                    {["Explain virtual threads simply", "Write a Java health check"].map((text) => (
-                      <Button key={text} onClick={() => setPrompt(text)}>
-                        {text}
-                      </Button>
-                    ))}
-                  </div>
-                ) : (
-                  <Link
-                    to={modelBlocked ? "/models" : "/connection"}
-                    className={button({ variant: "secondary" })}
-                  >
-                    {modelBlocked ? "Review model library" : "Set up your host"}
-                    <ArrowRight size={14} />
-                  </Link>
-                )}
-              </div>
-            ) : (
-              messages.map((message) => (
-                <article
-                  key={`${message.turn.id}-${message.role}`}
-                  className={css({ display: "flex", gap: "3", mb: "6" })}
-                >
-                  <span
-                    className={css({
-                      flexShrink: 0,
-                      w: "30px",
-                      h: "30px",
-                      display: "grid",
-                      placeItems: "center",
-                      bg: "canvas",
-                      border: "1px solid token(colors.line)",
-                      borderRadius: "7px",
-                      color: "accent",
-                    })}
-                  >
-                    {message.role === "user" ? <User size={16} /> : <Bot size={17} />}
-                  </span>
-                  <div className={css({ minW: 0 })}>
-                    <h3 className={css({ fontWeight: 750, fontSize: "xs", mb: "2" })}>
-                      {message.role === "user" ? "You" : message.turn.model}
-                    </h3>
-                    <p
+                    <span
                       className={css({
-                        whiteSpace: "pre-wrap",
-                        overflowWrap: "anywhere",
-                        fontSize: "sm",
-                        lineHeight: 1.9,
+                        p: "4",
+                        borderRadius: "15px",
+                        bg: "accentSoft",
+                        color: "accent",
+                        mb: "2",
                       })}
                     >
-                      {message.content.trim()
-                        ? message.content
-                        : message.turn.state === "streaming"
-                          ? "Thinking…"
-                          : "No response text returned."}
+                      <Bot size={32} strokeWidth={1.5} />
+                    </span>
+                    <h3
+                      className={css({
+                        fontSize: "20px",
+                        fontWeight: 750,
+                        letterSpacing: "-0.03em",
+                      })}
+                    >
+                      What’s on your mind?
+                    </h3>
+                    <p className={`${muted} ${css({ maxW: "330px" })}`}>
+                      {ready
+                        ? "Ask a question, work through an idea, or put your model to the test."
+                        : modelBlocked
+                          ? "Choose another model to start a conversation. The selected model is unavailable for chat."
+                          : "Connect Ollama and install a model to start a conversation on your machine."}
                     </p>
-                    {message.role === "user" && (message.turn.omittedTurns ?? 0) > 0 && (
-                      <p className={css({ mt: "2", fontSize: "xs", color: "muted" })}>
-                        Sent with {message.turn.omittedTurns} earlier{" "}
-                        {message.turn.omittedTurns === 1 ? "turn" : "turns"} omitted.
-                      </p>
+                    {ready ? (
+                      <div
+                        className={css({
+                          display: "flex",
+                          gap: "2",
+                          flexWrap: "wrap",
+                          justifyContent: "center",
+                          mt: "3",
+                        })}
+                      >
+                        {["Explain virtual threads simply", "Write a Java health check"].map(
+                          (text) => (
+                            <Button key={text} onClick={() => setPrompt(text)}>
+                              {text}
+                            </Button>
+                          ),
+                        )}
+                      </div>
+                    ) : (
+                      <Link
+                        to={modelBlocked ? "/models" : "/connection"}
+                        className={button({ variant: "secondary" })}
+                      >
+                        {modelBlocked ? "Review model library" : "Set up your host"}
+                        <ArrowRight size={14} />
+                      </Link>
                     )}
-                    {message.role === "assistant" &&
-                      message.turn.state !== "streaming" &&
-                      (message.turn.state !== "completed" || !message.content.trim()) && (
-                        <p className={css({ mt: "2", fontSize: "xs", color: "muted" })}>
-                          {message.turn.state === "cancelled"
-                            ? "Stopped response"
-                            : message.turn.state === "failed"
-                              ? "Incomplete response"
-                              : "Empty response"}
-                          {" · Not used in later prompts."}
-                        </p>
-                      )}
                   </div>
-                </article>
-              ))
+                ) : (
+                  messages.map((message) => (
+                    <article
+                      key={`${message.turn.id}-${message.role}`}
+                      className={css({ display: "flex", gap: "3", mb: "6" })}
+                    >
+                      <span
+                        className={css({
+                          flexShrink: 0,
+                          w: "30px",
+                          h: "30px",
+                          display: "grid",
+                          placeItems: "center",
+                          bg: "canvas",
+                          border: "1px solid token(colors.line)",
+                          borderRadius: "7px",
+                          color: "accent",
+                        })}
+                      >
+                        {message.role === "user" ? <User size={16} /> : <Bot size={17} />}
+                      </span>
+                      <div className={css({ minW: 0 })}>
+                        <h3 className={css({ fontWeight: 750, fontSize: "xs", mb: "2" })}>
+                          {message.role === "user" ? "You" : message.turn.model}
+                        </h3>
+                        <p
+                          className={css({
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "anywhere",
+                            fontSize: "sm",
+                            lineHeight: 1.9,
+                          })}
+                        >
+                          {message.content.trim()
+                            ? message.content
+                            : message.turn.state === "streaming"
+                              ? "Thinking…"
+                              : "No response text returned."}
+                        </p>
+                        {message.role === "user" && (message.turn.omittedTurns ?? 0) > 0 && (
+                          <p className={css({ mt: "2", fontSize: "xs", color: "muted" })}>
+                            Sent with {message.turn.omittedTurns} earlier{" "}
+                            {message.turn.omittedTurns === 1 ? "turn" : "turns"} omitted.
+                          </p>
+                        )}
+                        {message.role === "assistant" &&
+                          message.turn.state !== "streaming" &&
+                          (message.turn.state !== "completed" || !message.content.trim()) && (
+                            <p className={css({ mt: "2", fontSize: "xs", color: "muted" })}>
+                              {message.turn.state === "cancelled"
+                                ? "Stopped response"
+                                : message.turn.state === "failed"
+                                  ? "Incomplete response"
+                                  : "Empty response"}
+                              {" · Not used in later prompts."}
+                            </p>
+                          )}
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </div>
+            {!scroll.following && messages.length > 0 && (
+              <Button
+                onClick={scroll.jumpToLatest}
+                className={css({
+                  position: "absolute",
+                  bottom: "3",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  boxShadow: "0 2px 8px #142b3e22",
+                })}
+              >
+                <ArrowDown /> Jump to latest
+              </Button>
             )}
-            <div ref={bottom} />
           </div>
           <div className={css({ p: "4", pt: 0 })}>
             {modelError && (

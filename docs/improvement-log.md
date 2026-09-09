@@ -156,8 +156,35 @@ The suspected mobile heading clipping was not reproduced by settled geometry
 checks across all five routes at 320px. The check waits for fonts and host state;
 viewport and full-page captures were inspected. No heading CSS was changed.
 
+## Reading streamed conversations
+
+Two isolated browser regressions reproduced each chunk pulling the reader back
+to the bottom (523px in the initial check) and moving the surrounding mobile page
+(62px). With Opus 5 High advice, the conversation now scrolls its own container,
+tracks following intent, and offers an accessible Jump to latest button. A new
+prompt resumes following; reading earlier text pauses it. Clear, model switches,
+and new submissions use a fresh native scroll container so an unfinished browser
+keyboard animation cannot carry into the next answer. Jump returns focus to the
+pane without moving the page.
+
+The initial advice assumed resize does not fire scroll events. A failing Chromium
+resize test disproved that, so geometry changes preserve follow intent. The review
+also prompted explicit upward wheel, keyboard, and touch handling: genuine input
+wins over simultaneous reflow. A rapid-stream regression found near-bottom
+keyboard animation could undo a pause; resuming from that state now requires
+movement toward the bottom. The immediate model-switch and rapid keyboard cases
+both passed three repeated runs after their fixes.
+
+Validation: 62 web unit tests, type checking/lint/formatting, production build,
+and 30 distinct isolated UI/Electron scenarios passed across full and focused
+runs. Tests cover native wheel/keyboard input, follow-up sends, Clear/model reset,
+resize at 320/768/1440px, page-position preservation, and deterministic concurrent
+input/reflow. Desktop and mobile states were visually inspected. Java integration
+was skipped because gateway/proxy behavior did not change; no actual model ran.
+Touch coverage exercises event handling in Chromium, not a native mobile browser.
+
 ## Next candidates to investigate
 
-- Long streamed responses currently call scrollIntoView on every update. Check
-  whether reading earlier text is interrupted and whether scrolling can stay
-  within the conversation pane. No scroll behavior change is included here.
+- Answers currently display as plain text even when the user requests code.
+  Inspect readable formatting and copying of generated output next, preserving
+  the distinction between completed and interrupted responses.

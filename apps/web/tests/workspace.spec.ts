@@ -1,43 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
-
-async function hostFixture(page: Page, connected = true) {
-  await page.route("**/api/status", (route) =>
-    route.fulfill({
-      json: {
-        status: "online",
-        ollamaConnected: connected,
-        ollamaUrl: "http://127.0.0.1:11434",
-        version: "0.1.0",
-        javaVersion: "26",
-        uptimeSeconds: 12,
-        activeRequests: 0,
-        maxConcurrentRequests: 2,
-        totalRequests: 0,
-        failedRequests: 0,
-      },
-    }),
-  );
-  await page.route("**/api/models", (route) =>
-    route.fulfill({
-      json: {
-        connected,
-        models: connected
-          ? [
-              {
-                name: "fixture-model:small",
-                sizeBytes: 800000000,
-                parameterSize: "0.6B",
-                quantization: "Q4_K_M",
-                modifiedAt: new Date().toISOString(),
-                chatUnavailableReason: null,
-              },
-            ]
-          : [],
-      },
-    }),
-  );
-  await page.route("**/api/requests", (route) => route.fulfill({ json: { requests: [] } }));
-}
+import { expect, test } from "@playwright/test";
+import { hostFixture } from "./support/host-fixture";
 
 test("offline host has useful setup and disabled generation", async ({ page }) => {
   await page.route("**/api/**", (route) =>

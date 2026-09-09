@@ -91,6 +91,11 @@ token window. Oversized new messages remain editable with a visible error until
 you shorten them. The conversation keeps its selected model if discovery changes.
 Switching models or clearing the conversation starts fresh.
 
+Streaming follows the latest output until you scroll back to read. Use
+**Jump to latest**, scroll back to the bottom, or send a new prompt to resume.
+Keyboard users can focus the conversation pane and use its native scroll keys.
+Automatic scrolling stays inside that pane and preserves the surrounding page.
+
 Model discovery keeps unavailable entries visible with the gateway's reason.
 The playground defaults to a model that passes known gateway rules and blocks
 unsupported selections before Send. Availability changing on refresh preserves
