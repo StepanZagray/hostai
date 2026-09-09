@@ -286,3 +286,49 @@ Cloudflare terminates TLS and can see relayed messages and keys. Quick Tunnels
 are temporary development infrastructure, not a production uptime commitment.
 This evidence does not establish verified identity, comprehensive public abuse
 resistance, capacity under attack, model performance or a public host directory.
+
+## Optional directory — 10 September 2026
+
+The self-hostable directory is verified locally; no public registry was deployed.
+The registry's 61 Node tests cover real loopback HTTP, exact signed audiences,
+cross-registry relay rejection, nonce reuse without supersession or extension,
+authenticated per-key admission, replay, expiry, bounded storage, OS locking and
+failed commits. A fake-clock run exercised 100 hosts and readers for 17 simulated
+minutes. This is admission verification, not a throughput or denial-of-service benchmark.
+
+The full Java suite passed 475 tests. After the final identity interruption change,
+118 focused directory tests passed following explicit recompilation, including
+92 identity cases and actual Java publisher-to-Node registry interoperability.
+Together with the final 30-test protocol/lifecycle run, these cover 500 distinct
+Java tests. The final run also checks cross-site reads, bounded concurrent reads,
+numeric TTL rules, changed model/label consent, capacity messages and uncertain
+publication without an invented local-clock expiry.
+The Java fixture exercises publish, heartbeat, withdrawal, changed tunnel consent,
+restart and stable identity with the actual registry. The tunnel observation is
+synthetic and does not establish real public endpoint availability.
+
+Frontend type checking, lint, formatting and production builds passed, along with
+150 unit tests and five built-server HTTP tests. The final isolated UI run passed
+39 tests with no skips. It covers the configured directory through the actual
+owner proxy/Java gateway/Node registry, standalone signed listing search/removal,
+cross-site rejection, conservative expiry after browser resume, responsive and
+failure states, setup recovery, guest streaming and revocation. It also checks
+the corrected inference-diagram copy.
+
+Visual evidence remains in ignored `test-results/directory-standalone.png`,
+`directory-320.png`, `directory-1440.png`, `directory-owner-controls.png`,
+`setup-ready-journey.png` and `guest-integration-revoked.png`. Tests used the private
+Sway 1.12/pixman display and a synthetic Ollama fixture on 11435, with disposable
+access/identity/registry storage. The exact fixture processes and private display
+were stopped and their runtime directories removed. No real model download,
+GPU workload, user conversation or default access store was used.
+
+This verifies the reference discovery implementation and its consent/access
+boundaries. Public deployment, guest-URL ownership, human identity, moderation,
+in-app access requests and production abuse resistance remain outside this evidence.
+
+Claude Opus 5 High reviewed the integration. Its actionable findings led to the
+cross-site read checks, concurrent-read bound, replacement of expired entries at
+capacity, numeric protocol coverage and clearer capacity feedback. Primary tests
+verified the resulting changes; the review's earlier observations about pending
+audience integration and unused clock arguments were already resolved locally.

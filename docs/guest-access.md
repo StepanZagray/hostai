@@ -8,8 +8,9 @@ management, request history, owner status, actuator, or owner-page routes.
 Local preview works on the same machine. Optional **Cloudflare Quick Tunnel**
 sharing uses a fourth, ephemeral loopback listener with the same restricted guest
 routes. It never forwards to the owner workspace, owner API, Ollama, or the local
-preview listener. Tailscale, stable public hosting, a directory, accounts and
-verified host identities are not integrated. A loopback bind and Host/origin
+preview listener. Tailscale, stable public hosting, accounts and verified host identities are not
+integrated. An [optional self-hostable directory](directory.md) adds opt-in host
+search; no public registry is deployed by default. A loopback bind and Host/origin
 checks do not authenticate other local processes; owner controls remain
 unauthenticated.
 
@@ -160,8 +161,9 @@ probe paths or raw connector logs. A passed reachability check does not prove mo
 memory fit, latency, host identity, or comprehensive internet abuse protection.
 
 [Cloudflare Quick Tunnel documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)
-describes its temporary hosting limits. Public discovery still needs an explicit
-registry, identity and freshness service; none exists in this repository.
+describes its temporary hosting limits. The [optional directory](directory.md) supplies a reference registry, signed
+installation identity and listing freshness. It requires explicit configuration
+and deployment for clients on other machines.
 
 ## API summary
 

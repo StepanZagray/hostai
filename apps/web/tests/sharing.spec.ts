@@ -242,7 +242,9 @@ test("explicit internet start verifies before issuing a key, then interruption h
   await expect(page.getByText(publicOrigin, { exact: true })).toBeVisible();
   await expect(page.getByText("Local preview only", { exact: true })).toHaveCount(0);
   await expect(
-    page.getByText("Public host discovery is not available.", { exact: false }),
+    page.getByText("Public discovery requires an optional directory listing below.", {
+      exact: false,
+    }),
   ).toBeVisible();
   await page.getByLabel("Key channel").selectOption("internet");
   await page.getByLabel("Key label", { exact: true }).fill("Internet visitor");

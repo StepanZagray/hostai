@@ -9,6 +9,8 @@ import java.time.Instant;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,6 +32,10 @@ final class InternetSharing implements AutoCloseable {
     private Attempt current;
     private boolean closed;
     private volatile Status status;
+    private final CopyOnWriteArrayList<Consumer<Observation>> observers = new CopyOnWriteArrayList<>();
+    private volatile Observation observation;
+    private long attemptNumber;
+    private long observationNumber;
 
     InternetSharing(String configured) { this(configured, Duration.ofMinutes(2)); }
     @Autowired InternetSharing(@Value("${hostai.cloudflared-path:}") String configured,
@@ -41,13 +47,38 @@ final class InternetSharing implements AutoCloseable {
     InternetSharing(String configured, Probe probe, Duration startupTimeout, Duration checkInterval) {
         this.configured = configured; this.probe = probe; this.startupTimeout = startupTimeout; this.checkInterval = checkInterval;
         status = new Status("off", "cloudflare-quick", available().isPresent(), null, null, null);
+        observation = new Observation(status, 0, 0);
     }
     private Optional<Path> available() { return QuickTunnelProcess.findExecutable(configured); }
     Status status() { return status; }
+    Observation observation() { return observation; }
+
+    /** Callbacks only enqueue/coalesce work: no I/O, blocking, or SharingService calls.
+     * Delivery is outside this monitor; sequence numbers let observers discard reordered delivery. */
+    AutoCloseable observe(Consumer<Observation> observer) {
+        observers.add(observer);
+        notifyObserver(observer, observation);
+        return () -> observers.remove(observer);
+    }
+
+    private void changed(Status next) {
+        status = next;
+        observation = new Observation(next, attemptNumber, ++observationNumber);
+    }
+
+    private void notifyObservers(Observation event) {
+        for (var observer : observers) notifyObserver(observer, event);
+    }
+
+    private static void notifyObserver(Consumer<Observation> observer, Observation event) {
+        try { observer.accept(event); }
+        catch (RuntimeException ignored) { /* An optional observer must never break transport. */ }
+    }
 
     Status start(Function<PublicIngress, GuestServer> listener) {
         Attempt attempt;
         Path executable;
+        Observation event;
         synchronized (this) {
             if (closed) throw new GatewayException(HttpStatus.SERVICE_UNAVAILABLE, "Internet sharing is closed.");
             if (current != null && current.thread.getState() == Thread.State.TERMINATED)
@@ -58,30 +89,36 @@ final class InternetSharing implements AutoCloseable {
             executable = available().orElseThrow(() -> new GatewayException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Install cloudflared, then restart the gateway before starting internet sharing."));
             attempt = new Attempt(); current = attempt;
-            status = new Status("starting", "cloudflare-quick", true, null, null, null);
+            attemptNumber++;
+            changed(new Status("starting", "cloudflare-quick", true, null, null, null));
+            event = observation;
             attempt.thread = Thread.ofVirtual().name("hostai-internet-sharing").unstarted(() -> run(attempt, executable, listener));
         }
+        notifyObservers(event);
         attempt.thread.start();
         return status;
     }
 
     Status stop() {
         Attempt attempt;
+        Observation event;
         synchronized (this) {
             attempt = current;
             if (attempt == null) {
-                status = new Status("off", "cloudflare-quick", available().isPresent(), null, status.checkedAt(), null);
-                return status;
+                changed(new Status("off", "cloudflare-quick", available().isPresent(), null, status.checkedAt(), null));
+            } else {
+                // A terminal cleanup failure retains the refusing listener. Do not promise progress
+                // from interrupting an already finished worker.
+                if (attempt.thread.getState() == Thread.State.TERMINATED) return status;
+                attempt.cancelled = true;
+                changed(new Status("stopping", "cloudflare-quick", true, null, status.checkedAt(), null));
+                if (!attempt.cleaning && !attempt.binding) attempt.thread.interrupt();
             }
-            // A terminal cleanup failure retains the refusing listener. Do not promise progress
-            // from interrupting an already finished worker.
-            if (attempt.thread.getState() == Thread.State.TERMINATED) return status;
-            attempt.cancelled = true;
-            set(attempt, "stopping", null, null);
-            if (!attempt.cleaning && !attempt.binding) attempt.thread.interrupt();
+            event = observation;
         }
+        notifyObservers(event);
         // Sink emission can synchronously release a SharingService lease. Never emit under this monitor.
-        attempt.ingress.close();
+        if (attempt != null) attempt.ingress.close();
         return status;
     }
 
@@ -168,20 +205,28 @@ final class InternetSharing implements AutoCloseable {
                     failure = "Internet requests are blocked, but the guest listener could not be closed. Restart the gateway.";
                 }
             }
+            Observation event = null;
             synchronized (this) {
                 if (current == attempt) {
-                    status = new Status(failure == null ? "off" : "failed", "cloudflare-quick", available().isPresent(), null, status.checkedAt(), failure, !reaped);
+                    changed(new Status(failure == null ? "off" : "failed", "cloudflare-quick", available().isPresent(), null, status.checkedAt(), failure, !reaped));
+                    event = observation;
                     if (reaped) current = null;
                 }
             }
+            if (event != null) notifyObservers(event);
         }
     }
 
-    private synchronized void set(Attempt attempt, String state, Instant checkedAt, String error) {
-        if (current != attempt || (attempt.cancelled && !state.equals("stopping"))) return;
-        status = new Status(state, "cloudflare-quick", true,
+    private void set(Attempt attempt, String state, Instant checkedAt, String error) {
+        Observation event;
+        synchronized (this) {
+            if (current != attempt || (attempt.cancelled && !state.equals("stopping"))) return;
+            changed(new Status(state, "cloudflare-quick", true,
                 state.equals("live") ? attempt.ingress.origin().toString() : null,
-                checkedAt == null ? status.checkedAt() : checkedAt, error);
+                checkedAt == null ? status.checkedAt() : checkedAt, error));
+            event = observation;
+        }
+        notifyObservers(event);
     }
 
     @Override @PreDestroy public void close() {
@@ -203,6 +248,7 @@ final class InternetSharing implements AutoCloseable {
             this(state, provider, available, publicUrl, checkedAt, error, false);
         }
     }
+    record Observation(Status status, long attempt, long sequence) {}
     private static final class Attempt {
         final PublicIngress ingress = new PublicIngress();
         final CountDownLatch notice = new CountDownLatch(1);

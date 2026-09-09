@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { DirectorySharing } from "../components/directory-sharing";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KeyRound, Play, RefreshCw, Square } from "lucide-react";
 import { css } from "../../styled-system/css";
@@ -374,7 +375,7 @@ function Sharing() {
           {internetLive && !error
             ? "Internet keys let clients use this model from their own browsers. Local keys still work only on this machine."
             : "Local preview links work in a browser on this machine. Internet links require a verified public connection and a separate internet key."}{" "}
-          Public host discovery is not available.
+          Public discovery requires an optional directory listing below.
         </p>
         <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
           The client page is separate from your host controls. Access keys permit one model; clients
@@ -631,6 +632,7 @@ function Sharing() {
           </p>
         </div>
       </section>
+      <DirectorySharing />
       <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Create client key">
         <PanelHeading
           title="Create an access key"

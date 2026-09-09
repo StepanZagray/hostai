@@ -21,6 +21,8 @@ importers:
         specifier: 44.3.0
         version: 44.3.0
 
+  apps/directory: {}
+
   apps/web:
     dependencies:
       '@fontsource-variable/geist-mono':

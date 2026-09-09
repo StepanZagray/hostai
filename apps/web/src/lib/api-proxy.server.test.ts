@@ -24,6 +24,29 @@ afterEach(() => {
 });
 
 describe("same-origin API proxy", () => {
+  it.each(["/api/directory", "/api/directory/listings"])(
+    "rejects cross-site directory reads before contacting Java: %s",
+    async (path) => {
+      const fetch = backend();
+      const rejected: HeadersInit[] = [
+        { Origin: "https://foreign.example" },
+        { "Sec-Fetch-Site": "cross-site" },
+        { "Sec-Fetch-Site": "same-site" },
+      ];
+      for (const headers of rejected) {
+        expect((await proxy({ request: new Request(origin + path, { headers }) })).status).toBe(
+          403,
+        );
+      }
+      expect(fetch).not.toHaveBeenCalled();
+      await (
+        await proxy({
+          request: new Request(origin + path, { headers: { "Sec-Fetch-Site": "same-origin" } }),
+        })
+      ).text();
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
   it.each([
     new Request(`${origin}/api/admin`),
     new Request(`${origin}/api/chat`, { method: "DELETE" }),
@@ -274,6 +297,8 @@ describe("owner management proxy", () => {
     "/api/sharing/stop",
     "/api/sharing/internet/start",
     "/api/sharing/internet/stop",
+    "/api/directory/start",
+    "/api/directory/stop",
     "/api/sharing/grants",
     `/api/sharing/grants/${id}/revoke`,
   ])("forwards %s with JSON negotiation", async (path) => {

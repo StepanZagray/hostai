@@ -1,5 +1,36 @@
 # Autonomous improvement log
 
+## Optional searchable host directory
+
+Hosts can explicitly publish a verified temporary guest endpoint to their configured
+directory. A standalone browser page and the owner's Find a host route search by
+model or host name, distinguish empty/error/expired results, and retain search
+through refresh failures. Guests still need an invitation obtained privately from
+the host; no access-request flow or default public directory has been deployed.
+
+The Node reference registry accepts audience-bound Ed25519 updates, persists at
+most 100 listings, and expires freshness after 90 seconds. It never probes submitted
+URLs. A stable installation key proves continuity only, not a person's identity or
+ownership of a guest URL. Publication remains separate from tunnel and grant
+controls; removal does not stop chat, and a replacement tunnel requires new consent.
+
+Independent advice identified cancellation-sensitive identity I/O. Focused failure
+tests reproduced it, and identity operations now finish on private I/O threads
+without losing the caller's interrupt status or durable lock. Integration also
+corrected unsigned challenge invalidation, per-key rate charging, cross-directory
+proof relay, clock skew and per-installation identity storage. An uncertain remote
+write has no invented expiry timestamp.
+
+Actual Java-to-Node interoperability and isolated browser checks cover publication,
+search, withdrawal, restart, changed tunnel consent, responsive layouts and lost
+responses. A synthetic model fixture also verifies guest streaming and revocation.
+Setup copy now consistently points to optional guest sharing and host discovery.
+Opus 5 High's final review also led to cross-site protection for directory reads,
+bounded reader connections, replacement of expired listings at capacity, numeric
+expiry tests and clearer busy/full feedback. Browser links recheck conservative
+elapsed time at click, including time advanced while a browser was suspended.
+See [directory setup and limits](directory.md) and [verification](verification.md).
+
 ## Temporary internet guest access
 
 With Claude Opus 5 High advice and review, Sharing now offers explicit temporary
