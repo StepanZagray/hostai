@@ -1,12 +1,14 @@
 {
   "name": "hostai",
   "private": true,
+  "engines": { "node": ">=24" },
   "packageManager": "pnpm@11.17.0",
   "scripts": {
     "dev": "pnpm --filter @hostai/web dev",
     "build": "pnpm --filter @hostai/web build",
     "check": "pnpm --filter @hostai/web check",
     "test": "pnpm --filter @hostai/web test",
+    "test:http": "node --test apps/web/tests/server-http.test.mjs",
     "test:ui": "python3 scripts/test-ui.py",
     "desktop:dev": "node scripts/workspace.mjs desktop --dev",
     "desktop:start": "node scripts/workspace.mjs desktop",

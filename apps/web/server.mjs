@@ -15,6 +15,46 @@ const mime = {
   ".png": "image/png",
   ".ico": "image/x-icon",
 };
+
+async function rejectUnreadUpload(request, response, res) {
+  // These responses are generated locally before an upload reaches the backend.
+  // A length-delimited body lets the client finish reading the rejection while
+  // its upload is still in flight. Immediate socket destruction can race that read.
+  const payload = Buffer.from(await response.arrayBuffer());
+  if (res.destroyed) return;
+  const headers = new Headers(response.headers);
+  headers.set("Content-Length", String(payload.byteLength));
+  headers.set("Connection", "close");
+  headers.delete("Transfer-Encoding");
+  res.writeHead(response.status, Object.fromEntries(headers));
+  res.write(payload);
+
+  const reader = request.body.getReader();
+  let timer;
+  const deadline = new Promise((resolve) => {
+    timer = setTimeout(() => {
+      reader.releaseLock();
+      resolve();
+    }, 250);
+  });
+  try {
+    let discarded = 0;
+    while (discarded < 1024 * 1024) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      discarded += value.byteLength;
+    }
+    // Stop reading at the drain cap, but still allow the rejection to arrive.
+    await deadline;
+  } catch {
+    // A disconnect or the short drain deadline ends ownership of the upload.
+  } finally {
+    clearTimeout(timer);
+    reader.releaseLock();
+    res.end();
+  }
+}
+
 const server = createServer(async (req, res) => {
   const abort = new AbortController();
   res.on("close", () => {
@@ -58,6 +98,14 @@ const server = createServer(async (req, res) => {
         : {}),
     });
     const response = await handler.fetch(request);
+    if (res.destroyed) {
+      await response.body?.cancel().catch(() => {});
+      return;
+    }
+    if (request.body && !req.readableEnded) {
+      await rejectUnreadUpload(request, response, res);
+      return;
+    }
     res.writeHead(response.status, Object.fromEntries(response.headers));
     if (!response.body || req.method === "HEAD") {
       res.end();
@@ -73,7 +121,9 @@ const server = createServer(async (req, res) => {
     console.error(error);
   }
 });
-server.listen(port, "127.0.0.1", () => console.log(`HostAI workspace: http://127.0.0.1:${port}`));
+server.listen(port, "127.0.0.1", () =>
+  console.log(`HostAI workspace: http://127.0.0.1:${server.address().port}`),
+);
 for (const signal of ["SIGINT", "SIGTERM"])
   process.on(signal, () => {
     server.close();

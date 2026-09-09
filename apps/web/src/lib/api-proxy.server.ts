@@ -1,0 +1,159 @@
+const MAX_BODY_BYTES = 256 * 1024;
+const REQUEST_TIMEOUT_MS = 10_000;
+// Give Java's ten-minute generation deadline time to deliver its terminal error.
+const CHAT_TIMEOUT_MS = 610_000;
+
+class RequestError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+async function readBody(request: Request, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
+  const length = request.headers.get("content-length");
+  if (length && /^\d+$/.test(length) && Number(length) > MAX_BODY_BYTES) {
+    throw new RequestError(413, "Request is too large.");
+  }
+  signal.throwIfAborted();
+  const reader = request.body?.getReader();
+  if (!reader) return new Uint8Array();
+  // Releasing rejects a pending read without destroying the incoming HTTP socket.
+  // The server adapter closes an unread upload after sending the error response.
+  const interrupt = () => reader.releaseLock();
+  signal.addEventListener("abort", interrupt, { once: true });
+  let size = 0;
+  const chunks: Uint8Array[] = [];
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      signal.throwIfAborted();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BODY_BYTES) {
+        throw new RequestError(413, "Request is too large.");
+      }
+      chunks.push(value);
+    }
+    const body = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      body.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return body;
+  } finally {
+    signal.removeEventListener("abort", interrupt);
+    reader.releaseLock();
+  }
+}
+
+export async function proxy({ request }: { request: Request }) {
+  const url = new URL(request.url);
+  const allowed =
+    request.method === "GET"
+      ? ["/api/status", "/api/models", "/api/requests"]
+      : request.method === "POST"
+        ? ["/api/chat"]
+        : [];
+  if (!allowed.includes(url.pathname))
+    return Response.json({ detail: "Endpoint not found." }, { status: 404 });
+  if (request.method === "POST") {
+    const origin = request.headers.get("origin");
+    if (origin && origin !== url.origin)
+      return Response.json({ detail: "Cross-origin requests are not allowed." }, { status: 403 });
+    if (
+      request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() !==
+      "application/json"
+    )
+      return Response.json({ detail: "JSON is required." }, { status: 415 });
+  }
+  const abort = new AbortController();
+  const onAbort = () => abort.abort(request.signal.reason);
+  request.signal.addEventListener("abort", onAbort, { once: true });
+  if (request.signal.aborted) onAbort();
+  let timedOut = false;
+  const timeout = () => {
+    timedOut = true;
+    abort.abort();
+  };
+  let timer = setTimeout(timeout, REQUEST_TIMEOUT_MS);
+  const cleanup = () => {
+    clearTimeout(timer);
+    request.signal.removeEventListener("abort", onAbort);
+  };
+  try {
+    abort.signal.throwIfAborted();
+    const body = request.method === "POST" ? await readBody(request, abort.signal) : undefined;
+    abort.signal.throwIfAborted();
+    clearTimeout(timer);
+    timer = setTimeout(timeout, request.method === "GET" ? REQUEST_TIMEOUT_MS : CHAT_TIMEOUT_MS);
+    const upstream = await fetch(
+      new URL(url.pathname, process.env.HOSTAI_BACKEND_URL || "http://127.0.0.1:8080"),
+      {
+        method: request.method,
+        body,
+        signal: abort.signal,
+        headers: {
+          "Content-Type": "application/json",
+          Accept: request.method === "POST" ? "application/x-ndjson" : "application/json",
+        },
+      },
+    );
+    const headers = new Headers({
+      "Content-Type": upstream.headers.get("content-type") || "application/json",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
+      "X-Accel-Buffering": "no",
+    });
+    const retryAfter = upstream.headers.get("retry-after");
+    if (retryAfter) headers.set("Retry-After", retryAfter);
+    const reader = upstream.body?.getReader();
+    if (!reader) {
+      cleanup();
+      return new Response(null, { status: upstream.status, headers });
+    }
+    const release = () => {
+      cleanup();
+      reader.releaseLock();
+    };
+    const stream = new ReadableStream({
+      async pull(controller) {
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            release();
+            controller.close();
+          } else controller.enqueue(value);
+        } catch (error) {
+          release();
+          controller.error(error);
+        }
+      },
+      async cancel() {
+        abort.abort();
+        try {
+          await reader.cancel().catch(() => {});
+        } finally {
+          release();
+        }
+      },
+    });
+    return new Response(stream, { status: upstream.status, headers });
+  } catch (error) {
+    cleanup();
+    if (error instanceof RequestError)
+      return Response.json({ detail: error.message }, { status: error.status });
+    if (timedOut)
+      return Response.json(
+        { detail: "The HostAI request timed out. Please try again." },
+        { status: 504 },
+      );
+    return Response.json(
+      { detail: "The HostAI backend is unavailable. Start the Java service, then reconnect." },
+      { status: 503 },
+    );
+  }
+}

@@ -195,7 +195,10 @@ starting their NDJSON parser.
 
 Two slots cover the complete admitted lifecycle, including waiting for upstream
 headers. There is no waiting queue. Completion, error, and cancellation release
-the lease exactly once. WebFlux propagates downstream cancellation to the
+the lease exactly once. A validated `done:true` record marks inference completed
+before it is delivered downstream, so a client stopping at that record preserves
+the completed history entry and token count. A disconnect before that record is
+cancelled. WebFlux propagates downstream cancellation to the
 upstream HTTP subscription, which closes that exchange's dedicated connection;
 there is no detached inference task. Controllers and stream processing use Java
 virtual threads; Reactor Netty transport uses event-loop threads. Backpressure
@@ -204,6 +207,8 @@ at 256 KiB.
 
 Connect timeout is 2 seconds; metadata requests time out after 3 seconds. Chat
 idle/first-record timeout is 60 seconds and total generation time is 10 minutes.
+The idle window measures stream progress: either a silent runtime or a stalled
+consumer can exhaust it. This bounds slot retention under downstream backpressure.
 Tests shorten these with `hostai.metadata-timeout`, `hostai.stream-idle-timeout`,
 and `hostai.generation-timeout`. An unreachable process can produce 503 before
 streaming; a listening but stalled process can instead produce 504.
@@ -243,6 +248,11 @@ and during a silent stream, upstream socket closure, malformed/truncated streams
 timeouts, absence of generation retries, history privacy, CORS, and actuator
 exposure. Every client, stub server, and stub event loop is closed after use;
 Spring's test context is closed after the class.
+
+`ChatServiceTest` exercises real gateway decoding with an in-memory HTTP exchange,
+including cancellation synchronously on the final record. It verifies that this
+preserves completion and tokens, while earlier cancellation and terminal errors
+retain their respective states. It does not use a network socket or run inference.
 
 For a dependency-free subset using the installed JDK:
 

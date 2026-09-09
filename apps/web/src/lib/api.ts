@@ -61,12 +61,29 @@ export async function readChatStream(response: Response, onChunk: (chunk: Stream
   let finished = false;
   const consume = (line: string) => {
     if (!line.trim()) return;
-    const chunk: StreamChunk = JSON.parse(line);
-    if (chunk.error) throw new Error(chunk.error);
-    if (typeof chunk.content !== "string" || typeof chunk.done !== "boolean")
+    let chunk: unknown;
+    try {
+      chunk = JSON.parse(line);
+    } catch {
       throw new Error("The model returned an invalid stream.");
-    onChunk(chunk);
-    finished ||= chunk.done;
+    }
+    if (
+      !chunk ||
+      typeof chunk !== "object" ||
+      !("content" in chunk) ||
+      typeof chunk.content !== "string" ||
+      !("done" in chunk) ||
+      typeof chunk.done !== "boolean" ||
+      ("error" in chunk && typeof chunk.error !== "string") ||
+      ("outputTokens" in chunk &&
+        (typeof chunk.outputTokens !== "number" ||
+          !Number.isSafeInteger(chunk.outputTokens) ||
+          chunk.outputTokens < 0))
+    )
+      throw new Error("The model returned an invalid stream.");
+    if ("error" in chunk && chunk.error) throw new Error(chunk.error as string);
+    onChunk(chunk as StreamChunk);
+    finished = chunk.done;
   };
   try {
     while (true) {
@@ -74,7 +91,11 @@ export async function readChatStream(response: Response, onChunk: (chunk: Stream
       buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      for (const line of lines) consume(line);
+      for (const line of lines) {
+        consume(line);
+        // The protocol terminates at done:true, even if the socket stays open.
+        if (finished) return;
+      }
       if (done) break;
     }
     consume(buffer);

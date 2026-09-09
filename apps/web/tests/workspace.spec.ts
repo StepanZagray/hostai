@@ -75,6 +75,7 @@ test("model search, navigation and streamed conversation", async ({ page }) => {
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByText("Hello from the test runtime.", { exact: true })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "7 output tokens" })).toBeVisible();
+  await page.screenshot({ path: "test-results/playground-completed.png", fullPage: true });
   await page.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(page.getByRole("heading", { name: "What’s on your mind?" })).toBeVisible();
   expect(errors).toEqual([]);
@@ -89,8 +90,23 @@ test("stream failures are visible and allow another request", async ({ page }) =
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Hello");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByRole("alert")).toHaveText("All generation slots are busy.");
+  await page.screenshot({ path: "test-results/playground-overloaded.png", fullPage: true });
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Try again");
   await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+});
+
+test("malformed streams show a readable error and allow retry", async ({ page }) => {
+  await hostFixture(page);
+  await page.route("**/api/chat", (route) =>
+    route.fulfill({ contentType: "application/x-ndjson", body: "not JSON\n" }),
+  );
+  await page.goto("/playground");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Hello");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByRole("alert")).toHaveText("The model returned an invalid stream.");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Try again");
+  await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await page.screenshot({ path: "test-results/playground-invalid-stream.png", fullPage: true });
 });
 
 test("mobile navigation and layout fit the viewport", async ({ page }) => {

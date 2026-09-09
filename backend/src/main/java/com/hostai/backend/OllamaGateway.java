@@ -105,7 +105,7 @@ public class OllamaGateway {
                         if (error instanceof GatewayException) return error;
                         if (error instanceof TimeoutException) {
                             return new GatewayException(HttpStatus.GATEWAY_TIMEOUT,
-                                    "Ollama stopped responding within the stream time limit.");
+                                    "The generation stream made no progress within the stream time limit.");
                         }
                         if (error instanceof DecodingException || error instanceof DataBufferLimitException) {
                             return GatewayException.invalidResponse();

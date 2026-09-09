@@ -26,10 +26,27 @@ def descendants(pid):
     return result + [child for parent in result for child in descendants(parent)]
 
 
+def owned_pids():
+    # A worker can outlive its process-group leader and be reparented. Descendant
+    # traversal alone loses that worker once the leader exits.
+    groups = {process.pid for process in processes}
+    result = {pid for process in processes for pid in [process.pid, *descendants(process.pid)]}
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            if os.getpgid(pid) in groups:
+                result.add(pid)
+        except ProcessLookupError:
+            pass
+    return result
+
+
 def sandbox(env, writable_repo=False):
     args = ['bwrap', '--ro-bind', '/', '/', '--dev', '/dev', '--tmpfs', '/run',
             '--tmpfs', '/tmp', '--bind', str(runtime), str(runtime),
-            '--unshare-pid', '--proc', '/proc', '--clearenv']
+            '--unshare-pid', '--die-with-parent', '--proc', '/proc', '--clearenv']
     if writable_repo:
         args += ['--bind', str(ROOT), str(ROOT)]
     for key, value in env.items():
@@ -98,12 +115,19 @@ try:
         shutil.copyfile(runtime / 'electron-overview.png', evidence / 'electron-overview.png')
     sys.exit(code)
 finally:
-    captured = [pid for process in processes for pid in [process.pid, *descendants(process.pid)]]
+    captured = owned_pids()
     if 'sockets' in globals() and sockets:
-        subprocess.run(['swaymsg', '-s', str(sockets[0]), 'exit'], env=base_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        try:
+            subprocess.run(['swaymsg', '-s', str(sockets[0]), 'exit'], env=base_env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass  # Exact process-group cleanup below remains mandatory.
     for process in reversed(processes):
-        if process.poll() is None:
+        # Signal our exact group even when its original leader already exited.
+        try:
             os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        if process.poll() is None:
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -116,6 +140,17 @@ finally:
         if remaining:
             time.sleep(0.1)
     if remaining:
-        print(f'Test process cleanup incomplete: {remaining}', file=sys.stderr)
-        sys.exit(1)
+        for process in reversed(processes):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        deadline = time.monotonic() + 5
+        while remaining and time.monotonic() < deadline:
+            remaining = [pid for pid in captured if Path(f'/proc/{pid}').exists()]
+            if remaining:
+                time.sleep(0.1)
+        if remaining:
+            print(f'Test process cleanup incomplete: {remaining}', file=sys.stderr)
+            sys.exit(1)
     shutil.rmtree(runtime)

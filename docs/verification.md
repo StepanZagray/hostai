@@ -2,7 +2,11 @@
 
 Backend tests run against an ephemeral loopback HTTP stub. They cover discovery, input validation, oversized bodies, health exposure, overload, streaming errors, timeouts, socket closure, and cancellation. Core checks include 200 competing terminal-state transitions. These results do not measure model quality or GPU performance.
 
-`pnpm test` verifies fragmented NDJSON/UTF-8 decoding, truncated streams, midstream failures, and HTTP errors. Browser scenarios cover offline setup, filtering models, streamed conversations, errors, and responsive navigation at 320/768/1024/1440 pixels. The Electron smoke test opens the actual shared app and checks navigation and absence of Node integration in the renderer.
+`pnpm test` verifies fragmented NDJSON/UTF-8 decoding, immediate completion at the terminal record, invalid records, truncated streams, midstream failures, and HTTP errors. Proxy tests cover the method/path allowlist, origin and media-type checks, bounded byte-counted uploads, cancellation, overload headers, streaming, and cleanup. Fake timers verify upload and chat deadlines without waiting for a long generation. These tests stub fetch and do not exercise real network cancellation; the Java and full integration suites cover that separately.
+
+Browser scenarios cover offline setup, filtering models, streamed conversations, errors, and responsive navigation at 320/768/1024/1440 pixels. Completed and overloaded playground screenshots are retained in `test-results/`. The Electron smoke test opens the actual shared app and checks navigation and absence of Node integration in the renderer.
+
+`pnpm build && pnpm test:http` launches the built Node/Start server and an HTTP backend stub on ephemeral loopback ports. It verifies byte-preserving forwarding and real 413/504 responses for oversized or stalled uploads, then checks that the server still handles another request. This catches incoming-socket teardown bugs that mocked Fetch streams cannot reproduce. Both processes and all sockets are closed afterward. CI runs this suite after building; it needs no display or Java service.
 
 ## Isolated UI runner
 
@@ -14,7 +18,7 @@ Start the frontend, then run `pnpm test:ui`. `scripts/test-ui.py`:
 4. Enables only wlroots' headless backend and pixman software renderer.
 5. Checks the exact compositor PID, environment, descriptors, outputs, and startup logs before launching clients.
 6. Gives Chromium/Electron only the private display. Captures the native window using `grim -o HEADLESS-1`.
-7. Stops and waits for its processes and verifies cleanup. Evidence is retained in ignored `test-results/`.
+7. Stops and waits for its exact process groups, including workers whose original parent exited, and verifies cleanup. Bubblewrap also kills children if its parent dies. Evidence is retained in ignored `test-results/`.
 
 Official source used to establish the configuration: [Sway 1.12 server implementation](https://github.com/swaywm/sway/blob/1.12/sway/server.c). Updating the compositor version requires revalidating the guard; setting an unrecognised environment variable is not proof of isolation.
 

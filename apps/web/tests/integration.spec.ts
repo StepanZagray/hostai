@@ -13,6 +13,9 @@ test("shared UI streams through Java and releases a cancelled request", async ({
     page.getByText("Hello from the isolated test runtime. Stream complete.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "12 output tokens" })).toBeVisible();
+  await expect
+    .poll(async () => (await (await page.request.get("/api/requests")).json()).requests[0])
+    .toMatchObject({ status: "completed", outputTokens: 12 });
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Cancellation check");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(
