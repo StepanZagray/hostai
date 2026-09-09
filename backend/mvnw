@@ -1,0 +1,20 @@
+#!/bin/sh
+# Bootstrap the pinned Apache Maven Wrapper without changing the system Java.
+set -eu
+base=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+wrapper="$base/.mvn/wrapper/maven-wrapper.jar"
+if [ -n "${JAVA_HOME:-}" ]; then
+    java="$JAVA_HOME/bin/java"
+else
+    java=java
+fi
+if [ ! -f "$wrapper" ]; then
+    url=$(sed -n 's/^wrapperUrl=//p' "$base/.mvn/wrapper/maven-wrapper.properties")
+    tmp=$(mktemp "$base/.mvn/wrapper/download.XXXXXX.tmp")
+    trap 'rm -f "$tmp"' EXIT HUP INT TERM
+    curl --fail --location --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 120 "$url" -o "$tmp"
+    mv "$tmp" "$wrapper"
+    trap - EXIT HUP INT TERM
+fi
+exec "$java" "-Dmaven.multiModuleProjectDirectory=$base" \
+    -classpath "$wrapper" org.apache.maven.wrapper.MavenWrapperMain "$@"
