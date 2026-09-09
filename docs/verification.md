@@ -12,6 +12,12 @@ history refresh leaves chat usable, failed status/discovery cannot claim readine
 and keyboard retry restores the affected view. Partial-refresh and unavailable-model
 screenshots are retained with the other UI evidence.
 
+Conversation tests distinguish visible turns from outgoing context. They cover
+interrupted/empty answers, preservation of user prompts and completed exchanges,
+model changes, and Clear. The full Java integration scenario verifies follow-up
+context after cancellation; browser interception separately tests cancellation
+before headers, truncated responses, and duplicate submission. None run a model.
+
 `pnpm build && pnpm test:http` launches the built Node/Start server and an HTTP backend stub on ephemeral loopback ports. It verifies byte-preserving forwarding and real 413/504 responses for oversized or stalled uploads, then checks that the server still handles another request. This catches incoming-socket teardown bugs that mocked Fetch streams cannot reproduce. Both processes and all sockets are closed afterward. CI runs this suite after building; it needs no display or Java service.
 
 ## Isolated UI runner

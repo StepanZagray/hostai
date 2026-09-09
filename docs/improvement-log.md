@@ -60,10 +60,36 @@ outcomes, chat during a history failure, recovery, keyboard retry, and responsiv
 layouts, and unknown counts during loading. The Java integration scenario was
 skipped in this cycle; proxy and Java code were not changed. Screenshots are in ignored `test-results/`.
 
+## Interrupted conversation history
+
+A browser regression reproduced an unfinished answer being included in the next
+request. With Opus 5 High advice, display turns now carry lifecycle state and
+produce a separate wire history: all user messages for the selected model remain,
+but only completed, nonblank assistant responses are reused. Interrupted and empty
+responses stay visible with an exclusion label. This also prevents blank completed
+answers from violating the backend's nonblank-message validation on the next send.
+
+Turns retain their model identity. The chosen model is pinned on the first send;
+if discovery loses it, generation pauses with an unavailable selection instead of
+silently using a different model or relabeling previous answers. Explicit model
+switch and Clear reset history. A synchronous guard prevents duplicate admission.
+
+Validation: 54 unit tests, type checking/lint/formatting, production build, and 16
+distinct isolated UI/Electron/integration scenarios across the full and focused
+runs. The Java-backed cancellation scenario verifies the next request retains
+completed context and user prompts but excludes cancelled output. Other checks
+cover empty answers, HTTP failure before content, truncation, Stop before headers,
+duplicate submission, model disappearance, switch, and Clear. Screenshots of
+interrupted, cancelled, and unavailable-model conversations were inspected.
+
+The focused review was checked against the stream parser: it already stops at
+`done:true` and rejects premature EOF, contrary to two review assumptions. The
+review's concern about consecutive user messages was checked by running the
+Java integration scenario. Its Ollama endpoint remains a test stub; no real model
+compatibility or inference-quality claim follows from those tests.
+
 ## Next candidates to investigate
 
-- `playground.tsx` retains partial failed assistant responses in `messages`, which
-  is also reused as the next request's history despite the nearby exclusion
-  comment. Establish the intended retry/history behavior with regression tests.
-
-This candidate has not been implemented yet.
+- Long conversations can exceed the gateway's message-count and content limits.
+  Establish a visible context-limit policy so another send does not repeatedly
+  fail until the user clears the entire conversation. This is not implemented yet.

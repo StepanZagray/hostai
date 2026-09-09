@@ -14,7 +14,8 @@ import {
 import { css } from "../../styled-system/css";
 import { Badge, Button, CodeBlock, PageHeading, button, muted, panel } from "../components/ui";
 import { useHost } from "../lib/host-context";
-import { readChatStream, type ChatMessage } from "../lib/api";
+import { readChatStream } from "../lib/api";
+import { chatHistory, type ConversationTurn } from "../lib/conversation";
 
 export const Route = createFileRoute("/playground")({
   validateSearch: (search: Record<string, unknown>): { model?: string } => ({
@@ -26,8 +27,13 @@ function Playground() {
   const { model: requestedModel } = Route.useSearch();
   const { models, status, refresh } = useHost();
   const [chosenModel, setChosenModel] = useState(requestedModel ?? "");
-  const model = models.some((m) => m.name === chosenModel) ? chosenModel : (models[0]?.name ?? "");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const model = chosenModel || (models[0]?.name ?? "");
+  const modelAvailable = models.some((m) => m.name === model);
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  const messages = turns.flatMap((turn) => [
+    { role: "user", content: turn.prompt, turn },
+    { role: "assistant", content: turn.response, turn },
+  ]);
   const [prompt, setPrompt] = useState("");
   const [temperature, setTemperature] = useState(0.7);
   const [maxTokens, setMaxTokens] = useState(512);
@@ -40,12 +46,25 @@ function Playground() {
   useEffect(() => () => abort.current?.abort(), []);
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [messages]);
-  const ready = !!status?.ollamaConnected && !!model;
+  }, [turns]);
+  const ready = !!status?.ollamaConnected && modelAvailable;
   async function send() {
-    if (busy || !ready || !prompt.trim()) return;
-    const history: ChatMessage[] = [...messages, { role: "user", content: prompt.trim() }];
-    setMessages([...history, { role: "assistant", content: "" }]);
+    if (abort.current || !ready || !prompt.trim()) return;
+    const turn: ConversationTurn = {
+      id: crypto.randomUUID(),
+      model,
+      prompt: prompt.trim(),
+      response: "",
+      state: "streaming",
+    };
+    const history = chatHistory(turns, model, turn.prompt);
+    const updateTurn = (response: string, state: ConversationTurn["state"]) => {
+      setTurns((current) =>
+        current.map((item) => (item.id === turn.id ? { ...item, response, state } : item)),
+      );
+    };
+    setChosenModel(model);
+    setTurns((current) => [...current, turn]);
     setPrompt("");
     setError("");
     setNotice("");
@@ -62,7 +81,7 @@ function Playground() {
       });
       await readChatStream(response, (chunk) => {
         answer += chunk.content;
-        setMessages([...history, { role: "assistant", content: answer }]);
+        updateTurn(answer, chunk.done ? "completed" : "streaming");
         if (chunk.done && chunk.outputTokens !== undefined)
           setNotice(`${chunk.outputTokens} output tokens · Generated locally`);
       });
@@ -70,8 +89,7 @@ function Playground() {
       if (current.signal.aborted) setNotice("Generation stopped. The response may be incomplete.");
       else
         setError(cause instanceof Error ? cause.message : "Generation failed. Please try again.");
-      // Do not include an empty or partial failed assistant response in a future prompt.
-      setMessages(answer ? [...history, { role: "assistant", content: answer }] : history);
+      updateTurn(answer, current.signal.aborted ? "cancelled" : "failed");
     } finally {
       setBusy(false);
       abort.current = null;
@@ -132,7 +150,7 @@ function Playground() {
               variant="ghost"
               disabled={busy || !messages.length}
               onClick={() => {
-                setMessages([]);
+                setTurns([]);
                 setError("");
                 setNotice("");
               }}
@@ -202,8 +220,11 @@ function Playground() {
                 )}
               </div>
             ) : (
-              messages.map((message, i) => (
-                <article key={i} className={css({ display: "flex", gap: "3", mb: "6" })}>
+              messages.map((message) => (
+                <article
+                  key={`${message.turn.id}-${message.role}`}
+                  className={css({ display: "flex", gap: "3", mb: "6" })}
+                >
                   <span
                     className={css({
                       flexShrink: 0,
@@ -221,7 +242,7 @@ function Playground() {
                   </span>
                   <div className={css({ minW: 0 })}>
                     <h3 className={css({ fontWeight: 750, fontSize: "xs", mb: "2" })}>
-                      {message.role === "user" ? "You" : model}
+                      {message.role === "user" ? "You" : message.turn.model}
                     </h3>
                     <p
                       className={css({
@@ -231,8 +252,24 @@ function Playground() {
                         lineHeight: 1.9,
                       })}
                     >
-                      {message.content || (busy ? "Thinking…" : "")}
+                      {message.content.trim()
+                        ? message.content
+                        : message.turn.state === "streaming"
+                          ? "Thinking…"
+                          : "No response text returned."}
                     </p>
+                    {message.role === "assistant" &&
+                      message.turn.state !== "streaming" &&
+                      (message.turn.state !== "completed" || !message.content.trim()) && (
+                        <p className={css({ mt: "2", fontSize: "xs", color: "muted" })}>
+                          {message.turn.state === "cancelled"
+                            ? "Stopped response"
+                            : message.turn.state === "failed"
+                              ? "Incomplete response"
+                              : "Empty response"}
+                          {" · Not used in later prompts."}
+                        </p>
+                      )}
                   </div>
                 </article>
               ))
@@ -359,7 +396,7 @@ function Playground() {
             disabled={!models.length || busy}
             onChange={(e) => {
               setChosenModel(e.target.value);
-              setMessages([]);
+              setTurns([]);
               setError("");
               setNotice("");
             }}
@@ -374,7 +411,8 @@ function Playground() {
               mb: "5",
             })}
           >
-            {!models.length && <option value="">No models available</option>}
+            {model && !modelAvailable && <option value={model}>{model} (unavailable)</option>}
+            {!model && !models.length && <option value="">No models available</option>}
             {models.map((m) => (
               <option key={m.name}>{m.name}</option>
             ))}
@@ -434,7 +472,11 @@ function Playground() {
           </select>
           <div className={css({ borderTop: "1px solid token(colors.line)", pt: "5", mt: "6" })}>
             <Badge tone={ready ? "good" : "warning"}>
-              {ready ? "Local inference ready" : "Runtime not ready"}
+              {ready
+                ? "Local inference ready"
+                : status?.ollamaConnected && model && !modelAvailable
+                  ? "Selected model unavailable"
+                  : "Runtime not ready"}
             </Badge>
             <p className={`${muted} ${css({ fontSize: "11px", mt: "3" })}`}>
               Conversations live in this tab and clear when you leave the playground.

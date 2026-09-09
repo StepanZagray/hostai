@@ -83,9 +83,19 @@ test("model search, navigation and streamed conversation", async ({ page }) => {
 
 test("stream failures are visible and allow another request", async ({ page }) => {
   await hostFixture(page);
-  await page.route("**/api/chat", (route) =>
-    route.fulfill({ status: 429, json: { detail: "All generation slots are busy." } }),
-  );
+  let attempts = 0;
+  await page.route("**/api/chat", (route) => {
+    if (++attempts === 1)
+      return route.fulfill({ status: 429, json: { detail: "All generation slots are busy." } });
+    expect(route.request().postDataJSON().messages).toEqual([
+      { role: "user", content: "Hello" },
+      { role: "user", content: "Try again" },
+    ]);
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: '{"content":"Recovered","done":true}\n',
+    });
+  });
   await page.goto("/playground");
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Hello");
   await page.getByRole("button", { name: "Send message" }).click();
@@ -93,6 +103,9 @@ test("stream failures are visible and allow another request", async ({ page }) =
   await page.screenshot({ path: "test-results/playground-overloaded.png", fullPage: true });
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Try again");
   await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled();
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Recovered", { exact: true })).toBeVisible();
+  await expect(page.getByText("Thinking…", { exact: true })).toHaveCount(0);
 });
 
 test("malformed streams show a readable error and allow retry", async ({ page }) => {
@@ -246,4 +259,197 @@ test("model count stays unknown until discovery finishes", async ({ page }) => {
   }
   await expect(page.getByText("0 installed models", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Your library starts here" })).toBeVisible();
+});
+
+test("failed responses stay visible but are excluded from the next prompt", async ({ page }) => {
+  await hostFixture(page);
+  const sent: { role: string; content: string }[][] = [];
+  await page.route("**/api/chat", (route) => {
+    sent.push(route.request().postDataJSON().messages);
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body:
+        sent.length === 1
+          ? '{"content":"Unfinished answer","done":false}\n{"content":"","done":true,"error":"Generation interrupted"}\n'
+          : '{"content":"Finished answer","done":true}\n',
+    });
+  });
+  await page.goto("/playground");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("First attempt");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByRole("alert")).toHaveText("Generation interrupted");
+  await expect(page.getByText("Unfinished answer", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Incomplete response · Not used in later prompts.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Try this instead");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Finished answer", { exact: true })).toBeVisible();
+  expect(sent[1]).toEqual([
+    { role: "user", content: "First attempt" },
+    { role: "user", content: "Try this instead" },
+  ]);
+  await expect(page.getByText("Unfinished answer", { exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/interrupted-conversation.png", fullPage: true });
+});
+
+test("empty completed answers do not poison the next request", async ({ page }) => {
+  await hostFixture(page);
+  const sent: { role: string; content: string }[][] = [];
+  await page.route("**/api/chat", (route) => {
+    sent.push(route.request().postDataJSON().messages);
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body:
+        sent.length === 1
+          ? '{"content":"","done":true,"outputTokens":0}\n'
+          : '{"content":"Now answered","done":true}\n',
+    });
+  });
+  await page.goto("/playground");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("First question");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByText("Empty response · Not used in later prompts.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Please answer");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Now answered", { exact: true })).toBeVisible();
+  expect(sent[1]).toEqual([
+    { role: "user", content: "First question" },
+    { role: "user", content: "Please answer" },
+  ]);
+});
+
+test("model disappearance cannot silently switch an existing conversation", async ({ page }) => {
+  await hostFixture(page);
+  let removed = false;
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        connected: true,
+        models: [
+          {
+            name: removed ? "other-model:small" : "fixture-model:small",
+            sizeBytes: 1,
+            parameterSize: "",
+            quantization: "",
+            modifiedAt: "",
+          },
+        ],
+      },
+    }),
+  );
+  const sent: { model: string; messages: { role: string; content: string }[] }[] = [];
+  await page.route("**/api/chat", (route) => {
+    sent.push(route.request().postDataJSON());
+    removed = true;
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: '{"content":"Saved answer","done":true}\n',
+    });
+  });
+  await page.goto("/playground");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Original model");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Saved answer", { exact: true })).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    "fixture-model:small",
+  );
+  await expect(
+    page.getByRole("option", { name: "fixture-model:small (unavailable)", exact: true }),
+  ).toBeAttached();
+  await expect(
+    page.getByRole("heading", { name: "fixture-model:small", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
+  await expect(page.getByText("Selected model unavailable", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/conversation-model-unavailable.png",
+    fullPage: true,
+  });
+  await page
+    .getByRole("combobox", { name: "Model", exact: true })
+    .selectOption("other-model:small");
+  await expect(page.getByText("Saved answer", { exact: true })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("New model");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Saved answer", { exact: true })).toBeVisible();
+  expect(sent[1]).toMatchObject({
+    model: "other-model:small",
+    messages: [{ role: "user", content: "New model" }],
+  });
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Fresh start");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Saved answer", { exact: true })).toBeVisible();
+  expect(sent[2].messages).toEqual([{ role: "user", content: "Fresh start" }]);
+});
+
+test("truncated responses are labeled incomplete and excluded from follow-up context", async ({
+  page,
+}) => {
+  await hostFixture(page);
+  let calls = 0;
+  await page.route("**/api/chat", (route) => {
+    if (++calls === 1)
+      return route.fulfill({
+        contentType: "application/x-ndjson",
+        body: '{"content":"Truncated answer","done":false}\n',
+      });
+    expect(route.request().postDataJSON().messages).toEqual([
+      { role: "user", content: "Start" },
+      { role: "user", content: "Continue" },
+    ]);
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: '{"content":"Complete answer","done":true}\n',
+    });
+  });
+  await page.goto("/playground");
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Start");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByRole("alert")).toContainText("before the model finished");
+  await expect(
+    page.getByText("Incomplete response · Not used in later prompts.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("textbox", { name: "Message", exact: true }).fill("Continue");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Complete answer", { exact: true })).toBeVisible();
+});
+
+test("duplicate submissions admit one request and stopping before headers allows retry", async ({
+  page,
+}) => {
+  await hostFixture(page);
+  let calls = 0;
+  await page.route("**/api/chat", (route) => {
+    if (++calls === 1) return; // Hold headers until the browser cancels this intercepted request.
+    expect(route.request().postDataJSON().messages).toEqual([
+      { role: "user", content: "Waiting" },
+      { role: "user", content: "Retry" },
+    ]);
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: '{"content":"Retry succeeded","done":true}\n',
+    });
+  });
+  await page.goto("/playground");
+  const input = page.getByRole("textbox", { name: "Message", exact: true });
+  await input.fill("Waiting");
+  await input.evaluate((element) => {
+    const form = element.closest("form")!;
+    for (let i = 0; i < 2; i++)
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  });
+  await expect.poll(() => calls).toBe(1);
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect(
+    page.getByText("Stopped response · Not used in later prompts.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Thinking…", { exact: true })).toHaveCount(0);
+  await input.fill("Retry");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.getByText("Retry succeeded", { exact: true })).toBeVisible();
+  expect(calls).toBe(2);
 });

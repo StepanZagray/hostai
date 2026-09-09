@@ -80,6 +80,11 @@ Electron contains window/menu handling only. All UI components and styling live 
 
 The backend allows two concurrent generations and rejects overload with HTTP 429; the frontend proxy preserves its `Retry-After` header. It does not queue requests yet. It retains the latest 50 request metadata records in memory. Conversations stay in the current playground tab and clear on navigation. Streaming uses NDJSON, not the OpenAI API contract. See [the backend contract](backend/README.md).
 
+Interrupted answers remain visible with an exclusion label. Later prompts retain
+your earlier messages and completed, nonblank answers; unfinished or empty answers
+are not sent back as model context. The conversation keeps its selected model if
+discovery changes. Switching models or clearing the conversation starts fresh.
+
 The frontend proxy accepts at most 256 KiB per chat upload and allows ten seconds to receive it. On early rejection, the production server sends the complete error response, then discards at most another 1 MiB for up to 250 ms before closing the connection. This gives clients still uploading a chance to receive the error. Metadata requests time out after ten seconds. Chats have a 610-second proxy deadline, giving Java's default ten-minute generation limit time to return an explicit error. If you override Java's generation timeout, keep it below the proxy deadline. The browser finishes on the first `done:true` record and releases the response stream.
 
 ## Checks
