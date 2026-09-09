@@ -77,6 +77,12 @@ text and copy state stay current while React can defer formatting under load.
 The answer wrapper exposes `aria-busy` until it catches up. Each actual parse is
 still synchronous; this does not eliminate large-document stalls.
 
+Setup journey checks follow missing runtime → empty library → available model →
+selected Playground. A connected gateway/runtime must not show commands to start
+a second workspace; unavailable discovered models lead to their reasons before
+another download. The browser address includes the actual port. Desktop and
+mobile setup evidence is retained in `test-results/setup-*-journey*.png`.
+
 ## Rendering measurements
 
 With a production build running on port 3001:

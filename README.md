@@ -129,3 +129,8 @@ UI checks require Sway 1.12, bubblewrap, grim, wtype, wl-clipboard, Chromium, Py
 The current TanStack Start/Vite+ combination rejects an otherwise usable SSR environment through an `instanceof` check. A small **version-pinned pnpm patch** in `patches/` checks the required `runner.import` method instead. `pnpm install` applies it reproducibly. See [upstream issue #7614](https://github.com/TanStack/router/issues/7614). Reassess the patch when upgrading Start.
 
 The `vite` peer-version warning is caused by the Vite+ alias exposing version `0.3.1` while Vitest expects Vite's version range. The project uses the single Vite+ implementation and its bundled Vitest; dev, build, and tests are checked together.
+
+
+The [host and client journey audit](docs/user-journeys.md) records current UX gaps
+and the path to downloads, safe sharing, host discovery and remote chat. Those
+remote capabilities remain unimplemented; the audit is not a deployment guide.

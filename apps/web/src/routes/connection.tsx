@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { Globe2, Laptop, RefreshCw, ShieldCheck } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { Topology } from "../components/topology";
@@ -11,12 +12,18 @@ import {
   PanelHeading,
   muted,
   panel,
+  button,
 } from "../components/ui";
 import { useHost } from "../lib/host-context";
+import { chatUnavailableReason } from "../lib/model-admission";
 
 export const Route = createFileRoute("/connection")({ component: Connection });
 function Connection() {
-  const { status, refreshing, refresh } = useHost();
+  const { status, models, errors, loading, refreshing, refresh } = useHost();
+  const ready =
+    !!status?.ollamaConnected && models.some((model) => chatUnavailableReason(model) === null);
+  const [workspaceUrl, setWorkspaceUrl] = useState("");
+  useEffect(() => setWorkspaceUrl(window.location.origin), []);
   return (
     <>
       <PageHeading
@@ -29,6 +36,103 @@ function Connection() {
           </Button>
         }
       />
+      <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Get your host ready">
+        <PanelHeading
+          title="Get your host ready"
+          description="This workspace is already open. Complete the missing steps, then check the connection."
+        />
+        <div
+          className={css({
+            px: "5",
+            pb: "6",
+            display: "grid",
+            gridTemplateColumns: { base: "1fr", lg: "1fr 1fr" },
+            gap: "6",
+          })}
+        >
+          <div>
+            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
+              1. Start the Java gateway
+            </h3>
+            {loading ? (
+              <p className={muted}>Checking your gateway…</p>
+            ) : status ? (
+              <p className={muted}>Your gateway is already running. Keep this workspace open.</p>
+            ) : (
+              <>
+                <p className={`${muted} ${css({ mb: "3" })}`}>
+                  Start only the missing gateway from the project directory with Java 26. If it is
+                  already running, check its terminal for errors before retrying.
+                </p>
+                <CodeBlock code="pnpm backend:dev" />
+              </>
+            )}
+          </div>
+          <div>
+            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>2. Start Ollama</h3>
+            {status?.ollamaConnected ? (
+              <p className={muted}>Ollama is already connected. No restart is needed.</p>
+            ) : (
+              <>
+                <p className={`${muted} ${css({ mb: "3" })}`}>
+                  Install Ollama first using the setup guide below. If it is already running, check
+                  its connection instead of starting a second copy.
+                </p>
+                <CodeBlock code="ollama serve" />
+              </>
+            )}
+          </div>
+          <div>
+            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
+              3. Choose a small first model
+            </h3>
+            {loading ? (
+              <p className={muted}>Checking your model library…</p>
+            ) : ready ? (
+              <p className={muted}>
+                Your library has a model available to try. Choose it in the next step.
+              </p>
+            ) : errors.models && status?.ollamaConnected ? (
+              <p className={muted}>
+                Model discovery failed. Check the connection again before downloading another model.
+              </p>
+            ) : status?.ollamaConnected && models.length > 0 ? (
+              <>
+                <p className={`${muted} ${css({ mb: "3" })}`}>
+                  Your discovered models are not available for chat. Review their reasons before
+                  downloading another model.
+                </p>
+                <Link to="/models" className={button({ variant: "secondary" })}>
+                  Review model library
+                </Link>
+              </>
+            ) : (
+              <>
+                <p className={`${muted} ${css({ mb: "3" })}`}>
+                  Download with Ollama, then check the connection. This example uses disk space and
+                  your internet connection; check its requirements before running it.
+                </p>
+                <CodeBlock code="ollama pull qwen3:0.6b" />
+              </>
+            )}
+          </div>
+          <div>
+            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
+              4. Choose a model and chat
+            </h3>
+            <p className={`${muted} ${css({ mb: "3" })}`}>
+              {ready
+                ? "Open your library, select a model, and send a first prompt to test it."
+                : "Once Ollama is connected and a model is available, continue to your library."}
+            </p>
+            {ready && (
+              <Link to="/models" className={button({ variant: "primary" })}>
+                Try a local model
+              </Link>
+            )}
+          </div>
+        </div>
+      </section>
       <div
         className={css({
           display: "grid",
@@ -38,7 +142,7 @@ function Connection() {
         })}
       >
         <Topology />
-        <section className={panel}>
+        <section className={panel} aria-label="Local connection details">
           <PanelHeading
             title="Host connection"
             action={
@@ -83,56 +187,6 @@ function Connection() {
           </dl>
         </section>
       </div>
-      <section className={panel}>
-        <PanelHeading
-          title="Get your host ready"
-          description="Start the gateway and your model runtime, then check the connection above."
-        />
-        <div
-          className={css({
-            px: "5",
-            pb: "6",
-            display: "grid",
-            gridTemplateColumns: { base: "1fr", lg: "1fr 1fr" },
-            gap: "6",
-          })}
-        >
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
-              1. Start the Java gateway
-            </h3>
-            <p className={`${muted} ${css({ mb: "3" })}`}>
-              Use Java 26. Run this from the project directory.
-            </p>
-            <CodeBlock code="pnpm backend:dev" />
-          </div>
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>2. Start Ollama</h3>
-            <p className={`${muted} ${css({ mb: "3" })}`}>
-              If Ollama is already running, you can skip this step.
-            </p>
-            <CodeBlock code="ollama serve" />
-          </div>
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
-              3. Choose a small first model
-            </h3>
-            <p className={`${muted} ${css({ mb: "3" })}`}>
-              This downloads a model. Check disk space and hardware first.
-            </p>
-            <CodeBlock code="ollama pull qwen3:0.6b" />
-          </div>
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
-              4. Open your workspace
-            </h3>
-            <p className={`${muted} ${css({ mb: "3" })}`}>
-              The desktop app and browser share this same frontend.
-            </p>
-            <CodeBlock code="pnpm desktop:dev" />
-          </div>
-        </div>
-      </section>
       <div
         className={css({
           display: "grid",
@@ -143,19 +197,20 @@ function Connection() {
       >
         <section className={`${panel} ${css({ p: "5" })}`}>
           <Laptop size={22} className={css({ color: "accent", mb: "3" })} />
-          <h2 className={css({ fontWeight: 750, mb: "2" })}>Prefer your browser?</h2>
+          <h2 className={css({ fontWeight: 750, mb: "2" })}>Open this workspace in a browser</h2>
           <p className={`${muted} ${css({ mb: "4" })}`}>
-            Run the frontend with <code>pnpm dev</code> and open the address below. Both interfaces
-            use the same gateway and models.
+            Open this address on this same machine. The existing workspace serves both interfaces;
+            you do not need to run another launcher or gateway.
           </p>
-          <CodeBlock code="http://127.0.0.1:3000" />
+          {workspaceUrl && <CodeBlock code={workspaceUrl} copyLabel="Copy workspace address" />}
         </section>
         <section className={`${panel} ${css({ p: "5" })}`}>
           <ShieldCheck size={22} className={css({ color: "accent", mb: "3" })} />
-          <h2 className={css({ fontWeight: 750, mb: "2" })}>Local by design, for now</h2>
+          <h2 className={css({ fontWeight: 750, mb: "2" })}>Sharing and remote clients</h2>
           <p className={muted}>
-            This version has no account system or API keys. Keep the gateway and UI on localhost.
-            Internet sharing and authentication are not implemented.
+            Internet sharing, host discovery, and connecting to someone else’s host are not
+            available in this version. There are no accounts or API keys. Keep this workspace on
+            localhost; copying its address does not give other people access.
           </p>
           <ExternalLink href="https://docs.ollama.com">Ollama setup guide</ExternalLink>
         </section>

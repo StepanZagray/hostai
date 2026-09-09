@@ -257,10 +257,36 @@ scenarios across full/focused runs, and both diagnostic scenarios repeated twice
 Completed deferred output was visually inspected. The unchanged Java integration
 was skipped, and no actual model ran.
 
+## Auditing the host and client journeys
+
+After finishing the rendering cycle, the user's full workflow was traced with
+Opus 5 High advice. [The journey audit](user-journeys.md) separates implemented UX
+problems from absent download management, authentication/sharing, remote access
+and host-directory services, with concrete host/client states and recovery paths.
+The global 15-second visibility-aware poll already exists; the advice to add
+polling was not applied. Inbound loopback binds were checked directly.
+
+The first setup regression reproduced the missing handoff into model selection.
+The Connection page's old instructions also combined a standalone gateway with a
+launcher that requires its port to be free. The revised guide appears before
+diagnostics, acknowledges running services, leads a ready library to chat, and
+uses the current workspace origin for browser access. Unavailable discovered
+models lead to their reasons before a redundant download suggestion. Sharing
+copy explicitly names the missing remote capabilities.
+
+Validation: type checking/lint/formatting and production build passed, along with
+seven distinct targeted setup, navigation, responsive-heading and Electron
+scenarios across focused runs. Ready, empty and unavailable-model setup states
+were visually inspected. One fixture initially omitted `connected: true` and
+correctly triggered discovery failure; it was corrected without weakening the
+application check. The full remote workflow remains unimplemented, no model was
+downloaded, and nothing was exposed to the internet.
+
 ## Next candidates to investigate
 
-The user requested an end-to-end UX investigation for both roles: model download,
-selection, server startup, safe internet sharing, host discovery, connection and
-chat. Finish this rendering cycle, then trace those journeys against actual
-functionality. Current internet sharing, authentication, remote client access and
-host discovery are unimplemented; downloading still relies on Ollama's own tools.
+Complete the host's download-to-first-chat loop, beginning with model lifecycle
+and a trustworthy progress/recovery surface. Preserve the full destination in
+[user-journeys.md](user-journeys.md): authenticated sharing and a distinct client
+connection/chat journey, then searchable public hosts. Local setup fixes do not
+substitute for those capabilities. Chat retry and conversation preservation are
+also concrete current UX gaps.

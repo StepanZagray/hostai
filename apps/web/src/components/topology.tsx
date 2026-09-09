@@ -109,7 +109,7 @@ export function Topology() {
         })}
       >
         <Globe2 size={14} />
-        <span>Internet sharing is not enabled. This workspace is local.</span>
+        <span>Internet sharing is not available in this version. This workspace is local.</span>
       </div>
     </section>
   );

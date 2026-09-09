@@ -212,7 +212,13 @@ export function CopyButton({
     </span>
   );
 }
-export function CodeBlock({ code }: { code: string }) {
+export function CodeBlock({
+  code,
+  copyLabel = "Copy command",
+}: {
+  code: string;
+  copyLabel?: string;
+}) {
   return (
     <div
       className={css({
@@ -239,7 +245,7 @@ export function CodeBlock({ code }: { code: string }) {
       >
         {code}
       </pre>
-      <CopyButton text={code} compact label="Copy command" />
+      <CopyButton text={code} compact label={copyLabel} />
     </div>
   );
 }
