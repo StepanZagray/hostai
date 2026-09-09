@@ -4,8 +4,9 @@ Java 26, Spring Boot 4.1.1, Maven Wrapper 3.3.4 / Maven 3.9.12. No preview
 features. Owner controls remain **unauthenticated and localhost-only** on
 `127.0.0.1:8080`. A separate guest listener on `127.0.0.1:8081` requires expiring,
 model-scoped access keys and starts only when the owner enables it. Grants and
-revocation are durable; request history and counters remain in memory. There is
-no internet tunnel, remote access, account system or verified host identity.
+revocation are durable; request history and counters remain in memory. Optional
+Cloudflare Quick Tunnel sharing uses an independent ephemeral guest listener and
+internet-only keys. Account systems and verified host identities are not implemented.
 See [guest access](../docs/guest-access.md) for the complete boundary and contract.
 
 ## Run
@@ -328,10 +329,11 @@ the browser aborts. Do not call the backend directly from a `file://` renderer o
 add wildcard CORS. HostAI sends `Cache-Control: no-store` and
 `X-Accel-Buffering: no` on chat responses.
 
-Do not expose this prototype through a public bind address, reverse proxy, or
-tunnel. Local processes can call it without credentials. Authentication and
-remote access are deferred work, and no inference-quality or real-model
-performance claims are made by the tests.
+Keep the owner API and workspace on loopback: local processes can call them
+without credentials. The managed Quick Tunnel exposes only the independent guest
+listener, with channel-bound keys and reachability checks. Do not tunnel the owner
+API or Ollama directly. Tests make no inference-quality or real-model performance
+claims; provider and lifecycle evidence is recorded in the verification guide.
 
 ## Tests
 

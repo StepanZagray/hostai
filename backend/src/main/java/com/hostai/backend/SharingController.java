@@ -27,14 +27,18 @@ final class SharingController {
     @PostMapping(value = "/stop", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Status stop(@RequestBody Empty request) { return sharing.stop(); }
     @PostMapping(value = "/grants", consumes = MediaType.APPLICATION_JSON_VALUE)
-    SharingService.Invite create(@Valid @RequestBody Create request) { return sharing.create(request.label(), request.expiresInHours()); }
+    SharingService.Invite create(@Valid @RequestBody Create request) { return sharing.create(request.label(), request.expiresInHours(), request.channel() == null ? "local" : request.channel()); }
     @PostMapping(value = "/grants/{id}/revoke", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Status revoke(@PathVariable String id, @RequestBody Empty request) {
         if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
             throw new GatewayException(org.springframework.http.HttpStatus.BAD_REQUEST, "A grant UUID is required.");
         return sharing.revoke(UUID.fromString(id));
     }
+    @PostMapping(value = "/internet/start", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Status startInternet(@RequestBody Empty request) { return sharing.startInternet(); }
+    @PostMapping(value = "/internet/stop", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Status stopInternet(@RequestBody Empty request) { return sharing.stopInternet(); }
     record Start(@NotBlank String model, @NotBlank @Size(max = 80) String hostLabel) {}
-    record Create(@NotBlank @Size(max = 80) String label, @NotNull @Min(1) @Max(168) Integer expiresInHours) {}
+    record Create(@NotBlank @Size(max = 80) String label, @NotNull @Min(1) @Max(168) Integer expiresInHours, @jakarta.validation.constraints.Pattern(regexp = "local|internet") String channel) {}
     record Empty() {}
 }

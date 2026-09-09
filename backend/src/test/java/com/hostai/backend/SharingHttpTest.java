@@ -243,7 +243,7 @@ class SharingHttpTest {
     }
 
     @Test void ownerMutationsStaySameOriginOnlyAndGuestCallsCannotReachThem() throws Exception {
-        for (String path : List.of("/api/sharing/start", "/api/sharing/stop", "/api/sharing/grants", "/api/sharing/grants/" + grantId + "/revoke")) {
+        for (String path : List.of("/api/sharing/start", "/api/sharing/stop", "/api/sharing/internet/start", "/api/sharing/internet/stop", "/api/sharing/grants", "/api/sharing/grants/" + grantId + "/revoke")) {
             var request = HttpRequest.newBuilder(URI.create(owner(path))).header("Content-Type", "application/json")
                     .header("Origin", "https://untrusted.example").POST(HttpRequest.BodyPublishers.ofString("{}")).build();
             assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403);

@@ -272,6 +272,8 @@ describe("owner management proxy", () => {
     `/api/model-downloads/${id}/cancel`,
     "/api/sharing/start",
     "/api/sharing/stop",
+    "/api/sharing/internet/start",
+    "/api/sharing/internet/stop",
     "/api/sharing/grants",
     `/api/sharing/grants/${id}/revoke`,
   ])("forwards %s with JSON negotiation", async (path) => {

@@ -2,7 +2,7 @@
 
 A local inference workspace with one frontend for **Electron and your browser**, backed by Java. Connect an existing Ollama runtime, download a local model, stream conversations, and inspect request activity.
 
-This is a working local foundation with a separate guest chat page and expiring, revocable access keys. **Internet tunnels, public host discovery, verified host identities, persistent conversations, signed installers, and bundled Java runtimes are not implemented.** All listeners bind to loopback. Guest access is a local preview, not an internet-sharing service. Runtime and request metrics come from the backend, never sample data.
+HostAI has a separate guest chat page with expiring, revocable, model-specific keys. Optional Cloudflare Quick Tunnel sharing adds temporary internet access after a secure WebSocket reachability check; local keys and internet keys have separate permissions. Cloudflare can see relayed messages and access keys. **Stable public hosting, public host discovery, verified host identities, persistent conversations, signed installers, and bundled Java runtimes are not implemented.** Owner controls stay on loopback. See [guest access](docs/guest-access.md) for setup, limits and the current verification boundary. Runtime and request metrics come from the backend, never sample data.
 
 ## Stack
 
@@ -64,7 +64,7 @@ HOSTAI_OLLAMA_URL=http://127.0.0.1:11435 pnpm desktop:dev
 
 Keep Ollama configured for local inference. A different loopback port is allowed; arbitrary remote origins are rejected. Downloading a model and actually running it consume disk, memory, and compute. Tests use isolated HTTP stubs and never contact the default Ollama port.
 
-## Preview client access
+## Share a model with clients
 
 After testing a model in Playground, choose **Models → Set up client access**.
 Start local client access for that model, create a named key with an expiry, and
@@ -77,10 +77,17 @@ Access always starts stopped after a gateway restart. Keys are stored as hashes
 in a private local file; conversations and drafts remain in the guest tab's memory.
 A key is a bearer credential, not a verified person or host identity.
 
-The guest listener defaults to `127.0.0.1:8081`; owner controls remain on 8080
-behind the web workspace. Neither Cloudflare Tunnel nor Tailscale is integrated.
-See [guest access and its limits](docs/guest-access.md) for the API, storage and
-future internet-sharing boundary.
+For internet access, install `cloudflared` and restart the gateway, then choose
+**Start internet sharing** on the Sharing page. HostAI verifies the temporary
+Cloudflare endpoint before allowing an internet key and invite. Local keys do not
+gain internet permission. **Stop internet sharing** closes the tunnel while local
+preview remains available; use **Revoke** to permanently end a key’s permission.
+Cloudflare terminates TLS and can see messages and access keys. Tailscale is not integrated.
+
+Local guest preview defaults to `127.0.0.1:8081`; the tunnel targets an independent
+ephemeral guest listener. Owner controls remain on 8080 behind the web workspace.
+See [guest access and its limits](docs/guest-access.md) for installation, API,
+storage, temporary-hosting limits and verification evidence.
 
 ## Architecture
 
@@ -135,7 +142,7 @@ Download jobs run one at a time and retain only the latest 20 records in memory.
 A gateway restart clears the records and stops its active request; Ollama keeps
 model files and may retain partial layers. Cancellation stops this gateway’s
 request, not a download another Ollama client also requested. There is no catalog
-search, disk/RAM fit estimate, automatic download resumption or public sharing.
+search, disk/RAM fit estimate or automatic download resumption.
 
 ## Checks
 
@@ -157,5 +164,6 @@ The `vite` peer-version warning is caused by the Vite+ alias exposing version `0
 
 
 The [host and client journey audit](docs/user-journeys.md) records current UX gaps
-and the path from local downloads to safe sharing, host discovery and remote chat. Those
-remote capabilities remain unimplemented; the audit is not a deployment guide.
+and the path from local downloads to temporary internet sharing and guest chat.
+Public host discovery and verified identities remain unimplemented; the audit
+is not a production deployment guide.

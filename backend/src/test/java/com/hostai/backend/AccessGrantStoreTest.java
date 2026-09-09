@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import com.hostai.backend.AccessGrantStore.Grant;
+import com.hostai.backend.AccessGrantStore.IssuedGrant;
 import com.hostai.backend.AccessGrantStore.StorageException;
 import java.nio.channels.FileChannel;
 import java.nio.file.FileSystems;
@@ -13,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -66,6 +68,8 @@ class AccessGrantStoreTest {
             assertThat(first.grant().createdAt()).isEqualTo(START);
             assertThat(first.grant().expiresAt()).isEqualTo(START.plus(Duration.ofDays(7)));
             assertThat(first.grant().revokedAt()).isNull();
+            assertThat(first.grant().channel()).isEqualTo("local");
+            assertThat(second.grant().channel()).isEqualTo("local");
             assertThat(store.list()).containsExactly(second.grant(), first.grant());
             assertThatThrownBy(() -> store.list().clear()).isInstanceOf(UnsupportedOperationException.class);
             assertThat(first.token()).matches("hga1\\.[0-9a-f-]{36}\\.[A-Za-z0-9_-]{43}").hasSize(85);
@@ -76,9 +80,11 @@ class AccessGrantStoreTest {
             String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(secret));
             var root = JSON.readTree(Files.readAllBytes(data(directory)));
             assertThat(root.propertyNames()).containsExactlyInAnyOrder("version", "grants");
+            assertThat(root.get("version").intValue()).isEqualTo(2);
             assertThat(root.get("grants").get(1).get("hash").stringValue()).isEqualTo(hash);
+            assertThat(root.get("grants").get(1).get("channel").stringValue()).isEqualTo("local");
             assertThat(root.get("grants").get(1).propertyNames()).containsExactlyInAnyOrder(
-                    "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash");
+                    "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel");
             assertThat(first.toString()).contains("[REDACTED]").doesNotContain(first.token(), encodedSecret, hash);
             assertThat(first.grant().toString()).doesNotContain(encodedSecret, hash);
             assertThat(store.list().toString()).doesNotContain(encodedSecret, hash);
@@ -105,7 +111,7 @@ class AccessGrantStoreTest {
         try (var store = AccessGrantStore.open(directory, clock)) {
             assertThat(store.list()).isEmpty();
             bytes = Files.readAllBytes(data(directory));
-            assertThat(JSON.readTree(bytes).get("version").intValue()).isEqualTo(1);
+            assertThat(JSON.readTree(bytes).get("version").intValue()).isEqualTo(2);
             assertThat(JSON.readTree(bytes).get("grants").isArray()).isTrue();
             assertThat(JSON.readTree(bytes).get("grants").size()).isZero();
         }
@@ -113,6 +119,215 @@ class AccessGrantStoreTest {
             assertThat(store.list()).isEmpty();
             assertThat(Files.readAllBytes(data(directory))).isEqualTo(bytes);
         }
+    }
+
+    @Test
+    void legacyFixtureReopensExclusivelyAsLocalWithoutRewritingOnOpenAuthenticateOrList() throws Exception {
+        Path directory = temporary.resolve("legacy-read");
+        var issued = writeLegacyFixture(directory);
+        var expected = issued.stream().map(IssuedGrant::grant).toList();
+        byte[] before = Files.readAllBytes(data(directory));
+        var modified = Files.getLastModifiedTime(data(directory));
+        assertThat(JSON.readTree(before).get("version").intValue()).isEqualTo(1);
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try (var store = AccessGrantStore.open(directory, clock)) {
+                assertThat(store.list()).containsExactlyElementsOf(expected)
+                        .allMatch(grant -> grant.channel().equals("local"));
+                assertThat(store.authenticate(issued.get(0).token())).contains(expected.get(0));
+                assertThat(store.authenticate(issued.get(1).token())).isEmpty();
+                assertThat(store.authenticate(issued.get(2).token())).isEmpty();
+                assertThrows(StorageException.class, () -> AccessGrantStore.open(directory, clock));
+                assertThat(probeInAnotherProcess(directory)).isEqualTo("DENIED");
+                assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+                assertThat(Files.getLastModifiedTime(data(directory))).isEqualTo(modified);
+            }
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+        }
+        assertOnlyFinalFiles(directory);
+    }
+
+    @Test
+    void internetIssuanceMigratesLegacyRowsWithoutPromotingThemAndReloadPreservesRevocation() throws Exception {
+        Path directory = temporary.resolve("legacy-migrate");
+        var legacy = writeLegacyFixture(directory);
+        var legacyRows = JSON.readTree(Files.readAllBytes(data(directory))).get("grants");
+        IssuedGrant internet;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            internet = store.create("Remote guest", "remote:model", MINUTE, "internet");
+            assertThat(internet.grant().channel()).isEqualTo("internet");
+            assertThat(store.authenticate(internet.token())).contains(internet.grant());
+            var root = JSON.readTree(Files.readAllBytes(data(directory)));
+            assertThat(root.get("version").intValue()).isEqualTo(2);
+            assertThat(root.get("grants").size()).isEqualTo(4);
+            assertThat(root.get("grants").get(0).get("channel").stringValue()).isEqualTo("internet");
+            for (int i = 0; i < legacy.size(); i++) {
+                var migrated = (ObjectNode) root.get("grants").get(i + 1).deepCopy();
+                assertThat(migrated.get("channel").stringValue()).isEqualTo("local");
+                migrated.remove("channel");
+                assertThat(migrated).isEqualTo(legacyRows.get(i));
+            }
+            for (var issued : Stream.concat(legacy.stream(), Stream.of(internet)).toList()) {
+                assertThat(Files.readString(data(directory)))
+                        .doesNotContain(issued.token(), issued.token().substring(42));
+            }
+            assertMode(data(directory), "rw-------");
+            assertOnlyFinalFiles(directory);
+        }
+        Grant revoked;
+        byte[] committed;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            assertThat(store.list()).containsExactly(internet.grant(),
+                    legacy.get(0).grant(), legacy.get(1).grant(), legacy.get(2).grant());
+            assertThat(store.authenticate(internet.token())).contains(internet.grant());
+            assertThat(store.authenticate(legacy.get(0).token())).contains(legacy.get(0).grant());
+            assertThat(store.authenticate(legacy.get(1).token())).isEmpty();
+            assertThat(store.authenticate(legacy.get(2).token())).isEmpty();
+            clock.now = START.plusSeconds(10);
+            revoked = store.revoke(internet.grant().id());
+            assertThat(revoked).isEqualTo(new Grant(internet.grant().id(), internet.grant().label(),
+                    internet.grant().model(), internet.grant().createdAt(), internet.grant().expiresAt(),
+                    clock.now, "internet"));
+            assertThat(store.authenticate(internet.token())).isEmpty();
+            committed = Files.readAllBytes(data(directory));
+        }
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            assertThat(store.list()).containsExactly(revoked,
+                    legacy.get(0).grant(), legacy.get(1).grant(), legacy.get(2).grant());
+            assertThat(store.authenticate(internet.token())).isEmpty();
+            assertThat(store.authenticate(legacy.get(0).token())).contains(legacy.get(0).grant());
+            assertThat(store.authenticate(legacy.get(1).token())).isEmpty();
+            assertThat(store.authenticate(legacy.get(2).token())).isEmpty();
+            assertThat(store.revoke(revoked.id())).isEqualTo(revoked);
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(committed);
+        }
+    }
+
+    @Test
+    void revocationAlsoMigratesLegacyRowsButAnIdempotentRevocationDoesNotRewrite() throws Exception {
+        Path directory = temporary.resolve("legacy-revoke");
+        var legacy = writeLegacyFixture(directory);
+        byte[] before = Files.readAllBytes(data(directory));
+        Grant revoked;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            assertThat(store.revoke(legacy.get(1).grant().id())).isEqualTo(legacy.get(1).grant());
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+            revoked = store.revoke(legacy.get(0).grant().id());
+            assertThat(revoked.channel()).isEqualTo("local");
+            var root = JSON.readTree(Files.readAllBytes(data(directory)));
+            assertThat(root.get("version").intValue()).isEqualTo(2);
+            var expectedRows = JSON.readTree(before).get("grants");
+            for (int i = 0; i < legacy.size(); i++) {
+                var expected = (ObjectNode) expectedRows.get(i).deepCopy();
+                expected.put("channel", "local");
+                if (i == 0) expected.put("revokedAt", START.toString());
+                assertThat(root.get("grants").get(i)).isEqualTo(expected);
+            }
+        }
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            assertThat(store.list()).containsExactly(revoked, legacy.get(1).grant(), legacy.get(2).grant());
+            for (var issued : legacy) assertThat(store.authenticate(issued.token())).isEmpty();
+        }
+    }
+
+    @Test
+    void existingApisAlwaysIssueLocalAndCopiedTokensReturnTheStoredChannel() throws Exception {
+        Path directory = temporary.resolve("channels");
+        IssuedGrant local;
+        IssuedGrant internet;
+        List<Grant> expected;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            internet = store.create("Same", "model", MINUTE, "internet");
+            local = store.create("Same", "model", MINUTE);
+            var explicitLocal = store.create("Same", "model", MINUTE, "local");
+            assertThat(local.grant()).isEqualTo(new Grant(local.grant().id(), "Same", "model",
+                    START, START.plus(MINUTE), null));
+            assertThat(local.grant().channel()).isEqualTo("local");
+            assertThat(explicitLocal.grant().channel()).isEqualTo("local");
+            expected = List.of(explicitLocal.grant(), local.grant(), internet.grant());
+        }
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            byte[] before = Files.readAllBytes(data(directory));
+            assertThat(store.list()).isEqualTo(expected);
+            // Copying a bearer credential preserves its stored channel; the service checks arrival.
+            assertThat(store.authenticate(new String(local.token().toCharArray()))).contains(local.grant());
+            assertThat(store.authenticate(new String(internet.token().toCharArray()))).contains(internet.grant());
+            assertThat(store.authenticate("hga1." + internet.grant().id() + local.token().substring(41))).isEmpty();
+            assertThat(store.authenticate("hga1." + local.grant().id() + internet.token().substring(41))).isEmpty();
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+        }
+    }
+
+    static Stream<String> invalidChannels() {
+        return Stream.of(null, "", " ", "LOCAL", "Internet", " local", "internet ", "local\n",
+                "internet\0", "remote", "local,internet", "іnternet", "x".repeat(1025));
+    }
+
+    @ParameterizedTest @MethodSource("invalidChannels")
+    void invalidChannelIssuanceAndMetadataAreRejectedWithoutPoisoning(String channel) throws Exception {
+        Path directory = temporary.resolve("invalid-channel");
+        var legacy = writeLegacyFixture(directory);
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            byte[] before = Files.readAllBytes(data(directory));
+            assertThatThrownBy(() -> store.create("Label", "model", MINUTE, channel))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new Grant(UUID.randomUUID(), "Label", "model",
+                    START, START.plus(MINUTE), null, channel)).isInstanceOf(IllegalArgumentException.class);
+            assertThat(store.list()).isEqualTo(legacy.stream().map(IssuedGrant::grant).toList());
+            assertThat(store.authenticate(legacy.get(0).token())).contains(legacy.get(0).grant());
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+            var accepted = store.create("Accepted", "model", MINUTE, "internet");
+            assertThat(store.authenticate(accepted.token())).contains(accepted.grant());
+        }
+    }
+
+    @ParameterizedTest @MethodSource("invalidChannels")
+    void invalidVersionTwoChannelsFailClosedWithoutLegacyFallback(String channel) throws Exception {
+        Path directory = withGrant("invalid-persisted-channel");
+        changeDocument(directory, root -> ((ObjectNode) root.get("grants").get(0)).put("channel", channel));
+        byte[] before = Files.readAllBytes(data(directory));
+        for (int attempt = 0; attempt < 2; attempt++) {
+            assertSanitized(assertThrows(StorageException.class, () -> AccessGrantStore.open(directory, clock)), directory);
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"missing", "number", "boolean", "array", "object", "duplicate", "mixed"})
+    void versionTwoRequiresExactlyOneStringChannelOnEveryRow(String kind) throws Exception {
+        Path directory = withGrant("channel-shape");
+        if (kind.equals("duplicate")) {
+            Files.writeString(data(directory), Files.readString(data(directory))
+                    .replace("\"channel\":\"local\"", "\"channel\":\"local\",\"channel\":\"internet\""));
+        } else {
+            changeDocument(directory, root -> {
+                var row = (ObjectNode) root.get("grants").get(0);
+                switch (kind) {
+                    case "missing" -> row.remove("channel");
+                    case "number" -> row.put("channel", 1);
+                    case "boolean" -> row.put("channel", true);
+                    case "array" -> row.putArray("channel").add("local");
+                    case "object" -> row.putObject("channel").put("channel", "local");
+                    case "mixed" -> {
+                        var legacyRow = row.deepCopy().put("id", UUID.randomUUID().toString());
+                        legacyRow.remove("channel");
+                        root.withArray("grants").add(legacyRow);
+                    }
+                    default -> throw new AssertionError(kind);
+                }
+            });
+        }
+        byte[] before = Files.readAllBytes(data(directory));
+        assertSanitized(assertThrows(StorageException.class, () -> AccessGrantStore.open(directory, clock)), directory);
+        assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"local", "internet"})
+    void versionOneRejectsAnExplicitChannelEvenIfValid(String channel) throws Exception {
+        Path directory = temporary.resolve("legacy-extra-channel");
+        writeLegacyFixture(directory);
+        changeDocument(directory, root -> ((ObjectNode) root.get("grants").get(0)).put("channel", channel));
+        byte[] before = Files.readAllBytes(data(directory));
+        assertSanitized(assertThrows(StorageException.class, () -> AccessGrantStore.open(directory, clock)), directory);
+        assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
     }
 
     @Test
@@ -319,7 +534,7 @@ class AccessGrantStoreTest {
     static Stream<String> invalidDocuments() {
         return Stream.of("", " ", "{", "null", "[]", "{}", "{\"version\":1}",
                 "{\"version\":1,\"grants\":[],\"extra\":true}",
-                "{\"version\":2,\"grants\":[]}", "{\"version\":0,\"grants\":[]}",
+                "{\"version\":3,\"grants\":[]}", "{\"version\":0,\"grants\":[]}",
                 "{\"version\":4294967297,\"grants\":[]}", "{\"version\":1.0,\"grants\":[]}",
                 "{\"version\":\"1\",\"grants\":[]}", "{\"version\":null,\"grants\":[]}",
                 "{\"version\":1,\"version\":1,\"grants\":[]}",
@@ -327,7 +542,9 @@ class AccessGrantStoreTest {
                 "{\"version\":1,\"grants\":null}", "{\"version\":1,\"grants\":{}}",
                 "{\"version\":1,\"grants\":[null]}", "{\"version\":1,\"grants\":[{}]}",
                 "{\"version\":1,\"grants\":[[[[[[]]]]]]}",
-                "{\"version\":1,\"grants\":[]} {}", "{\"version\":1,\"grants\":[]} trailing");
+                "{\"version\":1,\"grants\":[]} {}", "{\"version\":1,\"grants\":[]} trailing")
+                .flatMap(document -> Stream.of(document, document.replace("\"version\":1", "\"version\":2")))
+                .distinct();
     }
 
     @ParameterizedTest @MethodSource("invalidDocuments")
@@ -359,21 +576,29 @@ class AccessGrantStoreTest {
                 Arguments.of("expiresAt", START.toString()), Arguments.of("expiresAt", START.plusSeconds(59).toString()),
                 Arguments.of("expiresAt", START.plus(Duration.ofDays(7)).plusNanos(1).toString()),
                 Arguments.of("expiresAt", null), Arguments.of("revokedAt", START.minusNanos(1).toString()),
-                Arguments.of("revokedAt", "bad"));
+                Arguments.of("revokedAt", "bad"))
+                .flatMap(invalid -> Stream.of(1, 2)
+                        .map(version -> Arguments.of(version, invalid.get()[0], invalid.get()[1])));
     }
 
     @ParameterizedTest @MethodSource("invalidRows")
-    void rejectsInvalidRows(String field, String value) throws Exception {
-        Path directory = withGrant("rows");
+    void rejectsInvalidRows(int version, String field, String value) throws Exception {
+        Path directory = withGrant("rows", version);
         changeDocument(directory, root -> ((ObjectNode) root.get("grants").get(0)).put(field, value));
         byte[] bytes = Files.readAllBytes(data(directory));
         assertSanitized(assertThrows(StorageException.class, () -> AccessGrantStore.open(directory, clock)), directory);
         assertThat(Files.readAllBytes(data(directory))).isEqualTo(bytes);
     }
 
-    @ParameterizedTest @ValueSource(strings = {"missing", "extra", "wrong-type", "duplicate-key", "duplicate-id", "too-many"})
-    void rejectsRowShapeDuplicatesAndExcessRows(String kind) throws Exception {
-        Path directory = withGrant("shape");
+    static Stream<Arguments> invalidRowShapes() {
+        return Stream.of(1, 2).flatMap(version ->
+                Stream.of("missing", "extra", "wrong-type", "duplicate-key", "duplicate-id", "too-many")
+                        .map(kind -> Arguments.of(version, kind)));
+    }
+
+    @ParameterizedTest @MethodSource("invalidRowShapes")
+    void rejectsRowShapeDuplicatesAndExcessRows(int version, String kind) throws Exception {
+        Path directory = withGrant("shape", version);
         if (kind.equals("duplicate-key")) {
             String bytes = Files.readString(data(directory));
             Files.writeString(data(directory), bytes.replace("\"label\":", "\"label\":\"Duplicate\",\"label\":"));
@@ -663,11 +888,12 @@ class AccessGrantStoreTest {
                 int snapshots = 0;
                 do {
                     var root = JSON.readTree(Files.readAllBytes(data(directory)));
-                    assertThat(root.get("version").intValue()).isEqualTo(1);
+                    assertThat(root.get("version").intValue()).isEqualTo(2);
                     assertThat(root.get("grants").isArray()).isTrue();
                     var ids = new HashSet<String>();
                     for (var row : root.get("grants")) {
-                        assertThat(row.size()).isEqualTo(7);
+                        assertThat(row.size()).isEqualTo(8);
+                        assertThat(row.get("channel").stringValue()).isIn("local", "internet");
                         assertThat(row.get("hash").stringValue()).matches("[0-9a-f]{64}");
                         assertThat(ids.add(row.get("id").stringValue())).isTrue();
                     }
@@ -680,7 +906,7 @@ class AccessGrantStoreTest {
             try {
                 assertThat(started.await(10, TimeUnit.SECONDS)).isTrue();
                 for (int i = 0; i < 30; i++) {
-                    var issued = store.create("Atomic " + i, "model", MINUTE);
+                    var issued = store.create("Atomic " + i, "model", MINUTE, i % 2 == 0 ? "local" : "internet");
                     store.revoke(issued.grant().id());
                 }
             } finally { running.set(false); }
@@ -693,15 +919,57 @@ class AccessGrantStoreTest {
         }
     }
 
+    /** Generates the old exact schema independently of the current store writer, using test-only secrets. */
+    private List<IssuedGrant> writeLegacyFixture(Path directory) throws Exception {
+        Files.createDirectory(directory,
+                PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+        var grants = List.of(
+                new Grant(UUID.randomUUID(), "  Legacy laptop 🔐  ", "Org/Exact.Model:Q4_0",
+                        START.minusSeconds(30), START.plusSeconds(3570), null),
+                new Grant(UUID.randomUUID(), "Revoked", "other:model", START.minusSeconds(60),
+                        START.plusSeconds(3540), START.minusSeconds(15)),
+                new Grant(UUID.randomUUID(), "Expired", "old-model", START.minusSeconds(180),
+                        START.minusSeconds(60), null));
+        var root = JSON.createObjectNode().put("version", 1);
+        var rows = root.putArray("grants");
+        var issued = new ArrayList<IssuedGrant>();
+        var random = new SecureRandom();
+        for (var grant : grants) {
+            byte[] secret = new byte[32];
+            random.nextBytes(secret);
+            try {
+                rows.addObject().put("id", grant.id().toString()).put("label", grant.label())
+                        .put("model", grant.model()).put("createdAt", grant.createdAt().toString())
+                        .put("expiresAt", grant.expiresAt().toString())
+                        .put("revokedAt", grant.revokedAt() == null ? null : grant.revokedAt().toString())
+                        .put("hash", HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(secret)));
+                issued.add(new IssuedGrant(grant, "hga1." + grant.id() + "."
+                        + Base64.getUrlEncoder().withoutPadding().encodeToString(secret)));
+            } finally { Arrays.fill(secret, (byte) 0); }
+        }
+        privateFile(data(directory), JSON.writeValueAsString(root));
+        return List.copyOf(issued);
+    }
+
     private Path initialized(String name) {
         Path directory = temporary.resolve(name);
         try (var ignored = AccessGrantStore.open(directory, clock)) { return directory; }
     }
 
-    private Path withGrant(String name) {
+    private Path withGrant(String name) throws Exception {
+        return withGrant(name, 2);
+    }
+
+    private Path withGrant(String name, int version) throws Exception {
         Path directory = temporary.resolve(name);
         try (var store = AccessGrantStore.open(directory, clock)) {
             store.create("Valid", "model", MINUTE);
+        }
+        if (version == 1) {
+            changeDocument(directory, root -> {
+                root.put("version", 1);
+                ((ObjectNode) root.get("grants").get(0)).remove("channel");
+            });
         }
         return directory;
     }

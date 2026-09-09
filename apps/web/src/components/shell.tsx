@@ -284,7 +284,7 @@ export function Shell() {
                 display: { base: "none", lg: "inline" },
               })}
             >
-              Local access only
+              Local owner workspace
             </span>
             <Badge tone={status ? "good" : "neutral"}>
               {loading ? "Connecting" : status ? "Gateway online" : "Gateway unavailable"}

@@ -159,7 +159,7 @@ Stop the fixture, Java, and web servers with Ctrl+C when finished. The test runn
 - Linux is the verified desktop platform. macOS source launch is unverified; Windows launchers/installers are not supplied.
 - Distributable installers, signing, updates, and a bundled JRE remain future work.
 - No inference benchmarks or actual-model generation were run during setup.
-- No internet sharing/authentication or persistent database is present.
+- Guest keys are stored durably; owner activity and conversations remain in memory. Optional Cloudflare Quick Tunnel sharing is temporary and does not provide verified host identity or a public directory.
 - Production CSP allows inline scripts for Start's hydration bootstrap. The Electron renderer has no Node bridge. It allows clipboard writes only from the trusted local main frame; clipboard reads and other permission requests are denied.
 
 ## Local download lifecycle
@@ -231,3 +231,58 @@ clients, not the separately started Java, Node or Ollama fixture processes.
 Evidence is retained in `test-results/guest-*.png`, `sharing-*.png` and
 `isolation.json`. These checks do not establish external reachability, TLS,
 verified identity, public abuse resistance, GPU reclamation or model quality.
+
+## Temporary internet sharing verification
+
+On 9 September 2026, the complete Java suite passed 377 tests. The final error-policy
+adjustments passed 28 focused WebSocket tests, including one new case for losing
+reachability before the first upload (378 distinct Java cases across these runs).
+Frontend protocol tests passed 128 cases; typecheck/lint/format, production builds,
+JAR packaging and five real-server HTTP checks passed. Socket tests also ran with
+Netty paranoid leak detection. Inspection of the installed Spring 7.0.9 and Reactor
+Netty 1.3.7 bytecode confirms synchronous inbound messages are borrowed: Spring
+wraps without retaining and Netty releases after `onNext`. No extra release was added.
+The final owner/guest/setup browser regression run passed 54 checks, including
+the real local owner-to-guest integration and the public upload-timeout state.
+Responsive sharing and recovery screenshots were visually inspected.
+
+The scoped fixtures cover strict public Host/tag/origin checks, channel-bound keys,
+upgrade and request limits, one generation per socket, timeout/error records,
+disconnect before and during output, expiry, revocation and reachability loss.
+Private TLS fixtures reject untrusted and wrong-host certificates, redirects,
+ordinary HTTP responses, buffered records, malformed or mismatched proofs.
+Process tests cover hostile output, startup/stop races, private configuration,
+arguments treated as data, cleanup and a watchdog after an abrupt parent exit.
+The watchdog test failed when its kill action was deliberately disabled, then
+passed after restoration. Abrupt JVM death can still leave private scratch files;
+only normal cleanup is claimed to remove them.
+
+A real cloudflared 2026.9.0 Quick Tunnel, production Java guest listener and
+isolated Ollama fixture completed public WSS chat with a 1,527 ms gap between
+records. Actual public requests rejected missing/cross-channel keys and owner
+routes. Revocation and client disconnect released inference admission; Stop
+internet sharing cancelled generation and preserved local guest access. The
+owned connector processes and private configuration were verified removed.
+
+An isolated Chromium browser then exercised the actual public guest page with
+native TLS, CSP and WebSockets: connect, partial and completed output, Stop,
+draft-preserving retry, revocation, and reconnect rejecting the revoked key.
+No CSP violation or credential in browser storage was observed. The isolated
+display and its clients were removed. Evidence is retained in ignored
+`test-results/internet-live-fixture.json` and `public-internet-browser.png`.
+Only synthetic prompts/responses and disposable grants crossed Cloudflare; no
+real model, user conversation, GPU benchmark or user access store was involved.
+
+Earlier real-provider attempts were correctly blocked: new DNS names were not
+yet resolvable, or HTTP NDJSON arrived buffered. A standalone real WSS proof
+established incremental delivery before integrating the new transport. The first
+real-browser attempt exposed the runner's hidden resolver-file symlink; test
+clients now receive a read-only copy of DNS configuration while `/run`, devices
+and service sockets remain private. A subsequent browser assertion expected raw
+server error text, but the UI intentionally uses a sanitized reconnect message;
+the corrected scenario also verifies the subsequent 401 and retained draft.
+
+Cloudflare terminates TLS and can see relayed messages and keys. Quick Tunnels
+are temporary development infrastructure, not a production uptime commitment.
+This evidence does not establish verified identity, comprehensive public abuse
+resistance, capacity under attack, model performance or a public host directory.

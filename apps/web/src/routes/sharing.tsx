@@ -29,6 +29,16 @@ interface Grant {
   createdAt: string;
   expiresAt: string;
   revokedAt: string | null;
+  channel?: "local" | "internet";
+}
+interface InternetStatus {
+  state: "off" | "starting" | "verifying" | "live" | "interrupted" | "stopping" | "failed";
+  provider: "cloudflare-quick";
+  available: boolean;
+  publicUrl: string | null;
+  checkedAt: string | null;
+  error: string | null;
+  restartRequired?: boolean;
 }
 interface Status {
   state: "stopped" | "local" | "unavailable";
@@ -37,6 +47,7 @@ interface Status {
   guestUrl: string | null;
   error: string | null;
   grants: Grant[];
+  internet?: InternetStatus;
 }
 interface Invite {
   grant: Grant;
@@ -57,6 +68,65 @@ const field = css({
 const labelStyle = css({ display: "grid", gap: "2", fontSize: "xs", fontWeight: 650, minW: 0 });
 const date = (value: string) =>
   new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+const internetLabels: Record<InternetStatus["state"], string> = {
+  off: "Internet sharing is off",
+  starting: "Starting internet sharing…",
+  verifying: "Verifying the public connection…",
+  live: "Internet sharing is live",
+  interrupted: "Internet sharing is interrupted",
+  stopping: "Stopping internet sharing…",
+  failed: "Internet sharing failed",
+};
+
+function httpsOrigin(value: string | null | undefined) {
+  try {
+    const url = new URL(value || "");
+    return url.protocol === "https:" && !url.username && !url.password ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
+function liveOrigin(status: Status | null) {
+  const internet = status?.internet;
+  return status?.state === "local" &&
+    internet?.state === "live" &&
+    internet.checkedAt &&
+    Number.isFinite(Date.parse(internet.checkedAt))
+    ? httpsOrigin(internet.publicUrl)
+    : null;
+}
+
+function inviteUsable(invite: Invite, status: Status | null) {
+  let url: URL;
+  try {
+    url = new URL(invite.inviteUrl);
+  } catch {
+    return false;
+  }
+  const recorded = status?.grants.find((grant) => grant.id === invite.grant.id);
+  return !!(
+    invite.token &&
+    new URLSearchParams(url.hash.slice(1)).get("access") === invite.token &&
+    !url.username &&
+    !url.password &&
+    status?.state === "local" &&
+    invite.grant.model === status.model &&
+    !invite.grant.revokedAt &&
+    Date.parse(invite.grant.expiresAt) > Date.now() &&
+    recorded &&
+    recorded.model === status.model &&
+    !recorded.revokedAt &&
+    Date.parse(recorded.expiresAt) > Date.now() &&
+    (recorded.channel ?? "local") === (invite.grant.channel ?? "local") &&
+    ((invite.grant.channel ?? "local") === "local"
+      ? url.protocol === "http:" &&
+        ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
+        url.origin === status.guestUrl
+      : liveOrigin(status) && httpsOrigin(invite.inviteUrl) === liveOrigin(status))
+  );
+}
 
 class AccessRequestError extends Error {
   constructor(
@@ -89,6 +159,16 @@ function statusValue(value: Status): Status {
     value.grants.length > 100
   )
     throw new Error("Client access status could not be read.");
+  if (
+    value.internet !== undefined &&
+    (!value.internet ||
+      !Object.hasOwn(internetLabels, value.internet.state) ||
+      value.internet.provider !== "cloudflare-quick" ||
+      typeof value.internet.available !== "boolean" ||
+      (value.internet.restartRequired !== undefined &&
+        typeof value.internet.restartRequired !== "boolean"))
+  )
+    throw new Error("Internet sharing status could not be read.");
   return value;
 }
 
@@ -99,6 +179,7 @@ function Sharing() {
   const [hostLabel, setHostLabel] = useState("Local host");
   const [label, setLabel] = useState("");
   const [hours, setHours] = useState("24");
+  const [channel, setChannel] = useState<"local" | "internet">("local");
   const [status, setStatus] = useState<Status | null>(null);
   const [invite, setInvite] = useState<Invite | null>(null);
   const [error, setError] = useState("");
@@ -111,8 +192,27 @@ function Sharing() {
   const chosen = selected || eligible[0]?.name || "";
   const running = status?.state === "local";
   const ready = !!status && !error && status.state !== "unavailable";
+  const internet = status?.internet;
+  const publicOrigin = liveOrigin(status);
+  const internetLive = !!publicOrigin;
+  const internetBusy =
+    internet?.state === "starting" ||
+    internet?.state === "verifying" ||
+    internet?.state === "stopping";
+  const canStartInternet =
+    ready &&
+    running &&
+    internet?.available === true &&
+    !internet.restartRequired &&
+    (internet.state === "off" || internet.state === "failed");
+  const newInvite = invite && inviteUsable(invite, status) ? invite : null;
+  const applyStatus = useCallback((next: Status) => {
+    setStatus(next);
+    setInvite((previous) => (previous && inviteUsable(previous, next) ? previous : null));
+    setError("");
+  }, []);
   const refresh = useCallback(async () => {
-    if (read.current) return;
+    if (read.current || action.current || document.visibilityState !== "visible") return;
     const abort = new AbortController();
     read.current = abort;
     setRefreshing(true);
@@ -120,17 +220,7 @@ function Sharing() {
     try {
       const next = statusValue(await api("/api/sharing", abort.signal));
       if (read.current !== abort) return;
-      setStatus(next);
-      setInvite((previous) =>
-        previous &&
-        next.state === "local" &&
-        previous.grant.model === next.model &&
-        Date.parse(previous.grant.expiresAt) > Date.now() &&
-        !next.grants.some((grant) => grant.id === previous.grant.id && grant.revokedAt)
-          ? previous
-          : null,
-      );
-      setError("");
+      applyStatus(next);
     } catch (error) {
       if (read.current === abort)
         setError(
@@ -147,17 +237,10 @@ function Sharing() {
         setRefreshing(false);
       }
     }
-  }, []);
+  }, [applyStatus]);
   useEffect(() => {
     void refresh();
-    const visible = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
-    const timer = setInterval(visible, 5_000);
-    document.addEventListener("visibilitychange", visible);
     return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", visible);
       const previous = read.current;
       read.current = null;
       previous?.abort();
@@ -166,43 +249,68 @@ function Sharing() {
       mutation?.abort();
     };
   }, [refresh]);
+  useEffect(() => {
+    const visible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    const timer = setInterval(visible, internetBusy ? 2_000 : 5_000);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [refresh, internetBusy]);
+  useEffect(() => {
+    if (!invite) return;
+    const timer = setTimeout(
+      () => setInvite(null),
+      Math.max(0, Date.parse(invite.grant.expiresAt) - Date.now()),
+    );
+    return () => clearTimeout(timer);
+  }, [invite]);
 
   async function mutate(name: string, path: string, body: object) {
     if (action.current) return;
     const abort = new AbortController();
     action.current = abort;
+    const previous = read.current;
+    read.current = null;
+    previous?.abort();
+    setRefreshing(false);
     setPending(name);
     setActionError("");
     const timer = setTimeout(() => abort.abort(), 12_000);
     try {
       const result = await api(path, abort.signal, body);
       if (action.current !== abort) return;
-      const previous = read.current;
-      read.current = null;
-      previous?.abort();
-      setRefreshing(false);
       if (name === "create") {
         if (
           !result?.grant?.id ||
           typeof result.inviteUrl !== "string" ||
-          typeof result.token !== "string"
+          typeof result.token !== "string" ||
+          !Number.isFinite(Date.parse(result.grant.expiresAt)) ||
+          ![undefined, "local", "internet"].includes(result.grant.channel)
         )
           throw new Error(
             "The new access link could not be read. Check the key list before creating another.",
           );
         // The credential remains in this page's memory only and is never reconstructed from history.
+        setStatus((previous) =>
+          previous
+            ? {
+                ...previous,
+                grants: [
+                  ...previous.grants.filter((grant) => grant.id !== result.grant.id),
+                  result.grant,
+                ],
+              }
+            : previous,
+        );
         setInvite(result);
         setLabel("");
-        void refresh();
       } else {
         const next = statusValue(result);
-        setStatus(next);
-        setError("");
-        if (
-          name === "stop" ||
-          next.grants.some((grant) => grant.id === invite?.grant.id && grant.revokedAt)
-        )
-          setInvite(null);
+        applyStatus(next);
       }
     } catch (error) {
       if (action.current !== abort) return;
@@ -214,18 +322,29 @@ function Sharing() {
             ? error.message
             : "The access change could not be confirmed. Refresh its status.",
       );
-      void refresh();
     } finally {
       clearTimeout(timer);
       if (action.current === abort) {
         action.current = null;
         setPending("");
+        void refresh();
       }
     }
   }
 
   return (
-    <>
+    <div
+      className={css({
+        minW: 0,
+        "& button, & a": {
+          minH: "44px",
+          maxW: "full",
+          whiteSpace: "normal",
+          overflowWrap: "anywhere",
+        },
+        "& svg": { flexShrink: 0 },
+      })}
+    >
       <PageHeading
         title="Client access"
         description="Choose one model and manage who can use the separate client page."
@@ -238,12 +357,24 @@ function Sharing() {
       />
       <section
         className={css({ mb: "6", p: "5", bg: "accentSoft", borderRadius: "10px" })}
-        aria-label="Local preview"
+        aria-label="Sharing scope"
       >
-        <Badge tone="neutral">Local preview only</Badge>
+        <Badge tone={internetLive && !error ? "good" : "neutral"}>
+          {!status
+            ? "Checking sharing scope"
+            : error
+              ? "Sharing status is out of date"
+              : internetLive
+                ? "Temporary internet sharing"
+                : internet?.state === "off" || !internet
+                  ? "Local preview only"
+                  : "Internet link unavailable"}
+        </Badge>
         <p className={css({ mt: "3", fontSize: "sm", lineHeight: 1.7 })}>
-          These links work in a browser on this machine. Internet sharing, public host discovery and
-          a tunnel are not connected yet.
+          {internetLive && !error
+            ? "Internet keys let clients use this model from their own browsers. Local keys still work only on this machine."
+            : "Local preview links work in a browser on this machine. Internet links require a verified public connection and a separate internet key."}{" "}
+          Public host discovery is not available.
         </p>
         <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
           The client page is separate from your host controls. Access keys permit one model; clients
@@ -297,8 +428,9 @@ function Sharing() {
                 Stop client access
               </Button>
               <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
-                Stopping ends active client requests. Existing keys remain valid when you start the
-                same model again; revoke a key to end its permission.
+                Stopping ends active client requests and stops internet sharing. Local keys work
+                again when you start the same model; revoke a key to end its permission. Internet
+                sharing must be started explicitly each time.
               </p>
             </>
           ) : (
@@ -395,6 +527,110 @@ function Sharing() {
           )}
         </div>
       </section>
+      <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Temporary internet sharing">
+        <PanelHeading
+          title="Temporary internet sharing"
+          description="Let clients reach your shared model from their own browsers."
+        />
+        <div className={css({ px: "5", pb: "5" })}>
+          <p role="status" className={css({ fontWeight: 650, mb: "3" })}>
+            {!status
+              ? "Checking internet sharing…"
+              : !internet
+                ? "Internet sharing is not available in this gateway"
+                : error
+                  ? `Last known status: ${internetLabels[internet.state]}`
+                  : internetLabels[internet.state]}
+          </p>
+          <p id="internet-disclosure" className={`${muted} ${css({ mb: "3" })}`}>
+            Starting publishes the guest page through Cloudflare. Anyone can open the page in a
+            browser; an internet access key is required for chat. Cloudflare terminates TLS and can
+            see messages and access keys. This is a temporary connection: the URL changes on every
+            start, there is no uptime guarantee, and it is not production hosting.
+          </p>
+          {publicOrigin && !error && (
+            <div className={css({ mb: "4" })}>
+              <p className={css({ fontSize: "xs", fontWeight: 650 })}>Public guest page</p>
+              <p className={css({ fontFamily: "mono", fontSize: "sm", overflowWrap: "anywhere" })}>
+                {publicOrigin}
+              </p>
+              <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
+                This address contains no access key. Create an internet client link below to give
+                someone permission to chat.
+              </p>
+            </div>
+          )}
+          {internet?.error && (
+            <p
+              role={internet.state === "verifying" ? "status" : "alert"}
+              className={`${muted} ${css({ mb: "3", overflowWrap: "anywhere" })}`}
+            >
+              {internet.error}
+            </p>
+          )}
+          {internet && !internet.available && (
+            <p className={`${muted} ${css({ mb: "3" })}`}>
+              Cloudflare’s connector (cloudflared) is missing. Follow the{" "}
+              <a
+                href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/"
+                className={css({ color: "accent", textDecoration: "underline" })}
+              >
+                official installation instructions
+              </a>
+              , then restart the gateway and refresh access.
+            </p>
+          )}
+          {!running && (
+            <p className={`${muted} ${css({ mb: "3" })}`}>
+              Start local client access to publish a model before starting internet sharing.
+            </p>
+          )}
+          {internet?.state === "interrupted" && (
+            <p className={`${muted} ${css({ mb: "3" })}`}>
+              Internet links are hidden while the connection is unverified. The gateway checks it
+              periodically. To start a new connection, stop internet sharing first.
+            </p>
+          )}
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (canStartInternet && !pending)
+                void mutate("internet-start", "/api/sharing/internet/start", {});
+            }}
+          >
+            <div className={css({ display: "flex", gap: "3", flexWrap: "wrap" })}>
+              <Button
+                type="submit"
+                variant="primary"
+                aria-describedby="internet-disclosure"
+                disabled={!canStartInternet || !!pending}
+              >
+                <Play size={16} />
+                {pending === "internet-start"
+                  ? "Starting internet sharing…"
+                  : "Start internet sharing"}
+              </Button>
+              {internet && internet.state !== "off" && (
+                <Button
+                  type="button"
+                  disabled={!!pending || internet.state === "stopping" || internet.restartRequired}
+                  onClick={() => void mutate("internet-stop", "/api/sharing/internet/stop", {})}
+                >
+                  <Square size={16} />
+                  {pending === "internet-stop" || internet.state === "stopping"
+                    ? "Stopping internet sharing…"
+                    : "Stop internet sharing"}
+                </Button>
+              )}
+            </div>
+          </form>
+          <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
+            Stopping internet sharing leaves local client access and local keys available. It does
+            not automatically restart or publish again. Unexpired internet keys can be used again
+            with the same model and a new tunnel address; revoke a key to end its permission.
+          </p>
+        </div>
+      </section>
       <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Create client key">
         <PanelHeading
           title="Create an access key"
@@ -404,17 +640,29 @@ function Sharing() {
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (running && ready && label.trim() && !pending)
+              if (
+                running &&
+                ready &&
+                label.trim() &&
+                !pending &&
+                !invite &&
+                (channel === "local" || internetLive) &&
+                (status?.grants.length ?? 0) < 100
+              )
                 void mutate("create", "/api/sharing/grants", {
                   label: label.trim(),
                   expiresInHours: Number(hours),
+                  channel,
                 });
             }}
           >
             <div
               className={css({
                 display: "grid",
-                gridTemplateColumns: { base: "1fr", md: "2fr 1fr" },
+                gridTemplateColumns: {
+                  base: "minmax(0, 1fr)",
+                  md: "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)",
+                },
                 gap: "4",
                 mb: "4",
               })}
@@ -432,6 +680,23 @@ function Sharing() {
                 />
               </label>
               <label className={labelStyle}>
+                Key channel
+                <select
+                  className={field}
+                  value={channel}
+                  onChange={(event) =>
+                    setChannel(event.target.value === "internet" ? "internet" : "local")
+                  }
+                  disabled={!!pending || !running}
+                  aria-describedby="key-channel-help"
+                >
+                  <option value="local">Local preview</option>
+                  <option value="internet" disabled={!internetLive || !ready}>
+                    Temporary internet
+                  </option>
+                </select>
+              </label>
+              <label className={labelStyle}>
                 Expires after
                 <select
                   className={field}
@@ -445,11 +710,16 @@ function Sharing() {
                 </select>
               </label>
             </div>
+            <p id="key-channel-help" className={`${muted} ${css({ mb: "3" })}`}>
+              Local keys work only on this machine and cannot become internet keys. Create a
+              separate internet key while internet sharing is live.
+            </p>
             <Button
               type="submit"
               disabled={
                 !ready ||
                 !running ||
+                (channel === "internet" && !internetLive) ||
                 !!pending ||
                 !label.trim() ||
                 !!invite ||
@@ -461,8 +731,8 @@ function Sharing() {
             </Button>
             {(status?.grants.length ?? 0) >= 100 && (
               <p className={`${muted} ${css({ mt: "3" })}`}>
-                The local preview supports 100 saved keys, including expired and revoked keys. New
-                keys cannot be created at this limit.
+                Client access supports 100 saved keys, including expired and revoked keys. New keys
+                cannot be created at this limit.
               </p>
             )}
             {!running && (
@@ -471,7 +741,7 @@ function Sharing() {
               </p>
             )}
           </form>
-          {invite && (
+          {newInvite && (
             <div
               className={css({
                 mt: "5",
@@ -482,13 +752,24 @@ function Sharing() {
               role="region"
               aria-label="New client link"
             >
-              <p className={css({ fontWeight: 650, mb: "2" })}>Your link is ready</p>
+              <p className={css({ fontWeight: 650, mb: "2" })}>
+                {newInvite.grant.channel === "internet"
+                  ? "Your internet link is ready"
+                  : "Your local preview link is ready"}
+              </p>
               <p className={`${muted} ${css({ mb: "3", fontSize: "sm" })}`}>
-                Copy this local preview link into a browser on this machine. Anyone with the link
-                can use {invite.grant.model} until {date(invite.grant.expiresAt)}.
+                {newInvite.grant.channel === "internet"
+                  ? "Share this internet link with your client. It works only while this temporary public connection is live."
+                  : "Copy this local preview link into a browser on this machine."}{" "}
+                Anyone with the link can use {newInvite.grant.model} until{" "}
+                {date(newInvite.grant.expiresAt)} (your local time).
               </p>
               <div className={css({ display: "flex", gap: "3", flexWrap: "wrap" })}>
-                <CopyButton text={invite.inviteUrl} label="Copy client link" />
+                <CopyButton
+                  text={newInvite.inviteUrl}
+                  label="Copy client link"
+                  disabled={!ready || !!pending}
+                />
                 <Button onClick={() => setInvite(null)}>Hide link</Button>
               </div>
               <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
@@ -535,7 +816,8 @@ function Sharing() {
                   <p
                     className={`${muted} ${css({ fontSize: "xs", mt: "2", overflowWrap: "anywhere" })}`}
                   >
-                    {grant.model} · Expires {date(grant.expiresAt)}
+                    {grant.channel === "internet" ? "Temporary internet" : "Local preview"} ·{" "}
+                    {grant.model} · Expires {date(grant.expiresAt)} (your local time)
                   </p>
                   {!grant.revokedAt && (
                     <Button
@@ -559,6 +841,6 @@ function Sharing() {
           </p>
         </div>
       </section>
-    </>
+    </div>
   );
 }

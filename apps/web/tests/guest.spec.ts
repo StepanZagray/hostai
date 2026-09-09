@@ -49,6 +49,9 @@ async function fixture(page: Page) {
     stream: false,
     chunks: [{ content: "A fixture answer.", done: true }] as Chunk[],
     unexpected: [] as string[],
+    socketUrls: [] as string[],
+    socketClosed: 0,
+    httpChats: 0,
   };
   const origin = new URL(process.env.HOSTAI_GUEST_TEST_URL!).origin;
   // Fail closed: unrecognized API calls can never reach an owner app or a model.
@@ -73,6 +76,7 @@ async function fixture(page: Page) {
     });
   });
   await page.route("**/guest/v1/chat", (route) => {
+    state.httpChats++;
     state.chatRequests.push(route.request().postDataJSON());
     state.chatKeys.push(route.request().headers().authorization || "");
     return route.fulfill({
@@ -86,6 +90,29 @@ async function fixture(page: Page) {
         state.chatStatus === 200
           ? state.chunks.map((chunk) => JSON.stringify(chunk) + "\n").join("")
           : JSON.stringify({ error: `Do not echo ${access}` }),
+    });
+  });
+  await page.routeWebSocket("**/guest/v1/chat-stream", (socket) => {
+    state.socketUrls.push(socket.url());
+    socket.onClose(() => {
+      state.socketClosed++;
+    });
+    socket.onMessage((message) => {
+      const envelope = JSON.parse(String(message));
+      state.chatRequests.push(envelope.request);
+      state.chatKeys.push(`Bearer ${envelope.key}`);
+      if (state.chatStatus !== 200) {
+        socket.send(
+          JSON.stringify({
+            type: "error",
+            status: state.chatStatus,
+            retryAfter: Number(state.retryAfter),
+          }),
+        );
+        socket.close();
+      } else {
+        for (const chunk of state.chunks) socket.send(JSON.stringify(chunk));
+      }
     });
   });
   await page.addInitScript(() => {
@@ -220,6 +247,10 @@ test("invalid key has a uniform safe error and no automatic retries", async ({ p
   state.sessionStatus = 401;
   await openGuest(page);
   expect(state.sessionRequests).toHaveLength(0);
+  await expect(page.getByText(/Messages go to the operator of this host/)).toBeVisible();
+  await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
+  await expect(page.getByText(/Cloudflare can see messages and access keys/)).toBeVisible();
+  await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
   const input = page.getByLabel("Access key", { exact: true });
   await expect(input).toHaveAttribute("type", "password");
   await input.fill(access);
@@ -232,6 +263,156 @@ test("invalid key has a uniform safe error and no automatic retries", async ({ p
   expect(state.chatRequests).toHaveLength(0);
   await page.screenshot({ path: "test-results/guest-invalid-key.png", fullPage: true });
 });
+
+test("temporary internet metadata enables chat with Cloudflare and host identity disclosures", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.metadata.scope = "temporary-internet";
+  await page.setViewportSize({ width: 320, height: 900 });
+  await openGuest(page);
+  await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
+  await expect(page.getByText("Local preview", { exact: true })).toHaveCount(0);
+  await page.getByLabel("Access key", { exact: true }).fill(access);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(
+    page.getByText("Guest access checked. You can send a message.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Temporary internet access", { exact: true })).toBeVisible();
+  const disclosure = page.locator("#guest-disclosure");
+  await expect(disclosure).toContainText("This connection uses a Cloudflare relay");
+  await expect(disclosure).toContainText(
+    "Cloudflare terminates TLS and can see messages and access keys",
+  );
+  await expect(disclosure).toContainText("host’s name is self-asserted, not a verified identity");
+  await expect(
+    page.getByText("Host-provided name · not a verified identity", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
+  expect(state.chatRequests).toHaveLength(0);
+  await send(page, "Hello through the fixture relay");
+  await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+  expect(state.sessionRequests).toEqual([`Bearer ${access}`]);
+  expect(state.chatKeys).toEqual([`Bearer ${access}`]);
+  expect(state.httpChats).toBe(0);
+  expect(state.socketUrls).toHaveLength(1);
+  expect(state.socketUrls[0]).not.toContain(access);
+  expect(new URL(state.socketUrls[0]).protocol).toBe("wss:");
+  expect(await page.content()).not.toContain(access);
+  expect(await page.title()).not.toContain(access);
+  expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  expect(state.unexpected).toEqual([]);
+  await page.screenshot({ path: "test-results/guest-internet-mobile.png", fullPage: true });
+  await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(page.getByText("Temporary internet access", { exact: true })).toHaveCount(0);
+  await expect(disclosure).toContainText("transport may use a Cloudflare relay");
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+});
+
+test("internet Stop closes its socket, retains the draft and never resubmits automatically", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.metadata.scope = "temporary-internet";
+  state.chunks = [{ content: "A partial public answer", done: false }];
+  await openGuest(page, access);
+  await expect(page.getByText("Temporary internet access", { exact: true })).toBeVisible();
+  await send(page, "A public prompt");
+  await expect(page.getByText("A partial public answer", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+  await expect.poll(() => state.socketClosed).toBe(1);
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("A public prompt");
+  expect(state.chatRequests).toHaveLength(1);
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  state.chunks = [{ content: "A completed retry", done: true }];
+  await send(page, "Edited public prompt");
+  await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+  expect(state.chatRequests[1].messages).toEqual([
+    { role: "user", content: "Edited public prompt" },
+  ]);
+  expect(state.httpChats).toBe(0);
+  expect(state.unexpected).toEqual([]);
+  await page.screenshot({ path: "test-results/guest-internet-stop.png", fullPage: true });
+});
+
+test("internet admission errors preserve the prompt and honor the retry delay", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.metadata.scope = "temporary-internet";
+  state.chatStatus = 429;
+  state.retryAfter = "12";
+  await page.clock.install();
+  await openGuest(page, access);
+  await expect(page.getByText("Temporary internet access", { exact: true })).toBeVisible();
+  await send(page, "Retry this public prompt");
+  await expect(page.getByRole("alert")).toContainText("busy or the request limit");
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Retry this public prompt");
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  await page.clock.runFor(12_001);
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeEnabled();
+  expect(state.chatRequests).toHaveLength(1);
+  expect(state.httpChats).toBe(0);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("an invite handshake never claims a local transport before metadata arrives", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.metadata.scope = "temporary-internet";
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route("**/guest/v1/session", async (route) => {
+    requested = true;
+    await gate;
+    await route.fulfill({ json: state.metadata });
+  });
+  try {
+    await openGuest(page, access);
+    await expect.poll(() => requested).toBe(true);
+    await expect(page.getByText("Checking guest access…", { exact: true })).toBeVisible();
+    await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
+    await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
+    expect(new URL(page.url()).hash).toBe("");
+    expect(await page.content()).not.toContain(access);
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    release();
+    await expect(page.getByText("Temporary internet access", { exact: true })).toBeVisible();
+    expect(state.chatRequests).toHaveLength(0);
+    expect(state.unexpected).toEqual([]);
+  } finally {
+    release();
+  }
+});
+
+for (const scope of [
+  "temporary-internet-extra",
+  "Temporary-Internet",
+  "local-preview ",
+  "",
+  "unsupported-scope",
+]) {
+  test(`unknown guest scope ${JSON.stringify(scope)} fails closed on the initial handshake`, async ({
+    page,
+  }) => {
+    const state = await fixture(page);
+    state.metadata.scope = scope;
+    await openGuest(page, access);
+    await expect(page.getByRole("alert")).toContainText("Could not check guest access");
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(page.getByText("Temporary internet access", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Local preview", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
+    expect(state.sessionRequests).toHaveLength(1);
+    expect(state.chatRequests).toHaveLength(0);
+    expect(await page.content()).not.toContain(access);
+  });
+}
 
 test("oversized invite is scrubbed and rejected locally without guessing token syntax", async ({
   page,
@@ -352,11 +533,13 @@ test("a truncated transport is incomplete and restores the draft", async ({ page
 for (const [status, message] of [
   [401, "A valid access key is required"],
   [403, "does not permit the selected model"],
+  [408, "message upload timed out"],
   [429, "host is busy or the request limit"],
   [503, "stopped or the host is offline"],
 ] as const) {
   test(`chat ${status} preserves the question and requires a manual recheck`, async ({ page }) => {
     const state = await fixture(page);
+    if (status === 408) state.metadata.scope = "temporary-internet";
     state.chatStatus = status;
     state.retryAfter = "2";
     await connected(page);
@@ -377,6 +560,11 @@ for (const [status, message] of [
     if (status === 401) await expect(page.getByLabel("Access key", { exact: true })).toBeVisible();
     expect(state.chatRequests).toHaveLength(1);
     expect(state.sessionRequests).toHaveLength(1);
+    if (status === 408)
+      await page.screenshot({
+        path: "test-results/guest-internet-upload-timeout.png",
+        fullPage: true,
+      });
   });
 }
 

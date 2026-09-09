@@ -48,7 +48,8 @@ def sandbox(env, writable_repo=False):
             '--tmpfs', '/tmp', '--bind', str(runtime), str(runtime),
             '--unshare-pid', '--die-with-parent', '--proc', '/proc', '--clearenv']
     if writable_repo:
-        args += ['--bind', str(ROOT), str(ROOT)]
+        args += ['--bind', str(ROOT), str(ROOT),
+                 '--ro-bind', str(runtime / 'resolv.conf'), str(resolver_target)]
     for key, value in env.items():
         args += ['--setenv', key, value]
     return args
@@ -63,6 +64,14 @@ try:
         raise RuntimeError(f'Verify the isolation setup for {version} before updating this guard.')
     for name in ['run', 'home', 'cache', 'config', 'data']:
         (runtime / name).mkdir(mode=0o700)
+    # /run stays private. Give test clients only a snapshot of DNS configuration,
+    # including when /etc/resolv.conf points into systemd-resolved's hidden /run.
+    # No service directory, session bus, logind or resolver control socket is mounted.
+    resolver_target = Path('/etc/resolv.conf').resolve(strict=True)
+    if str(resolver_target) not in ['/etc/resolv.conf', '/run/systemd/resolve/stub-resolv.conf',
+                                    '/run/systemd/resolve/resolv.conf']:
+        raise RuntimeError('Verify the resolver file mount for this machine before testing.')
+    shutil.copyfile('/etc/resolv.conf', runtime / 'resolv.conf')
     shutil.copyfile('/usr/bin/sway', runtime / 'sway')
     (runtime / 'sway').chmod(0o700)
     if subprocess.check_output(['getcap', str(runtime / 'sway')], text=True).strip():
@@ -107,6 +116,13 @@ try:
             test_env[key] = os.environ[key]
     node = '/usr/bin/node'
     runner = ROOT / 'apps/web/node_modules/@playwright/test/cli.js'
+    # Prove the client sandbox has only the copied resolver file under /run/systemd.
+    subprocess.run(sandbox(test_env, writable_repo=True) + ['/usr/bin/python3', '-c',
+        'from pathlib import Path; '
+        'assert Path("/etc/resolv.conf").is_file(); '
+        'assert not any(Path(p).exists() for p in ["/run/dbus", "/run/seatd.sock", "/run/systemd/private", "/run/systemd/seats", "/dev/dri", "/dev/input"]); '
+        'assert all(p.is_dir() or str(p) in ["/run/systemd/resolve/stub-resolv.conf", "/run/systemd/resolve/resolv.conf"] for p in Path("/run/systemd").rglob("*"))'],
+        cwd=ROOT, env=base_env, check=True, timeout=5)
     command = sandbox(test_env, writable_repo=True) + [node, str(runner), 'test', '--config', 'apps/web/playwright.config.ts', *sys.argv[1:]]
     tests = subprocess.Popen(command, cwd=ROOT, env=base_env, start_new_session=True)
     processes.append(tests)

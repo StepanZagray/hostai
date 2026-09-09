@@ -29,6 +29,9 @@ export function GuestChat() {
     changeKey ||
     (!chat.session && chat.phase === "blocked");
   const checking = chat.phase === "checking";
+  const scope = chat.session?.scope;
+  const potentiallyInternet =
+    typeof window !== "undefined" && window.location.protocol === "https:";
 
   useEffect(() => {
     if (chat.ready) composer.current?.focus({ preventScroll: true });
@@ -80,12 +83,23 @@ export function GuestChat() {
               fontSize: "xs",
             })}
           >
-            Local preview
+            {scope === "temporary-internet"
+              ? "Temporary internet access"
+              : scope === "local-preview"
+                ? "Local preview"
+                : potentiallyInternet
+                  ? "Potential internet access"
+                  : "Access not checked"}
           </span>
         </div>
         <p id="guest-disclosure" className={`${muted} ${css({ mt: "3" })}`}>
-          Messages go to the operator of this host. Local preview is local-only, with no internet
-          sharing. Your access key is still private; keep it to yourself.
+          Messages go to the operator of this host.{" "}
+          {scope === "temporary-internet"
+            ? "This connection uses a Cloudflare relay. Cloudflare terminates TLS and can see messages and access keys. This temporary address can change or go offline at any time."
+            : scope === "local-preview"
+              ? "Local preview is local-only, with no internet sharing."
+              : "The transport may use a Cloudflare relay. Cloudflare can see messages and access keys when it relays the connection. Connect to check this key’s access scope before sending a message."}{" "}
+          Keep your access key private. The host’s name is self-asserted, not a verified identity.
         </p>
         {chat.session && (
           <div
@@ -170,7 +184,7 @@ export function GuestChat() {
                 value={enteredKey}
                 onChange={(event) => setEnteredKey(event.target.value)}
                 disabled={checking}
-                aria-describedby="guest-key-help"
+                aria-describedby="guest-disclosure guest-key-help"
                 className={`${field} ${css({ flex: "1 1 180px" })}`}
               />
               <Button type="submit" variant="primary" disabled={checking || !enteredKey}>

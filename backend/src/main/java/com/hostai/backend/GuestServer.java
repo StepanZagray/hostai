@@ -45,6 +45,10 @@ final class GuestServer implements AutoCloseable {
     }
 
     static GuestServer start(SharingService sharing, JsonMapper mapper, Scheduler scheduler, int port) {
+        return start(sharing, mapper, scheduler, port, null);
+    }
+
+    static GuestServer start(SharingService sharing, JsonMapper mapper, Scheduler scheduler, int port, PublicIngress internet) {
         if (!new ClassPathResource("guest/guest.html").isReadable())
             throw new GatewayException(HttpStatus.SERVICE_UNAVAILABLE,
                     "Build the client page with pnpm build, then rebuild or restart the Java gateway.");
@@ -61,11 +65,13 @@ final class GuestServer implements AutoCloseable {
                 })
                 .andRoute(GET("/guest/v1/session"), request -> {
                     String token = bearer(request);
-                    return sharing.session(token).flatMap(session -> ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(session));
+                    return sharing.session(token, permit(request)).flatMap(session -> ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(session));
                 })
                 .andRoute(POST("/guest/v1/chat"), request -> {
+                    if (internet != null) return Mono.error(new GatewayException(HttpStatus.CONFLICT,
+                            "Public chat requires WebSocket transport at /guest/v1/chat-stream."));
                     String token = bearer(request);
-                    sharing.authenticate(token); // Reject credentials before accepting a potentially large upload.
+                    sharing.authenticate(token, permit(request)); // Reject credentials before accepting a potentially large upload.
                     if (request.headers().header(HttpHeaders.CONTENT_TYPE).size() != 1
                             || !request.headers().contentType().map(type -> type.getType().equalsIgnoreCase("application")
                                     && type.getSubtype().equalsIgnoreCase("json")).orElse(false))
@@ -74,9 +80,10 @@ final class GuestServer implements AutoCloseable {
                             .switchIfEmpty(Mono.error(new GatewayException(HttpStatus.BAD_REQUEST, "A chat request is required.")))
                             .flatMap(body -> {
                                 return ServerResponse.ok().contentType(MediaType.APPLICATION_NDJSON)
-                                        .body(sharing.chat(token, body), Api.ChatChunk.class);
+                                        .body(sharing.chat(token, body, permit(request)), Api.ChatChunk.class);
                             });
                 });
+        GuestSocket sockets = new GuestSocket(sharing, json, scheduler);
         HandlerStrategies strategies = HandlerStrategies.builder()
                 .codecs(codecs -> {
                     codecs.defaultCodecs().maxInMemorySize(BackendConfiguration.MAX_BODY_BYTES);
@@ -95,9 +102,25 @@ final class GuestServer implements AutoCloseable {
                     headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; "
                             + "font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
                             + "frame-ancestors 'none'; form-action 'self'");
-                    String host = exchange.getRequest().getURI().getHost();
-                    if (host == null || !List.of("127.0.0.1", "localhost", "[::1]").contains(host))
-                        return problem(exchange, new GatewayException(HttpStatus.FORBIDDEN, "Local preview access only."), json);
+                    var request = exchange.getRequest();
+                    String host = request.getURI().getHost();
+                    List<String> tags = request.getHeaders().getOrEmpty(PublicIngress.HEADER);
+                    if (internet == null) {
+                        if (host == null || !List.of("127.0.0.1", "localhost", "[::1]").contains(host) || !tags.isEmpty())
+                            return problem(exchange, new GatewayException(HttpStatus.FORBIDDEN, "Local preview access only."), json);
+                        exchange.getAttributes().put("hostai.guestPermit", PublicIngress.Permit.LOCAL);
+                    } else {
+                        // Channel identity is listener-owned. Forwarded headers never select a channel or construct URLs.
+                        if (!internet.accepts(request.getURI(), tags))
+                            return problem(exchange, new GatewayException(HttpStatus.FORBIDDEN, "This internet-sharing route is unavailable."), json);
+                        headers.set("Strict-Transport-Security", "max-age=86400");
+                        if (sockets.matches(request.getPath().value()))
+                            return Mono.defer(() -> sockets.upgrade(exchange, internet)).subscribeOn(scheduler);
+                        if (request.getPath().value().equals("/guest/v1/session")) {
+                            try { exchange.getAttributes().put("hostai.guestPermit", internet.permit()); }
+                            catch (GatewayException error) { return problem(exchange, error, json); }
+                        }
+                    }
                     return Mono.defer(() -> chain.filter(exchange)).subscribeOn(scheduler);
                 })
                 .exceptionHandler((exchange, error) -> problem(exchange, error, json))
@@ -121,6 +144,10 @@ final class GuestServer implements AutoCloseable {
         }
     }
 
+    private static PublicIngress.Permit permit(ServerRequest request) {
+        return (PublicIngress.Permit) request.attribute("hostai.guestPermit").orElseThrow(PublicIngress::unavailable);
+    }
+
     private static String bearer(ServerRequest request) {
         List<String> values = request.headers().header(HttpHeaders.AUTHORIZATION);
         if (values.size() != 1) throw SharingService.unauthorized();
@@ -140,6 +167,23 @@ final class GuestServer implements AutoCloseable {
 
     private static Mono<Void> problem(ServerWebExchange exchange, Throwable error, JsonMapper json) {
         if (exchange.getResponse().isCommitted()) return Mono.error(error);
+        Failure failure = failure(error);
+        var status = failure.status();
+        var response = exchange.getResponse();
+        response.setStatusCode(status);
+        response.getHeaders().setContentType(MediaType.APPLICATION_PROBLEM_JSON);
+        response.getHeaders().setCacheControl("no-store");
+        if (failure.retryAfter() > 0) response.getHeaders().set(HttpHeaders.RETRY_AFTER, Integer.toString(failure.retryAfter()));
+        if (status.value() == 401) response.getHeaders().set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
+        if (exchange.getRequest().getMethod().name().equals("POST") && status.is4xxClientError())
+            response.getHeaders().set(HttpHeaders.CONNECTION, "close");
+        return response.writeWith(Mono.just(response.bufferFactory().wrap(
+                json.writeValueAsBytes(ProblemDetail.forStatusAndDetail(status, failure.detail())))));
+    }
+
+    record Failure(HttpStatusCode status, String detail, int retryAfter) {}
+
+    static Failure failure(Throwable error) {
         HttpStatusCode status = HttpStatus.INTERNAL_SERVER_ERROR;
         String detail = "The client request could not be completed.";
         int retryAfter = 0;
@@ -167,16 +211,7 @@ final class GuestServer implements AutoCloseable {
                 status = HttpStatus.PAYLOAD_TOO_LARGE; detail = "The request exceeds 262144 bytes."; break;
             }
         }
-        var response = exchange.getResponse();
-        response.setStatusCode(status);
-        response.getHeaders().setContentType(MediaType.APPLICATION_PROBLEM_JSON);
-        response.getHeaders().setCacheControl("no-store");
-        if (retryAfter > 0) response.getHeaders().set(HttpHeaders.RETRY_AFTER, Integer.toString(retryAfter));
-        if (status.value() == 401) response.getHeaders().set(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
-        if (exchange.getRequest().getMethod().name().equals("POST") && status.is4xxClientError())
-            response.getHeaders().set(HttpHeaders.CONNECTION, "close");
-        return response.writeWith(Mono.just(response.bufferFactory().wrap(
-                json.writeValueAsBytes(ProblemDetail.forStatusAndDetail(status, detail)))));
+        return new Failure(status, detail, retryAfter);
     }
 
     String origin() { return "http://127.0.0.1:" + listener.port(); }

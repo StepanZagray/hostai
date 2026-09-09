@@ -60,7 +60,13 @@ export async function proxy({ request }: { request: Request }) {
     );
   const isSharingRead = url.pathname === "/api/sharing";
   const isSharingMutation =
-    ["/api/sharing/start", "/api/sharing/stop", "/api/sharing/grants"].includes(url.pathname) ||
+    [
+      "/api/sharing/start",
+      "/api/sharing/stop",
+      "/api/sharing/grants",
+      "/api/sharing/internet/start",
+      "/api/sharing/internet/stop",
+    ].includes(url.pathname) ||
     /^\/api\/sharing\/grants\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/revoke$/i.test(
       url.pathname,
     );

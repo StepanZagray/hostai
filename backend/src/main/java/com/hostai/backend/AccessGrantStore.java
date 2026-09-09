@@ -63,8 +63,10 @@ public final class AccessGrantStore implements AutoCloseable {
     private static final Pattern TOKEN = Pattern.compile("hga1\\.(" + UUID_SYNTAX + ")\\.([A-Za-z0-9_-]{43})");
     private static final Pattern HASH = Pattern.compile("[0-9a-f]{64}");
     private static final Pattern TEMP = Pattern.compile("\\.grants-[A-Za-z0-9-]{1,64}\\.tmp");
-    private static final Set<String> ROW_FIELDS = Set.of(
+    private static final Set<String> LEGACY_ROW_FIELDS = Set.of(
             "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash");
+    private static final Set<String> ROW_FIELDS = Set.of(
+            "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel");
     // Some POSIX systems release a process's locks when ANY descriptor for that file closes.
     // Reject duplicate JVM opens before opening a second descriptor for the lock file.
     private static final Set<DirectoryIdentity> OPEN_DIRECTORIES = ConcurrentHashMap.newKeySet();
@@ -93,7 +95,16 @@ public final class AccessGrantStore implements AutoCloseable {
     private boolean closed;
 
     public record Grant(UUID id, String label, String model, Instant createdAt,
-                        Instant expiresAt, Instant revokedAt) {}
+                        Instant expiresAt, Instant revokedAt, String channel) {
+        public Grant {
+            validateChannel(channel);
+        }
+
+        public Grant(UUID id, String label, String model, Instant createdAt,
+                     Instant expiresAt, Instant revokedAt) {
+            this(id, label, model, createdAt, expiresAt, revokedAt, "local");
+        }
+    }
 
     /** The bearer credential is available only on the result of a successful create. */
     public record IssuedGrant(Grant grant, String token) {
@@ -193,10 +204,16 @@ public final class AccessGrantStore implements AutoCloseable {
 
     /** Label lengths count UTF-16 code units; names and labels are preserved exactly. */
     public synchronized IssuedGrant create(String label, String model, Duration lifetime) {
+        return create(label, model, lifetime, "local");
+    }
+
+    /** Issues a credential for exactly the specified channel, without changing existing grants. */
+    public synchronized IssuedGrant create(String label, String model, Duration lifetime, String channel) {
         requireUsable();
         validateLabel(label);
         validateModel(model);
         validateLifetime(lifetime);
+        validateChannel(channel);
         if (records.size() >= MAX_GRANTS) throw new IllegalStateException("Access grant storage is full (100 grants).");
         Instant now = clock.instant();
         Instant expires;
@@ -210,7 +227,7 @@ public final class AccessGrantStore implements AutoCloseable {
         byte[] secret = new byte[32];
         random.nextBytes(secret);
         try {
-            Grant grant = new Grant(id, label, model, now, expires, null);
+            Grant grant = new Grant(id, label, model, now, expires, null, channel);
             List<StoredGrant> next = new ArrayList<>(records);
             next.addFirst(new StoredGrant(grant, digest(secret)));
             next.sort(Comparator.comparing((StoredGrant row) -> row.grant.createdAt()).reversed());
@@ -230,7 +247,10 @@ public final class AccessGrantStore implements AutoCloseable {
         return records.stream().map(row -> row.grant).toList();
     }
 
-    /** A bare, canonical hga1.UUID.base64url credential; no trimming or Bearer prefix. */
+    /**
+     * A bare, canonical hga1.UUID.base64url credential; no trimming or Bearer prefix.
+     * Returns stored channel metadata; the caller must enforce arrival-channel equality.
+     */
     public synchronized Optional<Grant> authenticate(String bearerToken) {
         if (closed || poisoned || bearerToken == null || bearerToken.length() != 85) return Optional.empty();
         var match = TOKEN.matcher(bearerToken);
@@ -263,7 +283,7 @@ public final class AccessGrantStore implements AutoCloseable {
         Instant now = clock.instant();
         if (now.isBefore(old.grant.createdAt())) now = old.grant.createdAt();
         Grant revoked = new Grant(old.grant.id(), old.grant.label(), old.grant.model(),
-                old.grant.createdAt(), old.grant.expiresAt(), now);
+                old.grant.createdAt(), old.grant.expiresAt(), now, old.grant.channel());
         List<StoredGrant> next = new ArrayList<>(records);
         next.set(next.indexOf(old), new StoredGrant(revoked, old.hash));
         List<StoredGrant> committed = List.copyOf(next);
@@ -327,12 +347,16 @@ public final class AccessGrantStore implements AutoCloseable {
     private static List<StoredGrant> decode(byte[] bytes) {
         JsonNode root = JSON.readTree(bytes);
         requireFields(root, Set.of("version", "grants"));
-        if (!root.get("version").isInt() || root.get("version").intValue() != 1
+        if (!root.get("version").isInt()
                 || !root.get("grants").isArray() || root.get("grants").size() > MAX_GRANTS) throw invalidStorage();
+        int version = root.get("version").intValue();
+        if (version != 1 && version != 2) throw invalidStorage();
         List<StoredGrant> result = new ArrayList<>();
         Set<UUID> ids = new HashSet<>();
         for (JsonNode row : root.get("grants")) {
-            requireFields(row, ROW_FIELDS);
+            requireFields(row, version == 1 ? LEGACY_ROW_FIELDS : ROW_FIELDS);
+            String channel = version == 1 ? "local" : string(row, "channel");
+            validateChannel(channel);
             String idText = string(row, "id");
             if (!ID.matcher(idText).matches()) throw invalidStorage();
             UUID id = UUID.fromString(idText);
@@ -348,7 +372,7 @@ public final class AccessGrantStore implements AutoCloseable {
             if (revoked != null && revoked.isBefore(created)) throw invalidStorage();
             String hash = string(row, "hash");
             if (!HASH.matcher(hash).matches()) throw invalidStorage();
-            result.add(new StoredGrant(new Grant(id, label, model, created, expires, revoked),
+            result.add(new StoredGrant(new Grant(id, label, model, created, expires, revoked, channel),
                     HexFormat.of().parseHex(hash)));
         }
         result.sort(Comparator.comparing((StoredGrant row) -> row.grant.createdAt()).reversed());
@@ -356,7 +380,7 @@ public final class AccessGrantStore implements AutoCloseable {
     }
 
     private static byte[] encode(List<StoredGrant> records) {
-        var root = JSON.createObjectNode().put("version", 1);
+        var root = JSON.createObjectNode().put("version", 2);
         var rows = root.putArray("grants");
         for (StoredGrant row : records) {
             Grant grant = row.grant;
@@ -364,7 +388,7 @@ public final class AccessGrantStore implements AutoCloseable {
                     .put("model", grant.model()).put("createdAt", grant.createdAt().toString())
                     .put("expiresAt", grant.expiresAt().toString())
                     .put("revokedAt", grant.revokedAt() == null ? null : grant.revokedAt().toString())
-                    .put("hash", HexFormat.of().formatHex(row.hash));
+                    .put("hash", HexFormat.of().formatHex(row.hash)).put("channel", grant.channel());
         }
         return JSON.writeValueAsBytes(root);
     }
@@ -402,6 +426,12 @@ public final class AccessGrantStore implements AutoCloseable {
     private static void validateLifetime(Duration lifetime) {
         if (lifetime == null || lifetime.compareTo(MIN_LIFETIME) < 0 || lifetime.compareTo(MAX_LIFETIME) > 0) {
             throw new IllegalArgumentException("Grant lifetime must be between one minute and seven days.");
+        }
+    }
+
+    private static void validateChannel(String channel) {
+        if (!"local".equals(channel) && !"internet".equals(channel)) {
+            throw new IllegalArgumentException("Grant channel must be local or internet.");
         }
     }
 

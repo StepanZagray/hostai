@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { readChatStream } from "../lib/api";
 import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
+import { guestSocket } from "./socket";
 import {
   guestFetch,
   parseSession,
@@ -180,11 +181,14 @@ export function useGuestChat() {
       );
     };
     try {
-      const response = await guestFetch("/guest/v1/chat", key.current, {
-        method: "POST",
-        signal: current.controller.signal,
-        body: prepared.body,
-      });
+      const response =
+        session.scope === "temporary-internet"
+          ? await guestSocket(key.current, prepared.body, current.controller.signal)
+          : await guestFetch("/guest/v1/chat", key.current, {
+              method: "POST",
+              signal: current.controller.signal,
+              body: prepared.body,
+            });
       if (active.current !== current) return;
       if (!response.ok) {
         rejectResponse(response);

@@ -1,5 +1,38 @@
 # Autonomous improvement log
 
+## Temporary internet guest access
+
+With Claude Opus 5 High advice and review, Sharing now offers explicit temporary
+Cloudflare Quick Tunnel start/stop, verified availability, separate local/internet
+keys, channel labels, expiry and revocation. One-time invites are cleared when
+their endpoint becomes stale. Terminal cleanup failures identify when a gateway
+restart is required. Host and guest pages disclose Cloudflare's access to messages
+and credentials, temporary URLs and the host's self-asserted identity.
+
+The tunnel targets an independent guest listener. Exact Host and a secret bridge
+tag protect that route; public requests cannot reach owner controls. The secret
+lives in private YAML rather than process arguments. A worker owns startup,
+incremental reachability checks, cancellation and process cleanup; a watchdog
+terminates the direct connector if its parent JVM disappears. Keys intentionally
+survive stopping transport until revoked or expired. Old local keys never gain
+internet scope, including after loading the prior store schema.
+
+Real-provider testing found HTTP NDJSON buffering, so public chat and verification
+use bounded WebSockets. Local preview retains HTTP. All guest paths share the same
+model permission, rate/admission, expiry and revocation lifecycle. The final Opus
+review prompted explicit handling of upload timeout and permission loss before
+the first message. Its possible buffer-ownership concern was checked against
+the actual dependency bytecode; automatic release was confirmed. A proposed
+probe-budget increase was not adopted without a reproduced timing failure.
+
+The production public route and isolated browser completed streamed chat, Stop,
+retry, revocation and reconnect rejection with synthetic data. No real model was
+run. Tests, corrections and evidence are recorded in [verification.md](verification.md).
+All public test connectors were removed. Cloudflare sees relayed content; stable
+hosting, verified identity, public discovery and production abuse controls remain
+incomplete. Tailscale is not integrated. The earlier entries below describe their
+historical implementation boundaries.
+
 ## Streaming reliability
 
 Advice and focused reviews used Claude Opus 5 at high effort through Claude Code.

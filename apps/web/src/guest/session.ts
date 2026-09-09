@@ -7,7 +7,7 @@ export interface GuestSession {
   maxConcurrentGuests: 1;
   maxTokens: 1024;
   requestsPerMinute: 6;
-  scope: "local-preview";
+  scope: "local-preview" | "temporary-internet";
 }
 
 let invite: string | null = null;
@@ -39,7 +39,7 @@ export function parseSession(value: unknown): GuestSession | null {
     session.maxConcurrentGuests === 1 &&
     session.maxTokens === 1024 &&
     session.requestsPerMinute === 6 &&
-    session.scope === "local-preview"
+    (session.scope === "local-preview" || session.scope === "temporary-internet")
     ? (session as GuestSession)
     : null;
 }
@@ -53,6 +53,8 @@ export function responseProblem(status: number) {
       return "A valid access key is required. This key may be invalid, expired, or revoked.";
     case 403:
       return "This key does not permit the selected model. Reconnect to check permissions.";
+    case 408:
+      return "The message upload timed out. Reconnect, then try sending again.";
     case 429:
       return "The host is busy or the request limit was reached. Reconnect before trying again.";
     case 503:

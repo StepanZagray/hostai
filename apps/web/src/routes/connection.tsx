@@ -209,9 +209,10 @@ function Connection() {
           <ShieldCheck size={22} className={css({ color: "accent", mb: "3" })} />
           <h2 className={css({ fontWeight: 750, mb: "2" })}>Sharing and remote clients</h2>
           <p className={muted}>
-            Create expiring access keys for a separate guest chat page on this machine. Internet
-            sharing, a tunnel and public host discovery are not connected yet. Copying this
-            workspace address does not give other people access.
+            Create expiring keys for a separate guest chat page. Client access offers local preview
+            and optional temporary internet sharing through Cloudflare, with separate keys and a
+            connection check. Public host discovery is not available. Copying this owner workspace
+            address does not give clients access.
           </p>
           <Link
             to="/sharing"

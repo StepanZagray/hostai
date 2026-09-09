@@ -38,6 +38,7 @@ public final class SharingService implements AutoCloseable {
     private final Path directory;
     private final int port;
     private final Clock clock;
+    private final InternetSharing internet;
     private final Map<UUID, GuestSession> sessions = new HashMap<>();
     private final Map<UUID, Window> windows = new HashMap<>();
     private AccessGrantStore store;
@@ -51,12 +52,18 @@ public final class SharingService implements AutoCloseable {
     @Autowired
     public SharingService(OllamaGateway gateway, ChatService chat, Validator validator, JsonMapper json,
             Scheduler inferenceScheduler, @Value("${hostai.access-directory:}") String directory,
-            @Value("${hostai.guest-port:8081}") int port) {
-        this(gateway, chat, validator, json, inferenceScheduler, dataDirectory(directory), port, Clock.systemUTC());
+            @Value("${hostai.guest-port:8081}") int port, InternetSharing internet) {
+        this(gateway, chat, validator, json, inferenceScheduler, dataDirectory(directory), port, Clock.systemUTC(), internet);
     }
 
     SharingService(OllamaGateway gateway, ChatService chat, Validator validator, JsonMapper json,
             Scheduler scheduler, Path directory, int port, Clock clock) {
+        this(gateway, chat, validator, json, scheduler, directory, port, clock, new InternetSharing(""));
+    }
+
+    SharingService(OllamaGateway gateway, ChatService chat, Validator validator, JsonMapper json,
+            Scheduler scheduler, Path directory, int port, Clock clock, InternetSharing internet) {
+        this.internet = internet;
         if (port < 0 || port > 65535) throw new IllegalArgumentException("Invalid guest port");
         this.gateway = gateway; this.chat = chat; this.validator = validator; this.json = json;
         this.scheduler = scheduler; this.directory = directory; this.port = port; this.clock = clock;
@@ -77,7 +84,7 @@ public final class SharingService implements AutoCloseable {
 
     private Status snapshot(List<AccessGrantStore.Grant> grants) {
         return new Status(storageError != null ? "unavailable" : enabled ? "local" : "stopped",
-                hostLabel, model, server == null ? null : server.origin(), storageError, grants);
+                hostLabel, model, server == null ? null : server.origin(), storageError, grants, internet.status());
     }
 
     public Mono<Status> start(String selectedModel, String label) {
@@ -109,14 +116,28 @@ public final class SharingService implements AutoCloseable {
         return status();
     }
 
-    public synchronized Invite create(String label, int hours) {
+    public synchronized Status startInternet() {
+        if (!enabled || closed || storageError != null)
+            throw new GatewayException(HttpStatus.CONFLICT, "Start client access for a model before enabling internet sharing.");
+        internet.start(ingress -> GuestServer.start(this, json, scheduler, 0, ingress));
+        return status();
+    }
+
+    public synchronized Status stopInternet() { internet.stop(); return status(); }
+
+    public Invite create(String label, int hours) { return create(label, hours, "local"); }
+
+    public synchronized Invite create(String label, int hours, String channel) {
         if (!enabled || closed) throw new GatewayException(HttpStatus.CONFLICT, "Start local client access before creating a key.");
         if (hours < 1 || hours > 168) throw new GatewayException(HttpStatus.BAD_REQUEST, "Access must expire within 1 to 168 hours.");
+        if (!List.of("local", "internet").contains(channel))
+            throw new GatewayException(HttpStatus.BAD_REQUEST, "Choose local or internet access.");
+        String origin = channel.equals("internet") ? internet.publicOrigin().toString() : server.origin();
         try {
             if (accessStore().list().size() >= 100)
                 throw new GatewayException(HttpStatus.CONFLICT, "The 100-key storage limit has been reached.");
-            var issued = accessStore().create(label, model, Duration.ofHours(hours));
-            return new Invite(issued.grant(), issued.token(), server.origin() + "/#access=" + issued.token());
+            var issued = accessStore().create(label, model, Duration.ofHours(hours), channel);
+            return new Invite(issued.grant(), issued.token(), origin + "/#access=" + issued.token());
         } catch (GatewayException error) {
             throw error;
         } catch (IllegalArgumentException error) {
@@ -141,35 +162,42 @@ public final class SharingService implements AutoCloseable {
         }
     }
 
-    synchronized AccessGrantStore.Grant authenticate(String token) {
+    AccessGrantStore.Grant authenticate(String token) { return authenticate(token, PublicIngress.Permit.LOCAL); }
+
+    synchronized AccessGrantStore.Grant authenticate(String token, PublicIngress.Permit permit) {
+        permit.requireActive();
         if (closed || storageError != null) throw unavailable();
         var grant = accessStore().authenticate(token).orElseThrow(SharingService::unauthorized);
         if (!enabled) throw new GatewayException(HttpStatus.SERVICE_UNAVAILABLE, "The host has stopped client access.");
-        if (!grant.model().equals(model)) throw unauthorized();
+        if (!grant.model().equals(model) || !grant.channel().equals(permit.channel())) throw unauthorized();
         return grant;
     }
 
-    Mono<SessionView> session(String token) {
+    Mono<SessionView> session(String token) { return session(token, PublicIngress.Permit.LOCAL); }
+
+    Mono<SessionView> session(String token, PublicIngress.Permit permit) {
         return Mono.defer(() -> {
-            var grant = authenticate(token);
+            var grant = authenticate(token, permit);
             return gateway.models().map(models -> {
                 synchronized (this) {
-                    authenticate(token); // A metadata probe must not outlive a revocation.
+                    authenticate(token, permit); // A metadata probe must not outlive a revocation.
                     boolean available = installed(models, grant.model());
                     return new SessionView(hostLabel, grant.model(), grant.expiresAt(), available,
                             available ? null : "The shared model is unavailable. Ask the host to check its local runtime.",
-                            InferenceRegistry.MAX_GUEST_CONCURRENT, GUEST_MAX_TOKENS, REQUESTS_PER_MINUTE, "local-preview");
+                            InferenceRegistry.MAX_GUEST_CONCURRENT, GUEST_MAX_TOKENS, REQUESTS_PER_MINUTE, permit.scope());
                 }
             });
         });
     }
 
-    Flux<Api.ChatChunk> chat(String token, Api.ChatRequest request) {
+    Flux<Api.ChatChunk> chat(String token, Api.ChatRequest request) { return chat(token, request, PublicIngress.Permit.LOCAL); }
+
+    Flux<Api.ChatChunk> chat(String token, Api.ChatRequest request, PublicIngress.Permit permit) {
         return Flux.defer(() -> {
             if (!validator.validate(request).isEmpty() || request.maxTokens() > GUEST_MAX_TOKENS)
                 return Flux.error(new GatewayException(HttpStatus.BAD_REQUEST,
                         "Check the message limits and choose at most 1024 output tokens."));
-            return Flux.using(() -> register(token, request.model()), session ->
+            return Flux.using(() -> register(token, request.model(), permit), session ->
                     gateway.models().takeUntilOther(session.ended())
                     .switchIfEmpty(Mono.error(new ChatService.AccessEndedException()))
                     .flatMapMany(models -> {
@@ -179,8 +207,8 @@ public final class SharingService implements AutoCloseable {
         });
     }
 
-    private synchronized GuestSession register(String token, String requestedModel) {
-        var grant = authenticate(token);
+    private synchronized GuestSession register(String token, String requestedModel, PublicIngress.Permit permit) {
+        var grant = authenticate(token, permit);
         if (!grant.model().equals(requestedModel))
             throw new GatewayException(HttpStatus.FORBIDDEN, "This access key does not permit the requested model.");
         if (!sessions.isEmpty()) throw new GuestBusyException(1);
@@ -192,7 +220,7 @@ public final class SharingService implements AutoCloseable {
         if (window.count >= REQUESTS_PER_MINUTE)
             throw new GuestBusyException(Math.max(1, (int) Duration.between(now, window.until).toSeconds() + 1));
         window.count++;
-        GuestSession session = new GuestSession(grant);
+        GuestSession session = new GuestSession(grant, permit);
         sessions.put(session.id, session);
         return session;
     }
@@ -232,6 +260,7 @@ public final class SharingService implements AutoCloseable {
 
     private void stopSessions() {
         enabled = false;
+        internet.stop();
         List.copyOf(sessions.values()).forEach(GuestSession::end);
     }
 
@@ -263,20 +292,24 @@ public final class SharingService implements AutoCloseable {
             previous = server; server = null;
             previousStore = store; store = null;
         }
-        if (previous != null) previous.close();
-        if (previousStore != null) previousStore.close();
+        try { internet.close(); }
+        finally {
+            try { if (previous != null) previous.close(); }
+            finally { if (previousStore != null) previousStore.close(); }
+        }
     }
 
     private final class GuestSession {
         final UUID id = UUID.randomUUID();
         final AccessGrantStore.Grant grant;
         final Sinks.One<String> stop = Sinks.one();
-        GuestSession(AccessGrantStore.Grant grant) { this.grant = grant; }
+        final PublicIngress.Permit permit;
+        GuestSession(AccessGrantStore.Grant grant, PublicIngress.Permit permit) { this.grant = grant; this.permit = permit; }
         void end() { stop.tryEmitValue("Access ended"); }
         Mono<String> ended() {
             return Mono.defer(() -> {
                 Duration remaining = Duration.between(clock.instant(), grant.expiresAt());
-                return Mono.firstWithSignal(stop.asMono(),
+                return Mono.firstWithSignal(stop.asMono(), permit.ended(),
                         Mono.delay(remaining.isNegative() ? Duration.ZERO : remaining).map(ignored -> "Access ended"));
             });
         }
@@ -294,7 +327,7 @@ public final class SharingService implements AutoCloseable {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Status(String state, String hostLabel, String model, String guestUrl, String error,
-                         List<AccessGrantStore.Grant> grants) {}
+                         List<AccessGrantStore.Grant> grants, InternetSharing.Status internet) {}
     public record Invite(AccessGrantStore.Grant grant, String token, String inviteUrl) {
         @Override public String toString() { return "Invite[grant=" + grant.id() + ", credential=<redacted>]"; }
     }
