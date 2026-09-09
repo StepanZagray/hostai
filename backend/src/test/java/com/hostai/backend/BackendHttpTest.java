@@ -255,6 +255,17 @@ class BackendHttpTest {
     }
 
     @Test
+    void overallDeadlineFailsAndClosesAContinuouslyStreamingRuntime() throws Exception {
+        STUB.mode = Mode.CONTINUOUS;
+        HttpResponse<String> response = post(CHAT);
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(lines(response.body()).getLast()).containsEntry("done", true)
+                .containsEntry("error", "The generation exceeded its time limit.");
+        assertThat(registry.requests().getFirst().status()).isEqualTo("failed");
+        await().atMost(Duration.ofSeconds(2)).untilAsserted(() -> assertThat(STUB.connections.get()).isZero());
+    }
+
+    @Test
     void exposesOnlyMinimalHealthAndDoesNotGrantCrossOriginAccess() throws Exception {
         assertThat(body(get("/actuator/health"))).isEqualTo(Map.of("status", "UP"));
         assertProblem(get("/actuator/env"), 404);
@@ -315,7 +326,7 @@ class BackendHttpTest {
         return body.lines().filter(line -> !line.isBlank()).map(line -> map(JSON.readValue(line, Map.class))).toList();
     }
 
-    enum Mode { NORMAL, OFFLINE, HOLD, BEFORE_HEADERS, MID_ERROR, TRUNCATED, MALFORMED, NOT_FOUND }
+    enum Mode { NORMAL, OFFLINE, HOLD, CONTINUOUS, BEFORE_HEADERS, MID_ERROR, TRUNCATED, MALFORMED, NOT_FOUND }
 
     private static final class Stub implements AutoCloseable {
         volatile Mode mode = Mode.NORMAL;
@@ -358,6 +369,7 @@ class BackendHttpTest {
                                 String first = "{\"message\":{\"content\":\"Héllo\"},\"done\":false}\n";
                                 Flux<String> records = switch (current) {
                                     case HOLD -> Flux.concat(Mono.just(first), Flux.never());
+                                    case CONTINUOUS -> Flux.interval(Duration.ofMillis(100)).map(ignored -> first);
                                     case MID_ERROR -> Flux.just(first, "{\"error\":\"private prompt\"}\n");
                                     case TRUNCATED -> Flux.just(first);
                                     case MALFORMED -> Flux.just("{\"message\":{\"content\":\"missing done\"}}\n");

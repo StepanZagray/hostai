@@ -72,6 +72,7 @@ public class OllamaGateway {
     public Flux<Api.ChatChunk> chat(Api.ChatRequest request) {
         return Flux.defer(() -> {
             AtomicBoolean terminalSeen = new AtomicBoolean();
+            AtomicBoolean deadlineReached = new AtomicBoolean();
             Map<String, Object> body = Map.of(
                     "model", request.model(), "messages", request.messages(), "stream", true,
                     "options", Map.of("temperature", request.temperature(), "num_predict", request.maxTokens()));
@@ -93,14 +94,15 @@ public class OllamaGateway {
                         return response.bodyToFlux(ChatRecord.class);
                     })
                     .timeout(idleTimeout)
-                    .takeUntilOther(Mono.delay(generationTimeout).flatMap(ignored ->
-                            Mono.error(new GatewayException(HttpStatus.GATEWAY_TIMEOUT,
-                                    "The generation exceeded its time limit."))))
+                    // Emit a deadline value so takeUntilOther cancels the active HTTP source.
+                    .takeUntilOther(Mono.delay(generationTimeout).doOnNext(ignored -> deadlineReached.set(true)))
                     .publishOn(scheduler, 1)
                     .map(record -> convert(record, terminalSeen))
                     .takeUntil(Api.ChatChunk::done)
                     .concatWith(Flux.defer(() -> terminalSeen.get() ? Flux.empty()
-                            : Flux.error(GatewayException.invalidResponse())))
+                            : Flux.error(deadlineReached.get()
+                                    ? new GatewayException(HttpStatus.GATEWAY_TIMEOUT, "The generation exceeded its time limit.")
+                                    : GatewayException.invalidResponse())))
                     .onErrorMap(error -> {
                         if (error instanceof GatewayException) return error;
                         if (error instanceof TimeoutException) {
