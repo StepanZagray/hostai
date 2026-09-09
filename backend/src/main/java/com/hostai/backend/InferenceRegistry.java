@@ -9,21 +9,28 @@ import java.util.UUID;
 public final class InferenceRegistry {
     public static final int MAX_CONCURRENT = 2;
     public static final int HISTORY_LIMIT = 50;
+    public static final int MAX_GUEST_CONCURRENT = MAX_CONCURRENT - 1;
     private final ArrayDeque<Entry> history = new ArrayDeque<>();
     private int active;
+    private int guests;
     private long total;
     private long failed;
 
-    public synchronized Lease acquire(String model) {
-        if (active == MAX_CONCURRENT) {
+    public Lease acquire(String model) { return acquire(model, false); }
+
+    public Lease acquireGuest(String model) { return acquire(model, true); }
+
+    private synchronized Lease acquire(String model, boolean guest) {
+        if (active == MAX_CONCURRENT || (guest && guests == MAX_GUEST_CONCURRENT)) {
             throw new OverloadedException();
         }
-        Entry entry = new Entry(model);
+        Entry entry = new Entry(model, guest);
         history.addFirst(entry);
         while (history.size() > HISTORY_LIMIT) {
             history.removeLast();
         }
         active++;
+        if (guest) guests++;
         total++;
         return new Lease(entry);
     }
@@ -67,6 +74,7 @@ public final class InferenceRegistry {
                 entry.durationMs = Math.max(0L, (System.nanoTime() - entry.startedNanos) / 1_000_000);
                 entry.outputTokens = outputTokens;
                 active--;
+                if (entry.guest) guests--;
                 if (status.equals("failed")) {
                     failed++;
                 }
@@ -77,13 +85,14 @@ public final class InferenceRegistry {
     private static final class Entry {
         final String id = UUID.randomUUID().toString();
         final String model;
+        final boolean guest;
         final String startedAt = Instant.now().toString();
         final long startedNanos = System.nanoTime();
         String status = "running";
         Long durationMs;
         Long outputTokens;
 
-        Entry(String model) { this.model = model; }
+        Entry(String model, boolean guest) { this.model = model; this.guest = guest; }
 
         RequestView view() {
             return new RequestView(id, model, status, startedAt, durationMs, outputTokens);

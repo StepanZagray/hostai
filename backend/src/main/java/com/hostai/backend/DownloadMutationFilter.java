@@ -16,19 +16,23 @@ import org.springframework.web.util.pattern.PathPattern;
 import org.springframework.web.util.pattern.PathPatternParser;
 import reactor.core.publisher.Mono;
 
-/** Loopback Host validation and browser download mutation checks; grants no CORS origins. */
+/** Loopback Host validation and browser management mutation checks; grants no CORS origins. */
 @Component
 @Order(-100)
 public final class DownloadMutationFilter implements WebFilter {
+    private static final PathPattern SHARING = PathPatternParser.defaultInstance.parse("/api/sharing/**");
     private static final PathPattern DOWNLOADS = PathPatternParser.defaultInstance.parse("/api/model-downloads/**");
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, WebFilterChain chain) {
         var request = exchange.getRequest();
+        if (SHARING.matches(request.getPath().pathWithinApplication()))
+            exchange.getResponse().getHeaders().setCacheControl("no-store");
         // The socket bind alone does not reject a DNS-rebound browser origin.
         if (!List.of("127.0.0.1", "localhost", "[::1]").contains(request.getURI().getHost())) return denied();
         if (request.getMethod() != HttpMethod.POST
-                || !DOWNLOADS.matches(request.getPath().pathWithinApplication())) {
+                || (!DOWNLOADS.matches(request.getPath().pathWithinApplication())
+                    && !SHARING.matches(request.getPath().pathWithinApplication()))) {
             return chain.filter(exchange);
         }
         List<String> sites = request.getHeaders().get("Sec-Fetch-Site");

@@ -344,3 +344,58 @@ then authenticated model serving with revocable invites and a distinct client
 connection/chat surface. Choose and verify a transport before implementing internet
 sharing, and add searchable public hosts on top of working private connections.
 The local download improvements do not substitute for those missing services.
+
+## Local guest access cycle — 9 September 2026
+
+Added a complete local owner-to-guest path: publish one installed model, create an
+expiring key, open the separate client page, connect, chat and revoke. The owner
+can stop all guest work while retaining local chat. Publication always restarts
+stopped. Grants and revocation persist atomically in private hash-only storage;
+raw links appear only at creation. The distinct guest handler graph exposes no
+owner routes. Guest limits reserve one of the two inference slots for owner use,
+cap output requests at 1,024 tokens and allow six admitted attempts per key/window.
+Those limits do not guarantee memory fit or public abuse resistance.
+
+Opus 5 High advised on the model and reviewed the integrated backend. GPT-6 Astra
+XHigh implemented the isolated access store and guest frontend and contributed
+focused lifecycle tests; primary integrated, reviewed and ran actual builds,
+socket tests and browser checks. Fable was not retried after its previously
+confirmed account limit. No unavailable model was credited with completed work.
+
+Review led to tolerating a benign parent-directory creation race and tying guest
+session registration to `Flux.using`, so a synchronous assembly failure cannot
+orphan the single guest slot. The regression verifies a subsequent request can
+run. Model policy is enforced in the service as well as credential validation at
+the HTTP boundary. Additional HTTP tests cover missing/duplicate bearer headers,
+raw rebound Hosts and asset traversal, and old keys after a publication change.
+An existing owner Host test was outside Opus's review scope; it was not absent.
+
+The reviewer flagged the still-bound listener after Stop. This is deliberate:
+Stop client access ends authorization/work, while the guest page remains available
+for reconnect feedback. Owner link controls depend on active state and clear on
+stop/revoke. Gateway shutdown closes the listener. The existing stream parser
+already terminates at the first done record, addressing the terminal-record race
+without inventing a second completion contract.
+
+Browser verification caught a native form-default bug: replacing the clicked Stop
+button with Send restored and immediately resubmitted the prompt. Preventing that
+click's default action now preserves the draft and admits no new request. A
+separate non-submit type keeps Check model library from enabling guest access.
+Guest connection checks time out, same-key reconnect keeps the transcript/draft,
+and interrupted exchanges are excluded from later context. Visual inspection
+also shortened the empty conversation so the first-message box stays in view.
+
+Validation: 215 Java tests, 113 frontend unit/proxy tests, five production HTTP
+checks, and 72 distinct isolated browser/Electron/integration checks passed; the
+two optional rendering benchmarks were skipped. The final empty-state adjustment
+was rechecked in the guest suite. Build/typecheck/lint/format and diff checks pass.
+Evidence is retained under `test-results/guest-*.png`, `sharing-*.png` and
+`isolation.json`. Test fixtures used a temporary access store and simulated Ollama;
+no real model, account, tunnel, public endpoint or GPU benchmark was used.
+
+This remains a local preview. Owner APIs are unauthenticated loopback endpoints,
+so guest keys are not protection against another process already on the machine.
+Internet transport/TLS/reachability, verified identity and public host discovery
+remain required. Conversation/history durability, model requirements/fit guidance,
+key pruning and production abuse controls are also incomplete. See
+[guest-access.md](guest-access.md) and [user-journeys.md](user-journeys.md).

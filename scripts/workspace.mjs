@@ -13,6 +13,18 @@ const children = new Set()
 let stopping = false
 const delay = ms => new Promise(r => setTimeout(r, ms))
 
+async function buildGuest() {
+  const child = spawn(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['--filter', '@hostai/web', 'build:guest'], {
+    cwd: root, stdio: 'inherit', env: process.env, detached: process.platform !== 'win32',
+  })
+  children.add(child)
+  await new Promise((accept, reject) => {
+    child.once('error', reject)
+    child.once('exit', code => code === 0 ? accept() : reject(new Error('The client page could not be built.')))
+  })
+  children.delete(child)
+}
+
 function start(command, args, cwd, extraEnv = {}) {
   const child = spawn(command, args, { cwd, stdio: 'inherit', env: { ...process.env, ...extraEnv }, detached: process.platform !== 'win32' })
   children.add(child)
@@ -55,6 +67,7 @@ try {
   await assertFree(uiPort)
   await assertFree(8080)
   if (dev) {
+    await buildGuest()
     start('./mvnw', ['spring-boot:run'], resolve(root, 'backend'), javaEnv)
   } else {
     const target = resolve(root, 'backend/target')

@@ -195,3 +195,39 @@ Downloads are intentionally one at a time with 20 in-memory records, no durable
 resume, no catalog search or hardware fit estimate. This validation does not
 prove performance or memory fit for real models. Authentication, internet sharing,
 tunnels, a host directory and a remote client journey remain unimplemented.
+
+## Guest access verification
+
+Build the guest bundle before packaging or testing Java (`pnpm build`). The
+separate bundle is embedded under `guest/` in the JAR. The guest page is served
+by its own loopback listener, not the owner Node server.
+
+The access-store suite checks hash-only persistence, canonical credentials,
+exclusive locking in and across JVMs, permissions, symlinks, corrupt schemas,
+atomic snapshots, bounded storage and poisoning after real write failures.
+Guest HTTP tests exercise missing/duplicate keys, owner-route isolation, raw
+Host/traversal requests, strict body limits, model scope, publication changes,
+rate/concurrency limits, and revoke/stop closing the actual upstream socket.
+Lifecycle tests add durable restart behavior, active expiry, failure before the
+first record, storage-failure isolation and synchronous assembly cleanup. No
+power-loss or fsync fault-injection result is claimed.
+
+Guest browser fixtures exercise CSP and API separation, fragment scrubbing,
+password entry, bounded connection timeout, streamed Markdown, Stop, reconnect,
+expiry/revocation, draft retention, incomplete-context exclusion, request limits
+and 320px layout. A real integration creates a grant through the owner UI, opens
+its guest link, chats through Java, then revokes while the explicit fixture holds
+its response. That fixture prompt never completes on its own; the test must end
+it through revocation. No actual model or public endpoint is involved.
+
+For this integration, set `HOSTAI_ACCESS_DIR` to a fresh temporary private path
+when starting Java, and pass `HOSTAI_GUEST_TEST_URL=http://127.0.0.1:8081/` with
+`HOSTAI_INTEGRATION=1` to the isolated UI runner. Enable the fixture model through
+`/api/sharing/start` before running guest asset fixtures. Never run these tests
+against the user's normal key store. Stop Java and remove the temporary store
+after verification. The UI runner proves and owns only its private display and
+clients, not the separately started Java, Node or Ollama fixture processes.
+
+Evidence is retained in `test-results/guest-*.png`, `sharing-*.png` and
+`isolation.json`. These checks do not establish external reachability, TLS,
+verified identity, public abuse resistance, GPU reclamation or model quality.

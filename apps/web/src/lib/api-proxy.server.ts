@@ -58,10 +58,18 @@ export async function proxy({ request }: { request: Request }) {
     /^\/api\/model-downloads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cancel$/i.test(
       url.pathname,
     );
+  const isSharingRead = url.pathname === "/api/sharing";
+  const isSharingMutation =
+    ["/api/sharing/start", "/api/sharing/stop", "/api/sharing/grants"].includes(url.pathname) ||
+    /^\/api\/sharing\/grants\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/revoke$/i.test(
+      url.pathname,
+    );
   const allowed =
     request.method === "GET"
-      ? ["/api/status", "/api/models", "/api/requests"].includes(url.pathname) || isDownload
-      : request.method === "POST" && (isChat || isDownload || isCancel);
+      ? ["/api/status", "/api/models", "/api/requests"].includes(url.pathname) ||
+        isDownload ||
+        isSharingRead
+      : request.method === "POST" && (isChat || isDownload || isCancel || isSharingMutation);
   if (!allowed) return Response.json({ detail: "Endpoint not found." }, { status: 404 });
   if (request.method === "POST") {
     const origin = request.headers.get("origin");

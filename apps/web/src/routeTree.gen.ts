@@ -14,6 +14,7 @@ import { Route as ActivityRouteImport } from './routes/activity'
 import { Route as ConnectionRouteImport } from './routes/connection'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as PlaygroundRouteImport } from './routes/playground'
+import { Route as SharingRouteImport } from './routes/sharing'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
 
 const IndexRoute = IndexRouteImport.update({
@@ -41,6 +42,11 @@ const PlaygroundRoute = PlaygroundRouteImport.update({
   path: '/playground',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SharingRoute = SharingRouteImport.update({
+  id: '/sharing',
+  path: '/sharing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
@@ -53,6 +59,7 @@ export interface FileRoutesByFullPath {
   '/connection': typeof ConnectionRoute
   '/models': typeof ModelsRoute
   '/playground': typeof PlaygroundRoute
+  '/sharing': typeof SharingRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesByTo {
@@ -61,6 +68,7 @@ export interface FileRoutesByTo {
   '/connection': typeof ConnectionRoute
   '/models': typeof ModelsRoute
   '/playground': typeof PlaygroundRoute
+  '/sharing': typeof SharingRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesById {
@@ -70,14 +78,28 @@ export interface FileRoutesById {
   '/connection': typeof ConnectionRoute
   '/models': typeof ModelsRoute
   '/playground': typeof PlaygroundRoute
+  '/sharing': typeof SharingRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/activity' | '/connection' | '/models' | '/playground' | '/api/$'
+    | '/'
+    | '/activity'
+    | '/connection'
+    | '/models'
+    | '/playground'
+    | '/sharing'
+    | '/api/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/activity' | '/connection' | '/models' | '/playground' | '/api/$'
+  to:
+    | '/'
+    | '/activity'
+    | '/connection'
+    | '/models'
+    | '/playground'
+    | '/sharing'
+    | '/api/$'
   id:
     | '__root__'
     | '/'
@@ -85,6 +107,7 @@ export interface FileRouteTypes {
     | '/connection'
     | '/models'
     | '/playground'
+    | '/sharing'
     | '/api/$'
   fileRoutesById: FileRoutesById
 }
@@ -94,6 +117,7 @@ export interface RootRouteChildren {
   ConnectionRoute: typeof ConnectionRoute
   ModelsRoute: typeof ModelsRoute
   PlaygroundRoute: typeof PlaygroundRoute
+  SharingRoute: typeof SharingRoute
   ApiSplatRoute: typeof ApiSplatRoute
 }
 
@@ -134,6 +158,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PlaygroundRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sharing': {
+      id: '/sharing'
+      path: '/sharing'
+      fullPath: '/sharing'
+      preLoaderRoute: typeof SharingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/$': {
       id: '/api/$'
       path: '/api/$'
@@ -150,6 +181,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConnectionRoute: ConnectionRoute,
   ModelsRoute: ModelsRoute,
   PlaygroundRoute: PlaygroundRoute,
+  SharingRoute: SharingRoute,
   ApiSplatRoute: ApiSplatRoute,
 }
 export const routeTree = rootRouteImport

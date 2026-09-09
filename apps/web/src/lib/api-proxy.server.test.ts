@@ -259,7 +259,7 @@ describe("same-origin API proxy", () => {
   });
 });
 
-describe("download management proxy", () => {
+describe("owner management proxy", () => {
   const id = "5ed717e7-26ce-4c7d-b2ea-aa03292cb572";
   const mutation = (path: string, headers: HeadersInit = {}) =>
     new Request(`${origin}${path}`, {
@@ -267,17 +267,24 @@ describe("download management proxy", () => {
       headers: { "Content-Type": "application/json", ...headers },
       body: "{}",
     });
-  it.each(["/api/model-downloads", `/api/model-downloads/${id}/cancel`])(
-    "forwards %s with JSON negotiation",
-    async (path) => {
-      const fetch = backend();
-      await (await proxy({ request: mutation(path, { Origin: origin }) })).text();
-      expect(fetch.mock.calls[0][0].pathname).toBe(path);
-      expect(fetch.mock.calls[0][1].headers.Accept).toBe("application/json");
-    },
-  );
+  it.each([
+    "/api/model-downloads",
+    `/api/model-downloads/${id}/cancel`,
+    "/api/sharing/start",
+    "/api/sharing/stop",
+    "/api/sharing/grants",
+    `/api/sharing/grants/${id}/revoke`,
+  ])("forwards %s with JSON negotiation", async (path) => {
+    const fetch = backend();
+    await (await proxy({ request: mutation(path, { Origin: origin }) })).text();
+    expect(fetch.mock.calls[0][0].pathname).toBe(path);
+    expect(fetch.mock.calls[0][1].headers.Accept).toBe("application/json");
+  });
   it.each([
     "/api/model-downloads/not-a-job/cancel",
+    "/guest/v1/chat",
+    "/api/sharing/grants/not-a-uuid/revoke",
+    `/api/sharing/grants/${id}/delete`,
     `/api/model-downloads/${id}/delete`,
     `/api/model-downloads/${id}/cancel/extra`,
   ])("rejects %s without upstream work", async (path) => {

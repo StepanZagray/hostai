@@ -51,9 +51,10 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (req.url === "/api/chat") {
-    for await (const _chunk of req) {
-      /* Drain request; fixture never logs prompts. */
-    }
+    let body = "";
+    for await (const chunk of req) body += chunk;
+    const holdForRevocation =
+      JSON.parse(body).messages?.at(-1)?.content === "Revoke during generation";
     res.setHeader("Content-Type", "application/x-ndjson");
     res.write(
       JSON.stringify({
@@ -61,6 +62,8 @@ const server = createServer(async (req, res) => {
         done: false,
       }) + "\n",
     );
+    // This explicit integration prompt holds until the guest's exchange closes.
+    if (holdForRevocation) return;
     const timer = setTimeout(
       () =>
         res.end(

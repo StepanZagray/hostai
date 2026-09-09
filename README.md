@@ -2,7 +2,7 @@
 
 A local inference workspace with one frontend for **Electron and your browser**, backed by Java. Connect an existing Ollama runtime, download a local model, stream conversations, and inspect request activity.
 
-This is a working local foundation. **Authentication, API keys, internet tunnels, persistent history, signed installers, and bundled Java runtimes are not implemented.** Both servers bind to loopback; do not publish this version to the internet. Runtime and request metrics come from the backend, never sample data.
+This is a working local foundation with a separate guest chat page and expiring, revocable access keys. **Internet tunnels, public host discovery, verified host identities, persistent conversations, signed installers, and bundled Java runtimes are not implemented.** All listeners bind to loopback. Guest access is a local preview, not an internet-sharing service. Runtime and request metrics come from the backend, never sample data.
 
 ## Stack
 
@@ -34,6 +34,7 @@ pnpm desktop:dev
 For browser development, use two terminals:
 
 ```sh
+pnpm --filter @hostai/web build:guest
 pnpm backend:dev
 pnpm dev
 ```
@@ -62,6 +63,24 @@ HOSTAI_OLLAMA_URL=http://127.0.0.1:11435 pnpm desktop:dev
 ```
 
 Keep Ollama configured for local inference. A different loopback port is allowed; arbitrary remote origins are rejected. Downloading a model and actually running it consume disk, memory, and compute. Tests use isolated HTTP stubs and never contact the default Ollama port.
+
+## Preview client access
+
+After testing a model in Playground, choose **Models → Set up client access**.
+Start local client access for that model, create a named key with an expiry, and
+copy its one-time link into a browser on the same machine. The guest sees only
+that model and a chat page. No Ollama setup appears in the guest UI.
+
+**Revoke** ends a key's permission and active generation. **Stop client access**
+ends all guest requests; unrevoked keys work again if you resume the same model.
+Access always starts stopped after a gateway restart. Keys are stored as hashes
+in a private local file; conversations and drafts remain in the guest tab's memory.
+A key is a bearer credential, not a verified person or host identity.
+
+The guest listener defaults to `127.0.0.1:8081`; owner controls remain on 8080
+behind the web workspace. Neither Cloudflare Tunnel nor Tailscale is integrated.
+See [guest access and its limits](docs/guest-access.md) for the API, storage and
+future internet-sharing boundary.
 
 ## Architecture
 

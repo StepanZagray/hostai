@@ -7,7 +7,6 @@ import {
   Badge,
   Button,
   CodeBlock,
-  ExternalLink,
   PageHeading,
   PanelHeading,
   muted,
@@ -210,11 +209,17 @@ function Connection() {
           <ShieldCheck size={22} className={css({ color: "accent", mb: "3" })} />
           <h2 className={css({ fontWeight: 750, mb: "2" })}>Sharing and remote clients</h2>
           <p className={muted}>
-            Internet sharing, host discovery, and connecting to someone else’s host are not
-            available in this version. There are no accounts or API keys. Keep this workspace on
-            localhost; copying its address does not give other people access.
+            Create expiring access keys for a separate guest chat page on this machine. Internet
+            sharing, a tunnel and public host discovery are not connected yet. Copying this
+            workspace address does not give other people access.
           </p>
-          <ExternalLink href="https://docs.ollama.com">Ollama setup guide</ExternalLink>
+          <Link
+            to="/sharing"
+            search={{ model: undefined }}
+            className={button({ variant: "secondary" })}
+          >
+            Set up client access
+          </Link>
         </section>
       </div>
       <p

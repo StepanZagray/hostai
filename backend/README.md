@@ -1,15 +1,19 @@
 # HostAI backend
 
 Java 26, Spring Boot 4.1.1, Maven Wrapper 3.3.4 / Maven 3.9.12. No preview
-features. This is an **unauthenticated localhost prototype**, bound to
-`127.0.0.1:8080`. There is no tunnel, remote access, account system, or durable
-database. Request history and counters live only in memory and reset on restart.
+features. Owner controls remain **unauthenticated and localhost-only** on
+`127.0.0.1:8080`. A separate guest listener on `127.0.0.1:8081` requires expiring,
+model-scoped access keys and starts only when the owner enables it. Grants and
+revocation are durable; request history and counters remain in memory. There is
+no internet tunnel, remote access, account system or verified host identity.
+See [guest access](../docs/guest-access.md) for the complete boundary and contract.
 
 ## Run
 
 From this repository:
 
 ```sh
+pnpm --filter @hostai/web build:guest
 cd backend
 JAVA_HOME=/usr/lib/jvm/java-26-openjdk ./mvnw spring-boot:run
 ```
@@ -37,7 +41,9 @@ Known `:cloud` and `-cloud` model names are rejected. The operator must keep
 Ollama itself configured for local inference; a gateway cannot enforce what an
 independently configured upstream proxy does internally.
 
-To build an executable JAR:
+Build the guest assets from the repository root with `pnpm build` before testing
+or packaging Java. Maven embeds `apps/web/dist/guest` in the JAR. Rebuild both when
+the guest page changes. To build an executable JAR:
 
 ```sh
 JAVA_HOME=/usr/lib/jvm/java-26-openjdk ./mvnw verify

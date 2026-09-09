@@ -5,7 +5,8 @@
   "scripts": {
     "prepare": "panda codegen",
     "dev": "vp dev --host 127.0.0.1 --port 3000",
-    "build": "panda codegen && vp build",
+    "build": "panda codegen && vp build && pnpm run build:guest",
+    "build:guest": "panda codegen && vp build --config vite.guest.config.ts",
     "check": "panda codegen && tsc --noEmit && vp lint && vp fmt --check",
     "format": "vp fmt",
     "test": "vp test run",

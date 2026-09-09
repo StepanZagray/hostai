@@ -170,14 +170,22 @@ function Models() {
                     {chatUnavailableReason(model)}
                   </p>
                 ) : (
-                  <Link
-                    to="/playground"
-                    search={{ model: model.name }}
-                    className={button({ variant: "secondary" })}
-                  >
-                    Try in playground
-                    <ArrowRight size={14} />
-                  </Link>
+                  <div className={css({ display: "flex", gap: "2", flexWrap: "wrap" })}>
+                    <Link
+                      to="/playground"
+                      search={{ model: model.name }}
+                      className={button({ variant: "secondary" })}
+                    >
+                      Try in playground <ArrowRight size={14} />
+                    </Link>
+                    <Link
+                      to="/sharing"
+                      search={{ model: model.name }}
+                      className={button({ variant: "ghost" })}
+                    >
+                      Set up client access
+                    </Link>
+                  </div>
                 )}
               </article>
             ))}
