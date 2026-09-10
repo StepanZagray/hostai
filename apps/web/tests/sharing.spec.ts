@@ -23,8 +23,8 @@ const grant = (channel?: Channel) => ({
   revokedAt: null as string | null,
   channel,
 });
-async function accessFixture(page: Page) {
-  await hostFixture(page);
+async function accessFixture(page: Page, names = [model]) {
+  await hostFixture(page, true, names);
   await page.addInitScript(() => {
     (window as SharingTestWindow).sharingCopies = [];
     Object.defineProperty(navigator, "clipboard", {
@@ -52,7 +52,13 @@ async function accessFixture(page: Page) {
     } as Internet | undefined,
   };
   const calls: string[] = [];
-  const bodies: { channel?: Channel; label?: string; expiresInHours?: number }[] = [];
+  const bodies: {
+    channel?: Channel;
+    label?: string;
+    expiresInHours?: number;
+    model?: string;
+    hostLabel?: string;
+  }[] = [];
   let reads = 0;
   let failRead = false;
   const response = {
@@ -153,6 +159,177 @@ test("model library leads to local access, one-time key creation and durable rev
   );
 });
 
+test("stopping and restarting preserves the server's model and host name", async ({ page }) => {
+  const other = "another-model:medium";
+  const fixture = await accessFixture(page, [model, other]);
+  Object.assign(fixture.state, { state: "local", model: other, hostLabel: "My research host" });
+  await page.goto("/sharing");
+  await expect(
+    page.getByRole("link", { name: "Test the shared model", exact: true }),
+  ).toHaveAttribute("href", /model=another-model/);
+  await page.getByRole("button", { name: "Stop client access", exact: true }).click();
+  await expect(page.getByLabel("Model for clients")).toHaveValue(other);
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("My research host");
+  await page.getByRole("button", { name: "Start local client access", exact: true }).click();
+  await expect
+    .poll(() => fixture.bodies.at(-1))
+    .toEqual({ model: other, hostLabel: "My research host" });
+  expect(fixture.calls).toEqual(["/api/sharing/stop", "/api/sharing/start"]);
+});
+
+test("a different model handoff is explicit and earlier keys pause until their model returns", async ({
+  page,
+}) => {
+  const other = "another-model:medium";
+  const fixture = await accessFixture(page, [model, other]);
+  Object.assign(fixture.state, { state: "local", model, hostLabel: "My research host" });
+  fixture.state.grants.push(grant());
+  await page.goto(`/sharing?model=${encodeURIComponent(other)}`);
+  await expect(page.getByText(/You selected another-model:medium to share/)).toBeVisible();
+  await expect(page.getByText("Permission active", { exact: true })).toBeVisible();
+  expect(fixture.calls).toEqual([]);
+  await page.screenshot({
+    path: "test-results/sharing-model-handoff.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Stop client access", exact: true }).click();
+  await expect(page.getByLabel("Model for clients")).toHaveValue(other);
+  await expect(page.getByText("Access paused", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Start local client access", exact: true }).click();
+  await expect(
+    page.getByText(`This key permits ${model}; client access currently serves ${other}.`, {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await expect(page.getByText("Access paused", { exact: true })).toBeVisible();
+  expect(fixture.state.grants[0].revokedAt).toBeNull();
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({
+    path: "test-results/sharing-paused-model-mobile.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Stop client access", exact: true }).click();
+  await page.getByLabel("Model for clients").selectOption(model);
+  await expect.poll(() => new URL(page.url()).searchParams.get("model")).toBe(model);
+  await page.getByRole("button", { name: "Start local client access", exact: true }).click();
+  await expect(page.getByText("Permission active", { exact: true })).toBeVisible();
+  expect(fixture.calls).toEqual([
+    "/api/sharing/stop",
+    "/api/sharing/start",
+    "/api/sharing/stop",
+    "/api/sharing/start",
+  ]);
+});
+
+test("first-time sharing requires a model choice and URL selection preserves an edited name", async ({
+  page,
+}) => {
+  const other = "another-model:medium";
+  const fixture = await accessFixture(page, [model, other]);
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto("/sharing");
+  const start = page.getByRole("button", { name: "Start local client access", exact: true });
+  await expect(page.getByLabel("Model for clients")).toHaveValue("");
+  await expect(page.getByText("Choose the model clients may use.", { exact: true })).toBeVisible();
+  await expect(start).toBeDisabled();
+  await page.getByLabel("Host name shown to clients").fill("A name I chose");
+  const picker = page.getByLabel("Model for clients");
+  await picker.evaluate((element) =>
+    window.scrollTo(0, window.scrollY + element.getBoundingClientRect().top - 100),
+  );
+  await picker.focus();
+  const scrollBefore = await page.evaluate(() => window.scrollY);
+  expect(scrollBefore).toBeGreaterThan(0);
+  await picker.selectOption(other);
+  await expect.poll(() => new URL(page.url()).searchParams.get("model")).toBe(other);
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  );
+  await expect(picker).toBeFocused();
+  expect(await page.evaluate(() => window.scrollY)).toBe(scrollBefore);
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("A name I chose");
+  await page.getByLabel("Model for clients").selectOption(model);
+  await expect.poll(() => new URL(page.url()).searchParams.get("model")).toBe(model);
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("A name I chose");
+  await start.click();
+  await expect.poll(() => fixture.bodies.at(-1)).toEqual({ model, hostLabel: "A name I chose" });
+});
+
+test("a missing linked model stays selected with a recovery path instead of a substitute", async ({
+  page,
+}) => {
+  const fixture = await accessFixture(page);
+  await page.goto("/sharing?model=removed-model%3Asmall");
+  await expect(page.getByLabel("Model for clients")).toHaveValue("removed-model:small");
+  await expect(page.getByText(/The selected model is no longer in your library/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Open model library", exact: true })).toHaveAttribute(
+    "href",
+    "/models",
+  );
+  await expect(
+    page.getByRole("button", { name: "Start local client access", exact: true }),
+  ).toBeDisabled();
+  await page.getByLabel("Host name shown to clients").press("Enter");
+  expect(fixture.calls).toEqual([]);
+  await page.screenshot({
+    path: "test-results/sharing-missing-model.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByLabel("Model for clients").selectOption(model);
+  await page.getByRole("button", { name: "Start local client access", exact: true }).click();
+  await expect.poll(() => fixture.bodies.at(-1)?.model).toBe(model);
+});
+
+test("an empty library and a failed discovery explain why sharing cannot start", async ({
+  page,
+}) => {
+  const fixture = await accessFixture(page, []);
+  await page.goto("/sharing");
+  await expect(page.getByText(/No model is available for chat/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start local client access", exact: true }),
+  ).toBeDisabled();
+  await page.route("**/api/models", (route) =>
+    route.fulfill({ status: 503, json: { detail: "Unavailable" } }),
+  );
+  await page.getByRole("button", { name: "Check model library", exact: true }).click();
+  await expect(page.getByText(/The runtime and model library could not be checked/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start local client access", exact: true }),
+  ).toBeDisabled();
+  expect(fixture.calls).toEqual([]);
+});
+
+test("internet keys distinguish paused reachability from unconfirmed status", async ({ page }) => {
+  const fixture = await accessFixture(page);
+  publishInternet(fixture);
+  fixture.state.grants.push(grant("internet"));
+  await page.goto("/sharing");
+  await expect(page.getByText("Permission active", { exact: true })).toBeVisible();
+  fixture.state.internet!.state = "interrupted";
+  await refreshAccess(page);
+  await expect(page.getByText("Access paused", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/Internet sharing is not live. Restore the public connection/),
+  ).toBeVisible();
+  fixture.failRead();
+  await refreshAccess(page);
+  await expect(page.getByText("Status unknown", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(/Refresh access to check this key’s current availability/),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Revoke Visitor", exact: true })).toBeEnabled();
+  expect(fixture.calls).toEqual([]);
+});
+
 test("access storage failure blocks enabling guests and remains legible at 320px", async ({
   page,
 }) => {
@@ -223,6 +400,7 @@ test("explicit internet start verifies before issuing a key, then interruption h
   await expect(internet).toContainText("URL changes on every start");
   await expect(internet).toContainText("no uptime guarantee");
   await expect(internet).toContainText("not production hosting");
+  await page.getByLabel("Model for clients").selectOption(model);
   await page.getByRole("button", { name: "Start local client access", exact: true }).click();
   await expect(start).toBeEnabled();
   expect(fixture.calls).toEqual(["/api/sharing/start"]);

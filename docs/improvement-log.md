@@ -1,5 +1,25 @@
 # Autonomous improvement log
 
+## Preserve the intended model when enabling client access
+
+Client access now follows the model in its URL and updates that URL when the host
+changes the picker. Without an explicit model link, the form resumes the gateway's
+last model and host name; a fresh gateway requires a model choice. Stopping a
+non-default model no longer prepares a different model under the default host name.
+A removed or inadmissible selection stays visible with an explanation and a model
+library recovery link. The submit handler and button share the same admission gate.
+
+Arriving for model B while A is running now explains the mismatch before the host
+explicitly stops A and reviews B. The currently served model has its own Playground
+link. Key rows distinguish active permission, paused access and unknown status;
+switching models or interrupting the tunnel no longer leaves a misleading Valid key
+badge. Pausing is explicitly distinct from revoking a key.
+
+Claude Opus 5 High reviewed this handoff and identified selection drift, blocked
+selection recovery and misleading key status. Existing per-tab test evidence remains
+in Playground; carrying that evidence into Sharing is a separate improvement.
+Unsaved host-name edits remain page-local. Validation is recorded in verification.
+
 ## Guest access with an incorrect device clock
 
 A successful host access check now remains usable regardless of the guest device's

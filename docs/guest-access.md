@@ -66,6 +66,19 @@ not production hosting. A key is a bearer permission, not a verified identity.
    resume; a restarted tunnel has a new URL. Revoke keys to permanently end that
    permission.
 
+The serving form uses an explicitly selected model from the page address, or the
+model and host name last reported by this gateway. A fresh gateway requires an
+explicit model choice. Stopping and restarting access in the same gateway run
+preserves its configuration; a missing model stays selected with recovery guidance
+instead of being replaced by a different installed model. A link for another model
+explains what is currently shared and requires an explicit Stop before switching.
+Manual host-name edits remain in this page only; leaving the page loses unsaved edits.
+
+Access keys show permission separately from current availability. Stopped access,
+a different served model, or an unavailable internet connection pauses their use;
+it does not revoke them. Failed status checks show unknown availability. An active
+permission badge is not a guarantee that inference will succeed or capacity is free.
+
 Access starts stopped after every Java restart. Stopping access leaves the guest
 local listener/static page available to show connection errors; closing the gateway
 closes the listener and its connections. No active guest work survives stopping.

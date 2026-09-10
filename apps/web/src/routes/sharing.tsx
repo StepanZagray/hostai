@@ -185,10 +185,10 @@ function statusValue(value: Status): Status {
 }
 
 function Sharing() {
-  const { models, status: host, refresh: refreshHost } = useHost();
+  const { models, status: host, refresh: refreshHost, loading, errors: hostErrors } = useHost();
   const search = Route.useSearch();
-  const [selected, setSelected] = useState(search.model || "");
-  const [hostLabel, setHostLabel] = useState("Local host");
+  const navigate = Route.useNavigate();
+  const [editedHostLabel, setEditedHostLabel] = useState<string | null>(null);
   const [label, setLabel] = useState("");
   const [hours, setHours] = useState("24");
   const [channel, setChannel] = useState<"local" | "internet">("local");
@@ -203,9 +203,27 @@ function Sharing() {
   const read = useRef<AbortController | null>(null);
   const action = useRef<AbortController | null>(null);
   const eligible = models.filter((model) => chatUnavailableReason(model) === null);
-  const chosen = selected || eligible[0]?.name || "";
+  // Explicit URL intent wins; otherwise resume the server's last configuration.
+  // Never silently substitute another model when the intended one disappears.
+  const chosen = search.model || status?.model || "";
+  const hostLabel = editedHostLabel ?? status?.hostLabel ?? "Local host";
+  const chosenModel = models.find((model) => model.name === chosen);
+  const modelIssue = loading
+    ? "Checking your model library…"
+    : hostErrors.status || hostErrors.models
+      ? "The runtime and model library could not be checked. Check model library to try again."
+      : !host?.ollamaConnected
+        ? "Connect to your local runtime before starting client access."
+        : !chosen
+          ? eligible.length
+            ? "Choose the model clients may use."
+            : "No model is available for chat. Open your model library to download or check a model."
+          : !chosenModel
+            ? "The selected model is no longer in your library. Choose another installed model or download it again."
+            : chatUnavailableReason(chosenModel);
   const running = status?.state === "local";
   const ready = !!status && !error && status.state !== "unavailable";
+  const canStart = ready && !pending && modelIssue === null && !!hostLabel.trim();
   const internet = status?.internet;
   const publicOrigin = liveOrigin(status);
   const internetLive = !!publicOrigin;
@@ -482,6 +500,15 @@ function Sharing() {
                 Clients see “{status.hostLabel}” as a host-provided name. One guest may generate at
                 a time, leaving capacity for your own chat.
               </p>
+              {search.model && search.model !== status.model && (
+                <p
+                  role="status"
+                  className={css({ mb: "4", fontSize: "sm", overflowWrap: "anywhere" })}
+                >
+                  You selected {search.model} to share. Client access still serves {status.model}.
+                  Stop client access, then review and start the selected model.
+                </p>
+              )}
               <Button
                 disabled={!!pending}
                 onClick={() => void mutate("stop", "/api/sharing/stop", {})}
@@ -489,6 +516,15 @@ function Sharing() {
                 <Square size={16} />
                 Stop client access
               </Button>
+              {status.model && (
+                <Link
+                  to="/playground"
+                  search={{ model: status.model }}
+                  className={button({ variant: "ghost" })}
+                >
+                  Test the shared model
+                </Link>
+              )}
               <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
                 Stopping ends active client requests and stops internet sharing. Local keys work
                 again when you start the same model; revoke a key to end its permission. Internet
@@ -499,7 +535,7 @@ function Sharing() {
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                if (ready && chosen && host?.ollamaConnected && !pending)
+                if (canStart)
                   void mutate("start", "/api/sharing/start", { model: chosen, hostLabel });
               }}
             >
@@ -516,11 +552,19 @@ function Sharing() {
                   <select
                     className={field}
                     value={chosen}
-                    onChange={(event) => setSelected(event.target.value)}
+                    onChange={(event) =>
+                      void navigate({
+                        search: { model: event.target.value },
+                        replace: true,
+                        resetScroll: false,
+                      })
+                    }
                     disabled={!!pending || !eligible.length}
                   >
                     {!eligible.some((model) => model.name === chosen) && (
-                      <option value={chosen}>{chosen || "No model available"}</option>
+                      <option value={chosen}>
+                        {chosen ? `${chosen} (unavailable for chat)` : "Choose a model"}
+                      </option>
                     )}
                     {eligible.map((model) => (
                       <option key={model.name} value={model.name}>
@@ -537,7 +581,7 @@ function Sharing() {
                     required
                     value={hostLabel}
                     disabled={!!pending}
-                    onChange={(event) => setHostLabel(event.target.value)}
+                    onChange={(event) => setEditedHostLabel(event.target.value)}
                   />
                 </label>
               </div>
@@ -549,21 +593,11 @@ function Sharing() {
                   alignItems: "center",
                 })}
               >
-                <Button
-                  type="submit"
-                  variant="primary"
-                  disabled={
-                    !ready ||
-                    !!pending ||
-                    !host?.ollamaConnected ||
-                    !eligible.some((model) => model.name === chosen) ||
-                    !hostLabel.trim()
-                  }
-                >
+                <Button type="submit" variant="primary" disabled={!canStart}>
                   <Play size={16} />
                   {pending === "start" ? "Starting client access…" : "Start local client access"}
                 </Button>
-                {chosen && (
+                {chosenModel && chatUnavailableReason(chosenModel) === null && (
                   <Link
                     to="/playground"
                     search={{ model: chosen }}
@@ -580,7 +614,20 @@ function Sharing() {
                 >
                   Check model library
                 </Button>
+                <Link to="/models" className={button({ variant: "ghost" })}>
+                  Open model library
+                </Link>
               </div>
+              {modelIssue && (
+                <p role="status" className={`${muted} ${css({ mt: "3" })}`}>
+                  {modelIssue}
+                </p>
+              )}
+              {!hostLabel.trim() && (
+                <p className={`${muted} ${css({ mt: "3" })}`}>
+                  Enter a host name clients will recognize.
+                </p>
+              )}
               <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
                 Try a prompt first to check that this model runs on your hardware. Starting client
                 access does not test or preload the model.
@@ -866,6 +913,17 @@ function Sharing() {
           <ul className={css({ display: "grid", gap: "4" })}>
             {status?.grants.map((grant) => {
               const expired = Date.parse(grant.expiresAt) <= Date.now();
+              const pausedReason = error
+                ? "Refresh access to check this key’s current availability."
+                : status.state === "unavailable"
+                  ? "Client access is unavailable. Resolve the access error before using this key."
+                  : !running
+                    ? "Client access is stopped. This permission can resume when its model and access channel are started again."
+                    : grant.model !== status.model
+                      ? `This key permits ${grant.model}; client access currently serves ${status.model}.`
+                      : grant.channel === "internet" && !internetLive
+                        ? "Internet sharing is not live. Restore the public connection before using this key."
+                        : null;
               const request = status.requests?.items.find((item) => item.grantId === grant.id);
               const grantLabel = request
                 ? `Request · ${request.name} · ${request.code}`
@@ -887,8 +945,16 @@ function Sharing() {
                     <h3 className={css({ fontWeight: 650, overflowWrap: "anywhere" })}>
                       {grantLabel}
                     </h3>
-                    <Badge tone={grant.revokedAt || expired ? "neutral" : "good"}>
-                      {grant.revokedAt ? "Revoked" : expired ? "Expired" : "Valid key"}
+                    <Badge tone={grant.revokedAt || expired || pausedReason ? "neutral" : "good"}>
+                      {grant.revokedAt
+                        ? "Revoked"
+                        : expired
+                          ? "Expired"
+                          : error
+                            ? "Status unknown"
+                            : pausedReason
+                              ? "Access paused"
+                              : "Permission active"}
                     </Badge>
                   </div>
                   <p
@@ -897,6 +963,13 @@ function Sharing() {
                     {grant.channel === "internet" ? "Temporary internet" : "Local preview"} ·{" "}
                     {grant.model} · Expires {date(grant.expiresAt)} (your local time)
                   </p>
+                  {!grant.revokedAt && !expired && pausedReason && (
+                    <p
+                      className={`${muted} ${css({ mt: "2", fontSize: "xs", overflowWrap: "anywhere" })}`}
+                    >
+                      {pausedReason} Pausing access does not revoke the key.
+                    </p>
+                  )}
                   {!grant.revokedAt && (
                     <Button
                       variant="ghost"

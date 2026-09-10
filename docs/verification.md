@@ -725,3 +725,47 @@ header emitted by the gateway. Request-inbox timer policies are unchanged.
 All owned advisor, service and display processes and private runtime directories
 were removed after validation. Screenshots include desktop and 320px layouts.
 No remote push or deployment was performed.
+
+
+## Host model handoff and paused key status — 10 September 2026
+
+Client access now derives model intent from the current URL or the model last
+reported by the gateway. The model picker updates the URL without adding history
+entries or resetting scroll. A mobile test preserves focus and a nonzero scroll
+position across the selection after animation frames settle. An unconfigured gateway requires explicit selection; stopping a configured
+model preserves that model and the host name for a restart in the same gateway run.
+Missing or inadmissible selections stay visible with recovery guidance. Both form
+submission and the button enforce the same readiness condition. The gateway's
+existing model/name retention across Stop was inspected in SharingService; no
+backend contract or authorization code changed.
+
+Claude Opus 5 High inspected the named host journey files and supplied three
+findings: model selection drift and missing recovery, misleading key validity
+badges, and test evidence not crossing into Client access. This cycle resolves the
+first two. The per-tab Playground test indicator remains separate, and unsaved
+host-name edits remain page-local. No claim of hardware fit or successful inference
+is added when starting client access. Active key permission is not a reachability
+or capacity guarantee; paused and unknown states explain the current limitation.
+
+Validation passed 301 frontend tests, type/lint/format checks and production bundle
+builds. The final isolated Sway/pixman browser run passed all 42 scenarios across
+sharing, downloads and setup journeys. The single real owner/guest integration
+scenario was skipped because the integration flag and disposable Java gateway were
+not enabled. The initial run also skipped the separate guest-dependent request
+suite; that suite is not counted in this cycle's passing coverage. No backend tests
+or Java packaging were performed for this frontend-only change.
+
+New browser coverage checks restart of a non-default model with its existing host
+name, explicit model B handoff while A is serving, paused keys that recover when
+their model returns, required first selection and matching URL, preserved typed
+name during picker navigation, missing-model recovery without substitution,
+empty/failed library checks, and interrupted versus unconfirmed internet key status.
+The existing internet start scenario now explicitly selects a model before Start.
+
+The actual production owner bundle ran on a disposable loopback Node server; model,
+sharing, download and directory responses were fixtures. No real model download,
+GPU work, public tunnel or external registry was used. Desktop mismatch and missing
+model states and the 320px paused-key state were visually inspected. Evidence is
+retained under `test-results/host-handoff/`. All owned advisor, web-server and private
+display processes and runtime directories were removed. No remote push or deployment
+was performed.
