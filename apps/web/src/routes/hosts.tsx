@@ -6,7 +6,14 @@ import { Button, PageHeading, muted, panel } from "../components/ui";
 export const Route = createFileRoute("/hosts")({ component: FindHosts });
 function FindHosts() {
   const { status, error, loading, refresh } = usePublication();
-  if (status?.configured) return <DirectoryPage embedded />;
+  if (status?.configured && status.registryUrl)
+    return (
+      <DirectoryPage
+        key={status.registryUrl}
+        embedded
+        registryOrigin={new URL(status.registryUrl).origin}
+      />
+    );
   return (
     <>
       <PageHeading

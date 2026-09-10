@@ -380,7 +380,9 @@ class DirectoryPublicationTest {
                 } finally { release.countDown(); reader.join(Duration.ofSeconds(5)); }
                 assertThat(reader.isAlive()).isFalse();
                 assertThat(error.get()).isNull();
-                assertThat(directory.listings().listings()).isEmpty();
+                var listed = directory.listings();
+                assertThat(listed.listings()).isEmpty();
+                assertThat(listed.registryUrl()).isEqualTo(fixture.configuration().origin().toString());
             }
         }
     }

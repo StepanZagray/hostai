@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { readDirectory, type DirectorySnapshot } from "./registry";
+import { DirectorySourceError, readDirectory, type DirectorySnapshot } from "./registry";
 
-export function useDirectory(endpoint: "/registry/v1/listings" | "/api/directory/listings") {
+export function useDirectory(
+  endpoint: "/registry/v1/listings" | "/api/directory/listings",
+  registryOrigin: string,
+) {
   const [snapshot, setSnapshot] = useState<DirectorySnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [sourceMismatch, setSourceMismatch] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const active = useRef<AbortController | null>(null);
   const received = useRef(0);
@@ -24,15 +28,19 @@ export function useDirectory(endpoint: "/registry/v1/listings" | "/api/directory
     const timer = setTimeout(() => controller.abort(), 10_000);
     setLoading(true);
     try {
-      const next = await readDirectory(controller.signal, endpoint);
+      const next = await readDirectory(controller.signal, endpoint, registryOrigin);
       if (active.current !== controller || controller.signal.aborted) return;
       received.current = started;
       receivedWall.current = startedWall;
       setElapsed(currentElapsed());
       setSnapshot(next);
       setError(false);
-    } catch {
-      if (active.current === controller) setError(true);
+      setSourceMismatch(false);
+    } catch (cause) {
+      if (active.current === controller) {
+        setError(true);
+        setSourceMismatch(cause instanceof DirectorySourceError);
+      }
     } finally {
       clearTimeout(timer);
       if (active.current === controller) {
@@ -40,7 +48,7 @@ export function useDirectory(endpoint: "/registry/v1/listings" | "/api/directory
         setLoading(false);
       }
     }
-  }, [endpoint, currentElapsed]);
+  }, [endpoint, currentElapsed, registryOrigin]);
   useEffect(() => {
     void refresh();
     const tick = setInterval(() => {
@@ -69,6 +77,7 @@ export function useDirectory(endpoint: "/registry/v1/listings" | "/api/directory
     snapshot,
     loading,
     error,
+    sourceMismatch,
     elapsed,
     refresh,
     currentElapsed,

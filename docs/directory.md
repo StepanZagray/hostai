@@ -8,7 +8,8 @@ an invitation key or an explicitly enabled [access-request inbox](access-request
 The directory never issues keys or enables request intake.
 
 The repository includes a self-hostable reference registry; it does not configure
-or deploy a public shared directory. Registration is open, with bounded storage
+or deploy a public shared directory. Clients can explicitly save hosts in their browser
+for a later visit; these saves do not grant permission or verify identity. Registration is open, with bounded storage
 and rate limits. Accounts, moderation, spam resistance, verified identities,
 verified ownership of guest URLs, and production denial-of-service protection
 are not implemented. Use it as a small development service until those operating
@@ -51,6 +52,52 @@ Failed or uncertain removal is reported: a listing may remain fresh for up to
 90 seconds after its last update. Removing a listing never stops the tunnel or
 revokes a guest key. A failed refresh keeps previous search results visible but
 disables opening them until a successful refresh.
+
+## Return to saved hosts
+
+Use **Save host** on a listing, then **Saved hosts** to find that installation again.
+Saves survive reload in this browser and are scoped to the exact registry origin
+(scheme, hostname and port). The owner workspace and standalone directory website
+use different browser origins, so their saves do not sync. Changing the configured
+registry selects a separate saved list; switching back restores the earlier saves.
+
+Only the 64-character installation ID and remembered host/model names are stored.
+Guest URLs, hostnames, access keys and conversation contents are not saved. Records
+use one local-storage key per host, with explicit writes and no automatic eviction.
+The UI admits up to 50 saves per directory; remove a save to make room. Different
+host edits in other tabs cannot replace the whole list. Same-host actions honor the
+Save/Remove intent shown by the control even if a storage event arrives late.
+
+A saved ID resolves only through a successfully checked listing from the same
+registry. Opening uses that listing's validated URL and rechecks expiry at click
+time. Missing entries remain visible with remembered labels and **Not currently
+listed**, without a guest link. Failed checks say **Check unavailable**, and a
+pending first check makes no absence claim. These states do not prove the host is
+offline: it may have stopped publishing while private invitations still work.
+
+A changed model displays both the saved and current model and requires **Use current
+model** before a guest link is offered. This updates remembered details but neither
+opens the host nor grants access. A changed host name displays its saved name too.
+The current hostname is always shown; old addresses are not retained or compared.
+The installation ID denotes signing-key continuity, not a verified person or URL
+owner. Guest session metadata still determines actual access and model permission.
+
+**Remove saved host** removes only that bookmark. **Undo remove** restores the most
+recent removal while this directory view remains mounted, including an unlisted
+host. Its remembered name and model identify the current undo target. It never restores a URL or permission. Blocked/full/damaged browser storage
+produces a visible error; failed reads never reset or overwrite stored data. Check
+saved hosts retries storage access, also available beside a blocked model-change
+review. A completed write followed by a failed reread is reported separately from
+a rejected write. Clearing browser site data removes saved hosts.
+No automatic host request, prefetch, favicon, account sync or registry write occurs
+when saving or browsing saves.
+
+The owner-proxied `/api/directory/listings` response now includes `registryUrl`, added
+by the gateway from the same immutable configuration used to fetch that response.
+The embedded frontend rejects a missing or mismatched source and tells the owner to
+reload setup or update/restart the gateway. This prevents a restarted/reconfigured
+gateway from resolving old saves against another registry. The public registry wire
+protocol is unchanged; its standalone client fetches directly from its own origin.
 
 ## Run the registry locally
 

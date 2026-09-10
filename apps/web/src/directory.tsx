@@ -4,4 +4,6 @@ import "@fontsource-variable/manrope";
 import "@fontsource-variable/geist-mono";
 import "./styles.css";
 
-createRoot(document.getElementById("directory-root")!).render(<DirectoryPage />);
+createRoot(document.getElementById("directory-root")!).render(
+  <DirectoryPage registryOrigin={window.location.origin} />,
+);

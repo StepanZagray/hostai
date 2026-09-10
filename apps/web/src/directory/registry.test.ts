@@ -110,3 +110,21 @@ it.each([
     readDirectory(new AbortController().signal, "/registry/v1/listings"),
   ).rejects.toThrow();
 });
+
+it("binds owner-proxied listings to the expected registry and refuses missing or changed provenance", async () => {
+  const expected = "https://directory.example";
+  const fetch = vi.fn(async () => Response.json({ ...snapshot(), registryUrl: expected }));
+  vi.stubGlobal("fetch", fetch);
+  const signal = new AbortController().signal;
+  expect(await readDirectory(signal, "/api/directory/listings", expected + "/")).toEqual(
+    parseDirectory(snapshot()),
+  );
+  for (const registryUrl of [
+    undefined,
+    "https://other.example",
+    "https://directory.example/?key=secret",
+  ]) {
+    fetch.mockImplementation(async () => Response.json({ ...snapshot(), registryUrl }));
+    await expect(readDirectory(signal, "/api/directory/listings", expected)).rejects.toThrow();
+  }
+});

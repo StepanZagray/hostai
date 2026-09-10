@@ -39,7 +39,12 @@ async function directory(page: Page) {
       status: state.fail ? 503 : 200,
       json: state.fail
         ? { detail: "private provider text" }
-        : { version: 1, servedAt: state.servedAt, listings: state.entries },
+        : {
+            version: 1,
+            registryUrl: state.config.registryUrl,
+            servedAt: state.servedAt,
+            listings: state.entries,
+          },
     });
   });
   await page.route("https://*.trycloudflare.com/**", (route) => {
@@ -57,7 +62,11 @@ test("directory setup is distinct from an empty registry and needs no automatic 
   await expect(page.getByRole("heading", { name: "Choose a shared directory" })).toBeVisible();
   expect(state.requests).toBe(0);
   expect(state.unexpected).toEqual([]);
-  await page.screenshot({ path: "test-results/directory-unconfigured.png", fullPage: true });
+  await page.screenshot({
+    path: "test-results/directory-unconfigured.png",
+    fullPage: true,
+    animations: "disabled",
+  });
 });
 test("model and host search keeps invitation and identity limits visible without probing hosts", async ({
   page,
@@ -118,7 +127,11 @@ test("refresh failure retains rows but disables opening; recovery preserves the 
   await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Refresh before opening" })).toBeDisabled();
   expect(await page.content()).not.toContain("private provider text");
-  await page.screenshot({ path: "test-results/directory-refresh-failed.png", fullPage: true });
+  await page.screenshot({
+    path: "test-results/directory-refresh-failed.png",
+    fullPage: true,
+    animations: "disabled",
+  });
   state.fail = false;
   await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
   await expect(page.getByRole("link", { name: /Open guest chat for/ })).toBeVisible();
@@ -189,7 +202,33 @@ for (const width of [320, 768, 1024, 1440])
     await page.getByLabel("Search model or host").focus();
     await page.keyboard.press("Tab");
     await expect(page.getByLabel("Include expired listings")).toBeFocused();
-    await page.screenshot({ path: `test-results/directory-${width}.png`, fullPage: true });
+    await page.screenshot({
+      path: `test-results/directory-${width}.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.getByRole("button", { name: /^Save host / }).click();
+    await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+    state.entries = [];
+    await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+    await expect(page.getByText("Not currently listed", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    // Reset capture scroll so Chromium does not paint off-screen fixed elements
+    // into a full-page screenshot at the previous scroll offset.
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+    expect(
+      await page
+        .getByRole("link", { name: "Skip to content", exact: true })
+        .evaluate((link) => link.getBoundingClientRect().bottom),
+    ).toBeLessThanOrEqual(0);
+    await page.screenshot({
+      path: `test-results/saved-host-${width}.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
   });
 test("standalone directory serves its own client surface", async ({ page, request }) => {
   test.skip(!process.env.HOSTAI_DIRECTORY_TEST_URL, "Explicit isolated directory required");
@@ -247,6 +286,9 @@ test("standalone directory serves its own client surface", async ({ page, reques
       await expect(
         page.getByRole("heading", { name: "directory-browser:small", exact: true }),
       ).toBeVisible();
+      await page
+        .getByRole("button", { name: "Save host Directory browser fixture", exact: true })
+        .click();
     }
     await page.goto(origin);
     await expect(
@@ -254,6 +296,7 @@ test("standalone directory serves its own client surface", async ({ page, reques
     ).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
     await expect(page.getByText("The host must approve access.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Saved hosts (0)", exact: true })).toBeVisible();
     await page.getByLabel("Search model or host").fill("directory-browser");
     await expect(
       page.getByRole("heading", { name: "directory-browser:small", exact: true }),
@@ -261,13 +304,284 @@ test("standalone directory serves its own client surface", async ({ page, reques
     await expect(
       page.getByRole("link", { name: "Open guest chat for Directory browser fixture" }),
     ).toHaveAttribute("href", "https://directory-browser-fixture.trycloudflare.com/");
-    await page.screenshot({ path: "test-results/directory-standalone.png", fullPage: true });
+    await page.screenshot({
+      path: "test-results/directory-standalone.png",
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page
+      .getByRole("button", { name: "Save host Directory browser fixture", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
     await mutate("withdraw");
     await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "directory-browser:small", exact: true }),
-    ).toHaveCount(0);
+    ).toBeVisible();
+    await expect(page.getByText("Not currently listed", { exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
   } finally {
     await mutate("withdraw");
   }
+});
+
+test("saved hosts survive reload, remain visible when absent, and support undo without storing URLs", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  await page.goto("/hosts");
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toBeVisible();
+  await page.reload();
+  await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+  state.entries = [];
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await expect(page.getByText("Not currently listed", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "fixture-model:small", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/saved-host-absent.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  const data = await page.evaluate(() => ({ ...localStorage }));
+  expect(Object.keys(data)).toHaveLength(1);
+  expect(JSON.parse(Object.values(data)[0])).toEqual({
+    id: host().id,
+    hostLabel: host().hostLabel,
+    model: host().model,
+  });
+  expect(JSON.stringify(data)).not.toMatch(/trycloudflare|access|guestUrl/);
+  await page
+    .getByRole("button", { name: "Remove saved host Alice’s shared model", exact: true })
+    .click();
+  await expect(page.getByRole("heading", { name: "No saved hosts yet" })).toBeVisible();
+  await expect(page.getByText("Last removal:", { exact: false })).toContainText(
+    "Alice’s shared model",
+  );
+  await page.screenshot({
+    path: "test-results/saved-host-undo.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Undo remove", exact: true }).click();
+  await expect(page.getByText("Not currently listed", { exact: true })).toBeVisible();
+  expect(state.unexpected).toEqual([]);
+});
+
+test("saved model changes require acknowledgement and only current fresh addresses can open", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  await page.goto("/hosts");
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+  state.entries = [
+    { ...host("a", "changed-model:large"), guestUrl: "https://changed-fixture.trycloudflare.com/" },
+  ];
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await expect(page.getByText(/Model changed. Saved model: fixture-model:small/)).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  await page.screenshot({
+    path: "test-results/saved-host-model-changed.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Use current model", exact: true }).click();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveAttribute(
+    "href",
+    "https://changed-fixture.trycloudflare.com/",
+  );
+  await page.evaluate(() => {
+    const now = Date.now;
+    Date.now = () => now() + 3600000;
+    document
+      .querySelector<HTMLAnchorElement>('a[aria-label="Open guest chat for Alice’s shared model"]')!
+      .click();
+  });
+  await expect(page.getByText("Listing expired", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("saved views reject failed checks and wrong-registry provenance and isolate changed configuration", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  await page.goto("/hosts");
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+  state.fail = true;
+  await page.reload();
+  await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+  await expect(page.getByText("1 saved host.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await expect(page.getByText("Check unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  state.fail = false;
+  let mismatched = true;
+  await page.route("**/api/directory/listings", (route) =>
+    mismatched
+      ? route.fulfill({
+          json: {
+            version: 1,
+            registryUrl: "https://other.example",
+            servedAt: now,
+            listings: [host()],
+          },
+        })
+      : route.fallback(),
+  );
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await expect(page.getByText("Check unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  mismatched = false;
+  state.config.registryUrl = "https://other.example/";
+  await expect(page.getByRole("button", { name: "Saved hosts (0)", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Saved hosts (0)", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "No saved hosts yet" })).toBeVisible();
+  state.config.registryUrl = "https://directory.example/";
+  await expect(page.getByRole("button", { name: "Saved hosts (1)", exact: true })).toBeVisible();
+  expect(state.unexpected).toEqual([]);
+});
+
+test("storage failures are visible and corrupt saved data is never overwritten", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  await page.addInitScript(() => {
+    Reflect.set(window, "blockHostSaves", true);
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("hostai.saved-host.") && Reflect.get(window, "blockHostSaves"))
+        throw new Error("private storage failure");
+      original.call(this, key, value);
+    };
+  });
+  await page.goto("/hosts");
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("This change could not be saved");
+  await expect(page.getByRole("button", { name: "Saved hosts", exact: true })).toBeVisible();
+  expect(await page.content()).not.toContain("private storage failure");
+  await page.evaluate(() => Reflect.set(window, "blockHostSaves", false));
+  await page.getByRole("button", { name: "Check saved hosts", exact: true }).click();
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((key) => key.startsWith("hostai.saved-host."))!;
+    localStorage.setItem(key, "{damaged");
+  });
+  await page.reload();
+  await expect(page.getByRole("alert")).toContainText("Saved hosts could not be read");
+  expect(await page.evaluate(() => Object.values(localStorage))).toEqual(["{damaged"]);
+  await page.getByRole("button", { name: "Saved hosts", exact: true }).click();
+  await expect(page.getByText("Saved host count unavailable", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Saved hosts unavailable" })).toBeVisible();
+  await page.screenshot({
+    path: "test-results/saved-host-storage-error.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "All listings", exact: true }).click();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toBeVisible();
+  expect(state.unexpected).toEqual([]);
+});
+
+test("a saved write followed by a failed reread is reported honestly and recovers", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  await page.goto("/hosts");
+  await expect(page.getByRole("button", { name: "Saved hosts (0)", exact: true })).toBeVisible();
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    const get = Storage.prototype.getItem;
+    Storage.prototype.setItem = function (key, value) {
+      set.call(this, key, value);
+      Reflect.set(window, "failSavedRead", true);
+    };
+    Storage.prototype.getItem = function (key) {
+      if (key.startsWith("hostai.saved-host.") && Reflect.get(window, "failSavedRead"))
+        throw new Error("private read failure");
+      return get.call(this, key);
+    };
+  });
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("The change reached browser storage");
+  expect(await page.evaluate(() => localStorage.length)).toBe(1);
+  await page.evaluate(() => Reflect.set(window, "failSavedRead", false));
+  await page.getByRole("button", { name: "Check saved hosts", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Saved hosts (1)", exact: true })).toBeVisible();
+  state.entries = [{ ...host(), model: "changed:large" }];
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await page.getByRole("button", { name: "Use current model", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("The change reached browser storage");
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  await page.screenshot({
+    path: "test-results/saved-host-model-recovery.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.evaluate(() => Reflect.set(window, "failSavedRead", false));
+  await page.getByRole("button", { name: "Check saves to review model", exact: true }).click();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toBeVisible();
+  expect(state.unexpected).toEqual([]);
+});
+
+test("saved-host changes synchronize between tabs without dropping other hosts", async ({
+  page,
+  context,
+}) => {
+  const state = await directory(page);
+  state.entries.push({ ...host("b"), hostLabel: "Bob’s host" });
+  await page.goto("/hosts");
+  const other = await context.newPage();
+  try {
+    const second = await directory(other);
+    second.entries = state.entries;
+    await other.goto("/hosts");
+    await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+    await expect(other.getByRole("button", { name: "Saved hosts (1)", exact: true })).toBeVisible();
+    await other.getByRole("button", { name: "Save host Bob’s host", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Saved hosts (2)", exact: true })).toBeVisible();
+    await page
+      .getByRole("button", { name: "Remove saved host Alice’s shared model", exact: true })
+      .click();
+    await expect(other.getByRole("button", { name: "Saved hosts (1)", exact: true })).toBeVisible();
+    expect(second.unexpected).toEqual([]);
+  } finally {
+    await other.close();
+  }
+  expect(state.unexpected).toEqual([]);
+});
+
+test("a delayed storage event cannot turn Save into an unintended removal", async ({ page }) => {
+  const state = await directory(page);
+  await page.goto("/hosts");
+  const save = page.getByRole("button", { name: "Save host Alice’s shared model", exact: true });
+  await expect(save).toBeEnabled();
+  const remembered = { id: host().id, hostLabel: host().hostLabel, model: "previous:small" };
+  // Same-page storage writes do not dispatch an event: this models another tab's
+  // write reaching storage before its event reaches this rendered control.
+  await page.evaluate(
+    (entry) =>
+      localStorage.setItem(
+        `hostai.saved-host.v1:${encodeURIComponent("https://directory.example")}:${entry.id}`,
+        JSON.stringify(entry),
+      ),
+    remembered,
+  );
+  await save.click();
+  expect(
+    await page.evaluate(() => Object.values(localStorage).map((value) => JSON.parse(value))),
+  ).toEqual([remembered]);
+  await expect(page.getByRole("button", { name: "Use current model", exact: true })).toBeVisible();
+  await page.evaluate(() => localStorage.clear());
+  await page
+    .getByRole("button", { name: "Remove saved host Alice’s shared model", exact: true })
+    .click();
+  expect(await page.evaluate(() => localStorage.length)).toBe(0);
+  expect(state.unexpected).toEqual([]);
 });

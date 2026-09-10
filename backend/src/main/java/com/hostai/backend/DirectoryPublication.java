@@ -164,11 +164,18 @@ final class DirectoryPublication implements AutoCloseable {
         return status(after);
     }
 
-    DirectoryClient.Listings listings() {
+    record BrowseListings(int version, long servedAt, java.util.List<DirectoryClient.Entry> listings,
+                          String registryUrl) {}
+
+    BrowseListings listings() {
         // No unbounded connection fan-out or queued reads from tabs/local callers.
         // Publication/withdrawal uses its independent serialized worker.
         if (!readingListings.compareAndSet(false, true)) throw new DirectoryClient.Failure();
-        try { return client.listings(); }
+        try {
+            var result = client.listings();
+            return new BrowseListings(result.version(), result.servedAt(), result.listings(),
+                    configuration.origin().toString());
+        }
         finally { readingListings.set(false); }
     }
 

@@ -1,14 +1,23 @@
 import { useState } from "react";
-import { ArrowUpRight, RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { css } from "../../styled-system/css";
-import { Badge, Button, button, muted, panel } from "../components/ui";
+import { Button, muted, panel } from "../components/ui";
 import { fresh } from "./registry";
 import { useDirectory } from "./use-directory";
+import { useSavedHosts } from "./use-saved-hosts";
+import { DirectoryListing } from "./directory-listing";
 
-export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
-  const { snapshot, loading, error, elapsed, refresh, currentElapsed } = useDirectory(
-    embedded ? "/api/directory/listings" : "/registry/v1/listings",
-  );
+export function DirectoryPage({
+  embedded = false,
+  registryOrigin,
+}: {
+  embedded?: boolean;
+  registryOrigin: string;
+}) {
+  const saves = useSavedHosts(registryOrigin);
+  const [savedOnly, setSavedOnly] = useState(false);
+  const { snapshot, loading, error, sourceMismatch, elapsed, refresh, currentElapsed } =
+    useDirectory(embedded ? "/api/directory/listings" : "/registry/v1/listings", registryOrigin);
   const Root = embedded ? "div" : "main";
   const [search, setSearch] = useState("");
   const [includeExpired, setIncludeExpired] = useState(false);
@@ -19,6 +28,18 @@ export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
       (includeExpired || fresh(item, snapshot!, elapsed)) &&
       `${item.model} ${item.hostLabel}`.toLowerCase().includes(query),
   );
+  const rows = savedOnly
+    ? saves.entries
+        .map((saved) => ({ saved, listing: listings.find((item) => item.id === saved.id) }))
+        .filter(({ saved, listing }) =>
+          `${saved.model} ${saved.hostLabel} ${listing?.model ?? ""} ${listing?.hostLabel ?? ""}`
+            .toLowerCase()
+            .includes(query),
+        )
+    : matching.map((listing) => ({
+        listing,
+        saved: saves.entries.find((item) => item.id === listing.id),
+      }));
   const hasExpired = snapshot && listings.some((item) => !fresh(item, snapshot, elapsed));
   return (
     <Root
@@ -89,6 +110,49 @@ export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
         </p>
       </aside>
 
+      <div
+        role="group"
+        aria-label="Host view"
+        className={css({ display: "flex", gap: "3", flexWrap: "wrap", mb: "3" })}
+      >
+        <Button
+          variant={!savedOnly ? "primary" : "secondary"}
+          aria-pressed={!savedOnly}
+          onClick={() => setSavedOnly(false)}
+        >
+          All listings
+        </Button>
+        <Button
+          variant={savedOnly ? "primary" : "secondary"}
+          aria-pressed={savedOnly}
+          onClick={() => setSavedOnly(true)}
+        >
+          Saved hosts{!saves.loading && !saves.blocked ? ` (${saves.entries.length})` : ""}
+        </Button>
+      </div>
+      <p className={`${muted} ${css({ fontSize: "xs", mb: "4", overflowWrap: "anywhere" })}`}>
+        Saved hosts belong to {registryOrigin}. Only installation IDs and remembered host and model
+        names are stored in this browser. Keys and guest addresses are not saved. Opening always
+        uses a current directory listing; an address can change. Saves do not sync between the
+        workspace and directory website.
+      </p>
+      {saves.error && (
+        <div role="alert" className={css({ mb: "4" })}>
+          <p className={muted}>{saves.error}</p>
+          <Button onClick={saves.refresh}>Check saved hosts</Button>
+        </div>
+      )}
+      <div role="status" className={`${muted} ${css({ fontSize: "xs", mb: "3" })}`}>
+        {saves.notice}
+        {saves.removed && (
+          <div className={css({ overflowWrap: "anywhere" })}>
+            Last removal: <bdi>{saves.removed.hostLabel}</bdi> · <bdi>{saves.removed.model}</bdi>.{" "}
+            <Button disabled={saves.blocked} onClick={saves.undo}>
+              Undo remove
+            </Button>
+          </div>
+        )}
+      </div>
       <section
         aria-label="Search hosts"
         className={css({
@@ -123,22 +187,24 @@ export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
           />
         </label>
         {search && <Button onClick={() => setSearch("")}>Clear search</Button>}
-        <label
-          className={css({
-            display: "flex",
-            alignItems: "center",
-            gap: "2",
-            fontSize: "sm",
-            minH: "44px",
-          })}
-        >
-          <input
-            type="checkbox"
-            checked={includeExpired}
-            onChange={(event) => setIncludeExpired(event.target.checked)}
-          />
-          Include expired listings
-        </label>
+        {!savedOnly && (
+          <label
+            className={css({
+              display: "flex",
+              alignItems: "center",
+              gap: "2",
+              fontSize: "sm",
+              minH: "44px",
+            })}
+          >
+            <input
+              type="checkbox"
+              checked={includeExpired}
+              onChange={(event) => setIncludeExpired(event.target.checked)}
+            />
+            Include expired listings
+          </label>
+        )}
       </section>
 
       {error && (
@@ -157,27 +223,56 @@ export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
           {snapshot
             ? "Previous listings are shown below; refresh successfully before opening a host."
             : "Refresh to try again. If you already have an invitation, open the link your host sent you."}
+          {sourceMismatch && (
+            <p className={css({ mt: "2" })}>
+              The gateway did not confirm this directory’s source. Reload to check directory setup;
+              if this continues, update and restart the gateway.
+            </p>
+          )}
         </div>
       )}
       <p role="status" className={`${muted} ${css({ mb: "3" })}`}>
-        {!snapshot && loading
-          ? "Loading host listings…"
-          : !snapshot
-            ? "Host count unavailable"
-            : `${matching.length} ${matching.length === 1 ? "listing" : "listings"}${query ? " matching your search" : ""}${error ? " from the previous check" : ""}.`}
+        {savedOnly
+          ? saves.loading
+            ? "Loading saved hosts…"
+            : saves.blocked
+              ? "Saved host count unavailable"
+              : `${rows.length} saved ${rows.length === 1 ? "host" : "hosts"}${query ? " matching your search" : ""}.`
+          : !snapshot && loading
+            ? "Loading host listings…"
+            : !snapshot
+              ? "Host count unavailable"
+              : `${rows.length} ${rows.length === 1 ? "listing" : "listings"}${query ? " matching your search" : ""}${error ? " from the previous check" : ""}.`}
       </p>
       <section className={panel} aria-label="Host listings" aria-busy={loading}>
-        {!snapshot && loading ? (
+        {savedOnly && !rows.length && !saves.loading ? (
+          <div className={css({ p: "6" })}>
+            <h2 className={css({ fontSize: "lg", fontWeight: 700 })}>
+              {saves.error
+                ? "Saved hosts unavailable"
+                : query
+                  ? "No matching saved hosts"
+                  : "No saved hosts yet"}
+            </h2>
+            <p className={muted}>
+              {saves.error
+                ? "Use Check saved hosts above to retry browser storage. Your saved records have not been reset."
+                : query
+                  ? "Search remembered or current model and host names."
+                  : "Use Save host on a listing to find that installation again. Saving does not grant access or verify its identity."}
+            </p>
+          </div>
+        ) : !savedOnly && !snapshot && loading ? (
           <div className={css({ p: "6" })}>
             <p className={css({ fontWeight: 700 })}>Checking this directory</p>
             <p className={muted}>Listings will appear after the directory responds.</p>
           </div>
-        ) : !snapshot ? (
+        ) : !savedOnly && !snapshot ? (
           <div className={css({ p: "6" })}>
             <h2 className={css({ fontSize: "lg", fontWeight: 700 })}>Host discovery unavailable</h2>
             <p className={muted}>The directory has not returned a valid list.</p>
           </div>
-        ) : matching.length === 0 ? (
+        ) : !savedOnly && matching.length === 0 ? (
           <div className={css({ p: { base: "5", md: "8" } })}>
             <h2 className={css({ fontSize: "lg", fontWeight: 700 })}>
               {query
@@ -196,98 +291,28 @@ export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
           </div>
         ) : (
           <ul>
-            {matching.map((item) => {
-              const expired = !fresh(item, snapshot, elapsed);
-              const seconds = Math.max(
-                0,
-                Math.floor((snapshot.servedAt + elapsed - item.updatedAt) / 1000),
-              );
-              const updated =
-                seconds < 60 ? `${seconds} seconds ago` : `${Math.floor(seconds / 60)} minutes ago`;
-              const canOpen = !expired && !error;
-              return (
-                <li
-                  key={item.id}
-                  className={css({
-                    p: { base: "5", md: "6" },
-                    borderBottom: "1px solid token(colors.line)",
-                    _last: { borderBottom: 0 },
-                    display: "flex",
-                    gap: "5",
-                    justifyContent: "space-between",
-                    flexWrap: "wrap",
-                  })}
-                >
-                  <div className={css({ flex: "1 1 360px", minW: 0 })}>
-                    <h2
-                      className={css({
-                        fontFamily: "mono",
-                        fontSize: "lg",
-                        fontWeight: 650,
-                        overflowWrap: "anywhere",
-                      })}
-                    >
-                      {item.model}
-                    </h2>
-                    <p className={css({ mt: "2", fontWeight: 700, overflowWrap: "anywhere" })}>
-                      {item.hostLabel}
-                    </p>
-                    <p className={muted}>Host-provided name · identity not verified</p>
-                    <p
-                      className={`${muted} ${css({ mt: "3", fontFamily: "mono", fontSize: "xs", overflowWrap: "anywhere" })}`}
-                    >
-                      {new URL(item.guestUrl).hostname}
-                    </p>
-                    <p className={`${muted} ${css({ fontSize: "xs", overflowWrap: "anywhere" })}`}>
-                      Host ID <code title={item.id}>{item.id.slice(0, 16)}</code> · remains the same
-                      when its address changes
-                    </p>
-                  </div>
-                  <div
-                    className={css({
-                      display: "flex",
-                      flexDirection: "column",
-                      alignItems: { base: "start", md: "end" },
-                      gap: "3",
-                    })}
-                  >
-                    <Badge tone={expired || error ? "warning" : "neutral"}>
-                      {error
-                        ? "Check unavailable"
-                        : expired
-                          ? "Listing expired"
-                          : `Updated ${updated}`}
-                    </Badge>
-                    <p className={`${muted} ${css({ fontSize: "xs" })}`}>
-                      Host permission required · one shared model
-                    </p>
-                    {canOpen ? (
-                      <a
-                        className={button({ variant: "primary" })}
-                        href={item.guestUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        aria-label={`Open guest chat for ${item.hostLabel}`}
-                        onClick={(event) => {
-                          if (!fresh(item, snapshot, currentElapsed())) event.preventDefault();
-                        }}
-                      >
-                        Open guest chat <ArrowUpRight aria-hidden="true" />
-                      </a>
-                    ) : (
-                      <Button disabled>
-                        {error ? "Refresh before opening" : "Awaiting host update"}
-                      </Button>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
+            {rows.map(({ listing, saved }) => (
+              <DirectoryListing
+                key={(listing ?? saved!).id}
+                listing={listing}
+                saved={saved}
+                snapshot={snapshot}
+                elapsed={elapsed}
+                error={error}
+                currentElapsed={currentElapsed}
+                savingDisabled={saves.loading || saves.blocked}
+                onCheckSaves={saves.blocked ? saves.refresh : undefined}
+                onToggle={() => saves.toggle(listing ?? saved!)}
+                onUpdate={() => {
+                  if (listing) saves.update(listing);
+                }}
+              />
+            ))}
           </ul>
         )}
       </section>
       <footer className={`${muted} ${css({ mt: "5", fontSize: "xs" })}`}>
-        Only this directory’s listings are shown. Updates expire after 90 seconds; expired listings
+        Listings come only from this directory. Updates expire after 90 seconds; expired listings
         remain for up to 15 minutes. Your search stays in this page. Browsing does not contact the
         listed hosts.
       </footer>

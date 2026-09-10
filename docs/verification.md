@@ -538,3 +538,51 @@ screenshots include `model-choice-{320,768,1440}.png` and
 `model-choice-installed.png`, retained with logs and isolation evidence under
 `test-results/model-choice/`. All test-owned services, advisor processes, compositor
 PIDs and private runtime directories were removed after verification.
+
+
+## Saved hosts and registry provenance
+
+The cycle passed 295 frontend unit tests in 16 files, TypeScript/lint/format checks,
+production builds, and 29 targeted Java tests (`DirectoryPublicationTest` and
+`DirectoryClientTest`) using Java 26. Java packaging also succeeded with tests
+skipped. This is not a fresh full-backend-suite claim.
+
+The final directory/publication browser suite passed 23 scenarios. Checks cover
+save/reload, missing listings, current-address-only navigation, changed-model
+acknowledgement, search, expiry after resume, rejected registry provenance, changed
+configuration, rejected writes, corrupted records left intact, post-write read
+failure, explicit recovery, cross-tab changes, delayed storage events and Undo.
+Responsive cases exercise 320/768/1024/1440px and keyboard navigation. A final
+focused pass of six scenarios passed after the storage empty-state copy adjustment,
+including named Undo and screenshots with animations disabled. Four responsive
+cases also passed with a DOM check that the unfocused skip link stays off-screen;
+resetting scroll before full-page capture avoids a Chromium screenshot artifact.
+
+One browser scenario uses the actual disposable Node registry, signed publication
+and withdrawal, built standalone directory, and Java owner proxy. It verifies the
+proxy's own source envelope and independent saves in the workspace and standalone
+browser origins. Other host/listing cases use intercepted fixtures. Ollama is not
+running in this setup: no real model download, GPU inference, public tunnel or
+production registry was exercised.
+
+Claude Opus 5 High supplied advice and final read-only review (both successful,
+nonempty `claude-opus-5` results). Review fixes tolerate a concurrently removed
+storage key, distinguish successful writes from failed rereads, handle unsupported
+origins without throwing from storage events, label the most recent Undo target,
+and place retry beside blocked model review. The saved-view count was already
+independent of directory availability. Unicode label isolation limits effects on
+surrounding UI; it does not establish identity or prevent deceptive names.
+
+The review's possible null-observation and unconfigured-origin exceptions were
+checked against the wider sources: `InternetSharing` initializes its observation
+and only notifies non-null events; `DirectoryClient.exchange` rejects an
+unconfigured client before provenance can dereference its origin. Backend origin
+validation already rejects `localhost`, IPv6 HTTP and non-root URLs. Concurrent
+owner directory reads remain deliberately bounded to one, so another tab can see
+a failed check and retry; that is not proof the registry or host is offline.
+
+Screenshots, test/build logs, reviewer output and private-display evidence are
+retained under `test-results/saved-hosts/`. The verified Sway 1.12/pixman compositor
+runs with private sockets and devices; its PID and runtime were confirmed absent
+after testing. Test-owned gateway, web and registry services are stopped at the end
+of the cycle. No remote push or deployment is part of this change.

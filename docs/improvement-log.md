@@ -1,5 +1,29 @@
 # Autonomous improvement log
 
+## Saved hosts and returning clients
+
+Clients can explicitly save a host in the directory website or owner workspace,
+then return through Saved hosts after a reload. Saves retain only installation
+IDs and remembered host/model names, scoped to the exact registry and browser
+origin. Missing listings remain visible; failed checks and expired listings cannot
+provide an open link. Changed models require explicit acknowledgement before
+opening the current listing. No address, credential or conversation is persisted.
+
+Claude Opus 5 High supplied independent advice and a final read-only review. The
+implementation uses one storage key per host, preserves the action actually shown
+when another tab writes, and makes the last removed host explicit beside Undo.
+Review fixes distinguish successful writes with failed rereads, tolerate concurrent
+removal during enumeration, and place storage recovery beside blocked model review.
+Host-supplied labels are isolated for bidirectional text; they remain unverified.
+Gateway responses now identify their configured registry, preventing a configuration
+change from attaching one registry's saved identities to another registry's rows.
+An older gateway needs updating/restarting with this frontend.
+
+Validation and isolated visual evidence are recorded in [verification](verification.md).
+These saves do not synchronize accounts or browser origins, prove host/URL ownership,
+or restore credentials. The directory still requires explicit configuration and
+hosting; no default public registry or production tunnel was added.
+
 ## Starter models before an explicit download
 
 The download form now offers three dated, source-linked text-chat starters with

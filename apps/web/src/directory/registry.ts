@@ -1,3 +1,5 @@
+import { directoryOrigin } from "./saved-hosts";
+
 export interface Listing {
   id: string;
   hostLabel: string;
@@ -125,6 +127,7 @@ export async function readBoundedJson(response: Response, limit = 131_072): Prom
 export async function readDirectory(
   signal: AbortSignal,
   endpoint: "/registry/v1/listings" | "/api/directory/listings",
+  expectedRegistry?: string,
 ): Promise<DirectorySnapshot> {
   const response = await fetch(endpoint, {
     signal,
@@ -133,7 +136,29 @@ export async function readDirectory(
     redirect: "error",
     headers: { Accept: "application/json" },
   });
-  const snapshot = parseDirectory(await readBoundedJson(response));
+  const data = await readBoundedJson(response);
+  if (endpoint === "/api/directory/listings") {
+    try {
+      if (
+        !expectedRegistry ||
+        !data ||
+        typeof data !== "object" ||
+        !("registryUrl" in data) ||
+        typeof data.registryUrl !== "string" ||
+        directoryOrigin(data.registryUrl) !== directoryOrigin(expectedRegistry)
+      )
+        throw new DirectorySourceError();
+    } catch {
+      throw new DirectorySourceError();
+    }
+  }
+  const snapshot = parseDirectory(data);
   if (!snapshot) throw new Error("Unsupported directory response");
   return snapshot;
+}
+
+export class DirectorySourceError extends Error {
+  constructor() {
+    super("Directory source changed or gateway requires an update");
+  }
 }
