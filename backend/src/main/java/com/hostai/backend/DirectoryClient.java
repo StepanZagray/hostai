@@ -86,7 +86,7 @@ final class DirectoryClient {
     }
 
     Listings listings() {
-        var root = exchange("/registry/v1/listings", null, MAX_RESPONSE, () -> false, deadline());
+        var root = exchange("/registry/v2/listings", null, MAX_RESPONSE, () -> false, deadline());
         try {
             exact(root, "version", "servedAt", "listings");
             version(root);
@@ -96,16 +96,19 @@ final class DirectoryClient {
             var result = new ArrayList<Entry>();
             var ids = new HashSet<String>();
             for (var item : items) {
-                exact(item, "id", "hostLabel", "model", "guestUrl", "updatedAt", "expiresAt", "invitationRequired");
+                exact(item, "id", "hostLabel", "model", "guestUrl", "updatedAt", "expiresAt", "invitationRequired", "requestsAccepted");
                 String id = identityId(item.get("id"));
                 if (!ids.add(id)) throw new Failure();
                 Listing listing = listing(string(item.get("hostLabel")), string(item.get("model")), string(item.get("guestUrl")));
                 if (!item.get("invitationRequired").isBoolean() || !item.get("invitationRequired").booleanValue()) throw new Failure();
                 long updated = timestamp(item.get("updatedAt")), expires = timestamp(item.get("expiresAt"));
                 if (expires - updated != TTL_MILLIS || updated > servedAt || servedAt - updated > 900_000) throw new Failure();
-                result.add(new Entry(id, listing.hostLabel(), listing.model(), listing.guestUrl(), updated, expires, true));
+                var requests = item.get("requestsAccepted");
+                if (!requests.isNull() && !requests.isBoolean()) throw new Failure();
+                result.add(new Entry(id, listing.hostLabel(), listing.model(), listing.guestUrl(), updated, expires, true,
+                        requests.isNull() ? null : requests.booleanValue()));
             }
-            return new Listings(1, servedAt, List.copyOf(result));
+            return new Listings(2, servedAt, List.copyOf(result));
         } catch (RuntimeException ignored) { throw new Failure(); }
     }
 
@@ -114,7 +117,7 @@ final class DirectoryClient {
         check(cancelled);
         String publicKey = identity.publicKey();
         String id = identity.id();
-        var challenge = exchange("/registry/v1/challenges", JSON.writeValueAsBytes(
+        var challenge = exchange("/registry/v2/challenges", JSON.writeValueAsBytes(
                 JSON.createObjectNode().put("publicKey", publicKey)), 2048, cancelled, deadline);
         String nonce;
         try {
@@ -129,7 +132,7 @@ final class DirectoryClient {
             if (decoded.length != 32 || !BASE64.encodeToString(decoded).equals(nonce)) throw new Failure();
         } catch (RuntimeException ignored) { throw new Failure(); }
         check(cancelled);
-        var payload = JSON.createObjectNode().put("version", 1)
+        var payload = JSON.createObjectNode().put("version", 2)
                 .put("audience", configuration.origin().toString()).put("nonce", nonce)
                 .put("operation", listing == null ? "withdraw" : "publish");
         if (listing == null) payload.putNull("listing");
@@ -137,7 +140,7 @@ final class DirectoryClient {
         byte[] bytes = JSON.writeValueAsBytes(payload);
         String signature = identity.sign(bytes);
         check(cancelled);
-        var result = exchange("/registry/v1/listings", JSON.writeValueAsBytes(JSON.createObjectNode()
+        var result = exchange("/registry/v2/listings", JSON.writeValueAsBytes(JSON.createObjectNode()
                 .put("publicKey", publicKey).put("payload", BASE64.encodeToString(bytes)).put("signature", signature)),
                 2048, cancelled, deadline);
         try {
@@ -208,7 +211,7 @@ final class DirectoryClient {
                 || !model.matches("[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9_][A-Za-z0-9_.-]*")
                 || model.endsWith(":cloud") || model.endsWith("-cloud")
                 || guestUrl == null || !guestUrl.matches("https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.trycloudflare\\.com/")) throw new Failure();
-        return new Listing(label, model, guestUrl, true);
+        return new Listing(label, model, guestUrl, true, false);
     }
 
     private static boolean printable(String value, int maximum) {
@@ -222,7 +225,7 @@ final class DirectoryClient {
         if (node == null || !node.isObject() || !new HashSet<>(node.propertyNames()).equals(Set.of(fields))) throw new Failure();
     }
     private static void version(JsonNode node) {
-        if (!node.get("version").isInt() || node.get("version").intValue() != 1) throw new Failure();
+        if (!node.get("version").isInt() || node.get("version").intValue() != 2) throw new Failure();
     }
     private static long timestamp(JsonNode node) {
         if (node == null || !node.isIntegralNumber() || !node.canConvertToLong()
@@ -239,8 +242,14 @@ final class DirectoryClient {
         Failure() { this(UNAVAILABLE); }
         private Failure(String message) { super(message, null, false, false); }
     }
-    record Listing(String hostLabel, String model, String guestUrl, boolean invitationRequired) {}
-    record Entry(String id, String hostLabel, String model, String guestUrl, long updatedAt, long expiresAt, boolean invitationRequired) {}
+    record Listing(String hostLabel, String model, String guestUrl, boolean invitationRequired, boolean requestsAccepted) {
+        Listing withRequestsAccepted(boolean accepted) {
+            return new Listing(hostLabel, model, guestUrl, invitationRequired, accepted);
+        }
+    }
+    @JsonInclude(JsonInclude.Include.ALWAYS)
+    record Entry(String id, String hostLabel, String model, String guestUrl, long updatedAt, long expiresAt,
+                 boolean invitationRequired, Boolean requestsAccepted) {}
     record Listings(int version, long servedAt, List<Entry> listings) {}
     @JsonInclude(JsonInclude.Include.ALWAYS)
     record Mutation(String id, Long updatedAt, Long expiresAt) {}

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { Button, muted, panel } from "../components/ui";
-import { fresh } from "./registry";
+import { fresh, type Listing } from "./registry";
 import { useDirectory } from "./use-directory";
 import { useSavedHosts } from "./use-saved-hosts";
 import { DirectoryListing } from "./directory-listing";
@@ -17,24 +17,31 @@ export function DirectoryPage({
   const saves = useSavedHosts(registryOrigin);
   const [savedOnly, setSavedOnly] = useState(false);
   const { snapshot, loading, error, sourceMismatch, elapsed, refresh, currentElapsed } =
-    useDirectory(embedded ? "/api/directory/listings" : "/registry/v1/listings", registryOrigin);
+    useDirectory(embedded ? "/api/directory/listings" : "/registry/v2/listings", registryOrigin);
   const Root = embedded ? "div" : "main";
   const [search, setSearch] = useState("");
   const [includeExpired, setIncludeExpired] = useState(false);
+  const [requestsOnly, setRequestsOnly] = useState(false);
   const query = search.trim().toLowerCase();
   const listings = snapshot?.listings ?? [];
+  const requestsMatch = (item?: Listing) =>
+    !requestsOnly ||
+    (!!item && !!snapshot && item.requestsAccepted === true && fresh(item, snapshot, elapsed));
   const matching = listings.filter(
     (item) =>
       (includeExpired || fresh(item, snapshot!, elapsed)) &&
+      requestsMatch(item) &&
       `${item.model} ${item.hostLabel}`.toLowerCase().includes(query),
   );
   const rows = savedOnly
     ? saves.entries
         .map((saved) => ({ saved, listing: listings.find((item) => item.id === saved.id) }))
-        .filter(({ saved, listing }) =>
-          `${saved.model} ${saved.hostLabel} ${listing?.model ?? ""} ${listing?.hostLabel ?? ""}`
-            .toLowerCase()
-            .includes(query),
+        .filter(
+          ({ saved, listing }) =>
+            requestsMatch(listing) &&
+            `${saved.model} ${saved.hostLabel} ${listing?.model ?? ""} ${listing?.hostLabel ?? ""}`
+              .toLowerCase()
+              .includes(query),
         )
     : matching.map((listing) => ({
         listing,
@@ -187,6 +194,22 @@ export function DirectoryPage({
           />
         </label>
         {search && <Button onClick={() => setSearch("")}>Clear search</Button>}
+        <label
+          className={css({
+            display: "flex",
+            alignItems: "center",
+            gap: "2",
+            fontSize: "sm",
+            minH: "44px",
+          })}
+        >
+          <input
+            type="checkbox"
+            checked={requestsOnly}
+            onChange={(event) => setRequestsOnly(event.target.checked)}
+          />
+          Requests reported open
+        </label>
         {!savedOnly && (
           <label
             className={css({
@@ -250,16 +273,18 @@ export function DirectoryPage({
             <h2 className={css({ fontSize: "lg", fontWeight: 700 })}>
               {saves.error
                 ? "Saved hosts unavailable"
-                : query
+                : query || requestsOnly
                   ? "No matching saved hosts"
                   : "No saved hosts yet"}
             </h2>
             <p className={muted}>
               {saves.error
                 ? "Use Check saved hosts above to retry browser storage. Your saved records have not been reset."
-                : query
-                  ? "Search remembered or current model and host names."
-                  : "Use Save host on a listing to find that installation again. Saving does not grant access or verify its identity."}
+                : requestsOnly
+                  ? "No saved host matches these filters with requests reported open. Clear the request filter to see saved hosts with closed, expired or unreported request status."
+                  : query
+                    ? "Search remembered or current model and host names."
+                    : "Use Save host on a listing to find that installation again. Saving does not grant access or verify its identity."}
             </p>
           </div>
         ) : !savedOnly && !snapshot && loading ? (
@@ -275,18 +300,22 @@ export function DirectoryPage({
         ) : !savedOnly && matching.length === 0 ? (
           <div className={css({ p: { base: "5", md: "8" } })}>
             <h2 className={css({ fontSize: "lg", fontWeight: 700 })}>
-              {query
-                ? "No matching hosts"
-                : hasExpired && !includeExpired
-                  ? "No recently updated hosts"
-                  : "No hosts are listed yet"}
+              {requestsOnly
+                ? "No matching hosts report requests open"
+                : query
+                  ? "No matching hosts"
+                  : hasExpired && !includeExpired
+                    ? "No recently updated hosts"
+                    : "No hosts are listed yet"}
             </h2>
             <p className={muted}>
-              {query
-                ? "Try a model name or part of the host’s name."
-                : hasExpired && !includeExpired
-                  ? "Earlier listings have expired. Include expired listings to see them, or refresh later."
-                  : "Hosts appear here after they explicitly publish a listing. An empty directory does not mean your connection is broken."}
+              {requestsOnly
+                ? "Clear the request filter to see hosts with closed, expired or unreported request status, or refresh later. Existing invitation keys may still work when requests are closed."
+                : query
+                  ? "Try a model name or part of the host’s name."
+                  : hasExpired && !includeExpired
+                    ? "Earlier listings have expired. Include expired listings to see them, or refresh later."
+                    : "Hosts appear here after they explicitly publish a listing. An empty directory does not mean your connection is broken."}
             </p>
           </div>
         ) : (
@@ -314,7 +343,8 @@ export function DirectoryPage({
       <footer className={`${muted} ${css({ mt: "5", fontSize: "xs" })}`}>
         Listings come only from this directory. Updates expire after 90 seconds; expired listings
         remain for up to 15 minutes. Your search stays in this page. Browsing does not contact the
-        listed hosts.
+        listed hosts. Request status is the host’s report at its last update, not a live check or an
+        approval. Older hosts may not report it.
       </footer>
     </Root>
   );

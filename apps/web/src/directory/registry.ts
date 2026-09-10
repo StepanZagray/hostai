@@ -8,6 +8,7 @@ export interface Listing {
   updatedAt: number;
   expiresAt: number;
   invitationRequired: true;
+  requestsAccepted?: boolean | null;
 }
 export interface DirectorySnapshot {
   servedAt: number;
@@ -49,7 +50,7 @@ export function parseDirectory(value: unknown): DirectorySnapshot | null {
   if (!value || typeof value !== "object") return null;
   const data = value as Record<string, unknown>;
   if (
-    data.version !== 1 ||
+    (data.version !== 1 && data.version !== 2) ||
     !timestamp(data.servedAt) ||
     !Array.isArray(data.listings) ||
     data.listings.length > 100
@@ -71,7 +72,10 @@ export function parseDirectory(value: unknown): DirectorySnapshot | null {
       !timestamp(item.expiresAt) ||
       item.updatedAt > data.servedAt ||
       item.expiresAt !== item.updatedAt + 90_000 ||
-      item.invitationRequired !== true
+      item.invitationRequired !== true ||
+      (data.version === 2 &&
+        item.requestsAccepted !== null &&
+        typeof item.requestsAccepted !== "boolean")
     )
       return null;
     ids.add(item.id);
@@ -83,6 +87,7 @@ export function parseDirectory(value: unknown): DirectorySnapshot | null {
       updatedAt: item.updatedAt,
       expiresAt: item.expiresAt,
       invitationRequired: true,
+      ...(data.version === 2 ? { requestsAccepted: item.requestsAccepted as boolean | null } : {}),
     });
   }
   return { servedAt: data.servedAt, listings };
@@ -126,7 +131,7 @@ export async function readBoundedJson(response: Response, limit = 131_072): Prom
 
 export async function readDirectory(
   signal: AbortSignal,
-  endpoint: "/registry/v1/listings" | "/api/directory/listings",
+  endpoint: "/registry/v2/listings" | "/api/directory/listings",
   expectedRegistry?: string,
 ): Promise<DirectorySnapshot> {
   const response = await fetch(endpoint, {

@@ -43,24 +43,36 @@ class DirectoryIntegrationTest {
             transport.emit("live", 1, DirectoryClientTest.GUEST);
             String access = temporary.resolve("access").toString();
             String identity;
+            var accepts = new java.util.concurrent.atomic.AtomicBoolean(false);
             try (var directory = new DirectoryPublication(configuration,
-                    () -> new DirectoryPublication.Shared(true, "Cross-stack fixture", "fixture:small"),
+                    () -> new DirectoryPublication.Shared(true, "Cross-stack fixture", "fixture:small", accepts.get()),
                     transport.internet, () -> DirectoryPublication.openIdentity(access))) {
                 assertThat(client.listings().listings()).isEmpty();
                 directory.start();
                 listed(directory);
                 identity = directory.status().identityId();
+                assertThat(directory.status().reportedRequestsAccepted()).isFalse();
                 assertThat(client.listings().listings()).singleElement().satisfies(row -> {
                     assertThat(row.id()).isEqualTo(identity);
                     assertThat(row.hostLabel()).isEqualTo("Cross-stack fixture");
                     assertThat(row.guestUrl()).isEqualTo(DirectoryClientTest.GUEST);
                     assertThat(row.invitationRequired()).isTrue();
+                    assertThat(row.requestsAccepted()).isFalse();
                 });
+                accepts.set(true);
                 long first = directory.status().updatedAt();
                 transport.emit("live", 1, DirectoryClientTest.GUEST);
                 await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(directory.status().updatedAt()).isGreaterThan(first));
+                assertThat(client.listings().listings()).singleElement().satisfies(row -> assertThat(row.requestsAccepted()).isTrue());
+                assertThat(directory.status().reportedRequestsAccepted()).isTrue();
+                accepts.set(false);
+                transport.emit("live", 1, DirectoryClientTest.GUEST);
+                await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
+                        assertThat(client.listings().listings()).singleElement().satisfies(row -> assertThat(row.requestsAccepted()).isFalse()));
+                await().atMost(Duration.ofSeconds(5)).untilAsserted(() -> assertThat(directory.status().reportedRequestsAccepted()).isFalse());
                 directory.stop();
                 off(directory);
+                assertThat(directory.status().reportedRequestsAccepted()).isNull();
                 assertThat(client.listings().listings()).isEmpty();
                 assertThat(transport.internet.observation().status().state()).isEqualTo("live");
                 directory.start(); listed(directory);
@@ -71,7 +83,7 @@ class DirectoryIntegrationTest {
             }
             // Reopening retains the signing identity and begins with no publication intent.
             try (var directory = new DirectoryPublication(configuration,
-                    () -> new DirectoryPublication.Shared(true, "Cross-stack fixture", "fixture:small"),
+                    () -> new DirectoryPublication.Shared(true, "Cross-stack fixture", "fixture:small", accepts.get()),
                     transport.internet, () -> DirectoryPublication.openIdentity(access))) {
                 assertThat(directory.status().enabled()).isFalse();
                 assertThat(client.listings().listings()).isEmpty();

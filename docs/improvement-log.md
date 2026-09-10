@@ -1,5 +1,37 @@
 # Autonomous improvement log
 
+## Report request availability before opening a host
+
+Claude Opus 5 High identified the inability to distinguish hosts accepting requests
+from hosts requiring an existing invitation. Directory v2 now signs a boolean
+request-availability report with each publication heartbeat. It is sampled from
+SharingService's actual request availability, including grant storage capacity,
+and does not enable intake or promise approval/inference capacity.
+
+The directory distinguishes reported open, closed and unknown and filters both
+all listings and saved hosts without probing guest endpoints. Clearing the filter
+reveals hidden bookmarks and closed/unknown reports again. Empty states explain
+recovery; existing-key access remains possible when intake is closed. Publisher
+consent copy includes the new public field.
+
+V1 routes retain exact schemas and shared admission/nonces; old publications become
+unknown in v2, and legacy republishing clears an earlier report. Registry storage
+reads documents 1 and 2 and writes 2, including new stores. Update the registry
+before new clients; older registry binaries cannot reopen document 2. No deployed
+service or user database was changed. See directory.md for the upgrade boundary.
+
+The follow-up Opus review tightened expiry handling so the request filter admits
+only unexpired reports in both views, including when expired listings are otherwise
+included. Closed-report copy now refers to an existing key, without implying the
+host can issue another at full capacity. The owner panel shows its last confirmed
+published report; successful publication updates it atomically with timestamps,
+and confirmed removal or an unknown publication outcome clears it. A direct
+controller-response test confirms legacy null status survives Java serialization.
+
+The advisor also identified request-name loss after details failures and model
+review tied to bookmark-storage success. Those remain follow-up work; this cycle
+addresses informed discovery end to end.
+
 ## Owner retry guidance across models and navigation
 
 Playground now honors valid Retry-After headers on 429/503 responses. One elapsed-time

@@ -68,9 +68,9 @@ it("reads only the directory endpoint without credentials or redirects", async (
   const fetch = vi.fn(async () => Response.json(snapshot()));
   vi.stubGlobal("fetch", fetch);
   const signal = new AbortController().signal;
-  expect(await readDirectory(signal, "/registry/v1/listings")).toEqual(parseDirectory(snapshot()));
+  expect(await readDirectory(signal, "/registry/v2/listings")).toEqual(parseDirectory(snapshot()));
   expect(fetch).toHaveBeenCalledWith(
-    "/registry/v1/listings",
+    "/registry/v2/listings",
     expect.objectContaining({ signal, cache: "no-store", credentials: "omit", redirect: "error" }),
   );
 });
@@ -107,7 +107,7 @@ it.each([
     vi.fn(async () => create()),
   );
   await expect(
-    readDirectory(new AbortController().signal, "/registry/v1/listings"),
+    readDirectory(new AbortController().signal, "/registry/v2/listings"),
   ).rejects.toThrow();
 });
 
@@ -127,4 +127,23 @@ it("binds owner-proxied listings to the expected registry and refuses missing or
     fetch.mockImplementation(async () => Response.json({ ...snapshot(), registryUrl }));
     await expect(readDirectory(signal, "/api/directory/listings", expected)).rejects.toThrow();
   }
+});
+
+it("v2 distinguishes reported open, closed and unreported request status without trusting v1 extras", () => {
+  for (const requestsAccepted of [true, false, null]) {
+    expect(
+      parseDirectory({ ...snapshot(), version: 2, listings: [{ ...listing(), requestsAccepted }] })
+        ?.listings[0].requestsAccepted,
+    ).toBe(requestsAccepted);
+  }
+  for (const requestsAccepted of [undefined, "true", 1, {}, []]) {
+    expect(
+      parseDirectory({ ...snapshot(), version: 2, listings: [{ ...listing(), requestsAccepted }] }),
+    ).toBeNull();
+  }
+  expect(
+    parseDirectory({ ...snapshot(), listings: [{ ...listing(), requestsAccepted: true }] })
+      ?.listings[0].requestsAccepted,
+  ).toBeUndefined();
+  expect(parseDirectory({ ...snapshot(), version: 3 })).toBeNull();
 });

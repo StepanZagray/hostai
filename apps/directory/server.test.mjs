@@ -21,8 +21,8 @@ function owner() {
   const der = pair.publicKey.export({ format: 'der', type: 'spki' });
   return { ...pair, publicKey: der.toString('base64url'), id: createHash('sha256').update(der).digest('hex') };
 }
-function proof(owner, nonce, audience, value = listing, operation = 'publish') {
-  const bytes = Buffer.from(JSON.stringify({ version: 1, audience, nonce, operation, listing: value }));
+function proof(owner, nonce, audience, value = listing, operation = 'publish', version = 1) {
+  const bytes = Buffer.from(JSON.stringify({ version, audience, nonce, operation, listing: value }));
   return { publicKey: owner.publicKey, payload: bytes.toString('base64url'), signature: sign(null, bytes, owner.privateKey).toString('base64url') };
 }
 async function fixture(t, options = generous) {
@@ -138,6 +138,63 @@ test('actual HTTP signed publication, signature/id isolation, replay, nonce expi
     { version: 1, id: a.id, state: 'off', updatedAt: null, expiresAt: null });
   await f.restart();
   assert.deepEqual((await f.call('/registry/v1/listings')).json.listings, []);
+});
+
+test('actual v2 HTTP publication replaces capability while v1 reads remain exact through restart', async t => {
+  const f = await fixture(t);
+  const a = owner();
+  const config = await f.call('/registry/v2/config');
+  assert.equal(config.status, 200);
+  assert.deepEqual(config.json, { version: 2, registration: 'open', invitationRequired: true });
+  for (const requestsAccepted of [true, false, null]) {
+    const version = requestsAccepted === null ? 1 : 2;
+    const challenge = await f.call(`/registry/v${version}/challenges`,
+      { method: 'POST', json: { publicKey: a.publicKey } });
+    assert.equal(challenge.status, 200);
+    assert.deepEqual(challenge.json,
+      { version, nonce: challenge.json.nonce, expiresAt: f.now + CHALLENGE_MS });
+    const value = { ...listing, ...(version === 2 ? { requestsAccepted } : {}) };
+    const response = await f.call(`/registry/v${version}/listings`,
+      { method: 'POST', json: proof(a, challenge.json.nonce, f.origin, value, 'publish', version) });
+    assert.equal(response.status, 200, response.text);
+    assert.deepEqual(response.json,
+      { version, id: a.id, state: 'listed', updatedAt: f.now, expiresAt: f.now + FRESH_MS });
+    await f.restart();
+    const row = { id: a.id, ...listing, updatedAt: f.now, expiresAt: f.now + FRESH_MS };
+    const current = await f.call('/registry/v2/listings');
+    assert.equal(current.status, 200);
+    assert.deepEqual(current.json, { version: 2, servedAt: f.now,
+      listings: [{ ...row, requestsAccepted }] });
+    const legacy = await f.call('/registry/v1/listings');
+    assert.equal(legacy.status, 200);
+    assert.deepEqual(legacy.json, { version: 1, servedAt: f.now, listings: [row] });
+    f.advance(1000);
+  }
+});
+
+test('HTTP rejects signed version/path mismatches, malformed capability and capability tampering', async t => {
+  const f = await fixture(t);
+  const a = owner();
+  const nonce = await f.nonce(a);
+  const current = proof(a, nonce, f.origin, { ...listing, requestsAccepted: true }, 'publish', 2);
+  for (const [version, json] of [[1, current], [2, proof(a, nonce, f.origin)],
+    [1, proof(a, nonce, f.origin, { ...listing, requestsAccepted: true })],
+    [2, proof(a, nonce, f.origin, listing, 'publish', 2)],
+    [2, proof(a, nonce, f.origin, { ...listing, requestsAccepted: 'false' }, 'publish', 2)]]) {
+    const response = await f.call(`/registry/v${version}/listings`, { method: 'POST', json });
+    assert.equal(response.status, 400, response.text);
+    assert.deepEqual(response.json, { version, error: 'malformed_request' });
+  }
+  const payload = JSON.parse(Buffer.from(current.payload, 'base64url').toString());
+  payload.listing.requestsAccepted = false;
+  const tampered = await f.call('/registry/v2/listings', { method: 'POST',
+    json: { ...current, payload: Buffer.from(JSON.stringify(payload)).toString('base64url') } });
+  assert.equal(tampered.status, 403);
+  assert.deepEqual(tampered.json, { version: 2, error: 'invalid_proof' });
+  assert.deepEqual((await f.call('/registry/v2/listings')).json.listings, []);
+  const published = await f.call('/registry/v2/listings', { method: 'POST', json: current });
+  assert.equal(published.status, 200, published.text);
+  assert.equal((await f.call('/registry/v2/listings')).json.listings[0].requestsAccepted, true);
 });
 
 test('HTTP unsigned challenges cannot replace a pending signed update or extend its expiry', async t => {

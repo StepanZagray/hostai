@@ -142,6 +142,8 @@ export function createDirectoryServer({ store, publicOrigin, allowLoopbackDevelo
     deadline.unref();
     res.once('close', () => clearTimeout(deadline));
     void (async () => {
+      const version = req.url?.startsWith('/registry/v2/') ? 2 : 1;
+      const api = `/registry/v${version}`;
       try {
         const expected = expectedOrigin();
         if (req.headersDistinct.host?.length !== 1 || req.headers.host !== expected.host
@@ -156,25 +158,25 @@ export function createDirectoryServer({ store, publicOrigin, allowLoopbackDevelo
         if (req.method === 'GET') {
           if (req.headers['transfer-encoding'] !== undefined
               || (req.headers['content-length'] !== undefined && req.headers['content-length'] !== '0')) throw new ProtocolError(400, 'malformed_request');
-          if (req.url === '/registry/v1/listings') return send(res, 200, protocol.list());
-          if (req.url === '/registry/v1/config') {
+          if (req.url === `${api}/listings`) return send(res, 200, protocol.list(version));
+          if (req.url === `${api}/config`) {
             protocol.assertAvailable();
-            return send(res, 200, { version: 1, registration: 'open', invitationRequired: true });
+            return send(res, 200, { version, registration: 'open', invitationRequired: true });
           }
           const file = await staticFile(root, req.url);
           return send(res, 200, file.bytes, { 'Content-Type': file.contentType });
         }
-        if (req.method === 'POST' && ['/registry/v1/challenges', '/registry/v1/listings'].includes(req.url)) {
+        if (req.method === 'POST' && [`${api}/challenges`, `${api}/listings`].includes(req.url)) {
           const parsed = await body(req);
           // IncomingMessage may auto-destroy after a fully read body while its
           // socket is still healthy. Only a closed transport cancels mutation.
           if (req.socket.destroyed || res.destroyed) return;
-          return send(res, 200, req.url.endsWith('/challenges') ? protocol.challenge(parsed) : protocol.mutate(parsed));
+          return send(res, 200, req.url.endsWith('/challenges') ? protocol.challenge(parsed, version) : protocol.mutate(parsed, version));
         }
         throw new ProtocolError(404, 'not_found');
       } catch (error) {
         const failure = error instanceof ProtocolError ? error : new ProtocolError(503, 'service_unavailable');
-        send(res, failure.status, { version: 1, error: failure.code },
+        send(res, failure.status, { version, error: failure.code },
           failure.status === 429 ? { 'Retry-After': String(failure.retryAfter) } : {});
       }
     })();

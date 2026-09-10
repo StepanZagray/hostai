@@ -70,6 +70,7 @@ class DirectoryClientTest {
                 assertThat(entry.model()).isEqualTo("fixture:small");
                 assertThat(entry.guestUrl()).isEqualTo(GUEST);
                 assertThat(entry.invitationRequired()).isTrue();
+                assertThat(entry.requestsAccepted()).isFalse();
             });
             assertThat(client.mutate(identity, null, () -> false).updatedAt()).isNull();
             assertThat(client.listings().listings()).isEmpty();
@@ -81,16 +82,16 @@ class DirectoryClientTest {
 
     @Test void listingsRejectErrorsRedirectsWrongTypesOversizeAndInvalidSchemasWithoutEcho() throws Exception {
         try (var fixture = new Fixture()) {
-            String valid = "{\"version\":1,\"servedAt\":1,\"listings\":[]}";
+            String valid = "{\"version\":2,\"servedAt\":1,\"listings\":[]}";
             List<Reply> invalid = List.of(new Reply(503, "application/json", "secret-registry-error"),
                     new Reply(302, "application/json", valid), new Reply(200, "text/html", valid),
                     new Reply(200, "application/problem+json", valid), new Reply(200, "application/json; charset=UTF-16", valid),
                     new Reply(200, "application/json", "x".repeat(DirectoryClient.MAX_RESPONSE + 1)),
-                    new Reply(200, "application/json", "{\"version\":1,\"servedAt\":1.5,\"listings\":[]}"),
-                    new Reply(200, "application/json", "{\"version\":1,\"version\":1,\"servedAt\":1,\"listings\":[]}"),
+                    new Reply(200, "application/json", "{\"version\":2,\"servedAt\":1.5,\"listings\":[]}"),
+                    new Reply(200, "application/json", "{\"version\":2,\"version\":2,\"servedAt\":1,\"listings\":[]}"),
                     new Reply(200, "application/json", valid + valid),
-                    new Reply(200, "application/json", "{\"version\":1,\"servedAt\":1,\"listings\":[],\"secret\":\"raw\"}"),
-                    new Reply(200, "application/json", "{\"version\":1,\"servedAt\":1,\"listings\":[null]}"),
+                    new Reply(200, "application/json", "{\"version\":2,\"servedAt\":1,\"listings\":[],\"secret\":\"raw\"}"),
+                    new Reply(200, "application/json", "{\"version\":2,\"servedAt\":1,\"listings\":[null]}"),
                     new Reply(200, "application/json", "{" + "\"secret\":".repeat(10)));
             var client = fixture.client();
             for (Reply reply : invalid) {
@@ -98,7 +99,7 @@ class DirectoryClientTest {
                 assertThatThrownBy(client::listings).isInstanceOf(DirectoryClient.Failure.class)
                         .hasMessage(DirectoryClient.UNAVAILABLE).hasCause(null);
             }
-            assertThat(fixture.paths).allMatch(path -> path.equals("GET /registry/v1/listings"));
+            assertThat(fixture.paths).allMatch(path -> path.equals("GET /registry/v2/listings"));
             assertThat(fixture.paths).hasSize(invalid.size()); // No redirects or retries.
         }
     }
@@ -135,12 +136,18 @@ class DirectoryClientTest {
             ((tools.jackson.databind.node.ObjectNode) noInvitation.get("listings").get(0)).put("invitationRequired", false);
             fixture.override = request -> Reply.json(noInvitation);
             assertThatThrownBy(client::listings).hasMessage(DirectoryClient.UNAVAILABLE);
-            for (String field : List.of("id", "hostLabel", "model", "guestUrl", "invitationRequired", "updatedAt", "expiresAt")) {
+            for (String field : List.of("id", "hostLabel", "model", "guestUrl", "invitationRequired", "updatedAt", "expiresAt", "requestsAccepted")) {
                 var bad = good.deepCopy();
                 ((tools.jackson.databind.node.ObjectNode) bad.get("listings").get(0)).put(field, "invalid\nfield");
                 fixture.override = request -> Reply.json(bad);
                 assertThatThrownBy(client::listings).hasMessage(DirectoryClient.UNAVAILABLE);
             }
+            var legacy = good.deepCopy();
+            ((tools.jackson.databind.node.ObjectNode) legacy.get("listings").get(0)).putNull("requestsAccepted");
+            fixture.override = request -> Reply.json(legacy);
+            assertThat(client.listings().listings()).singleElement().satisfies(row -> assertThat(row.requestsAccepted()).isNull());
+            ((tools.jackson.databind.node.ObjectNode) legacy.get("listings").get(0)).remove("requestsAccepted");
+            assertThatThrownBy(client::listings).hasMessage(DirectoryClient.UNAVAILABLE);
             var duplicate = good.deepCopy();
             var array = (tools.jackson.databind.node.ArrayNode) duplicate.get("listings");
             array.add(array.get(0).deepCopy());
@@ -164,10 +171,10 @@ class DirectoryClientTest {
 
     @Test void invalidChallengesCannotReachMutationAndCancellationDoesNotReplay() throws Exception {
         try (var fixture = new Fixture(); var identity = new DirectoryIdentity(temporary.resolve("identity"))) {
-            fixture.override = request -> request.path().equals("/registry/v1/challenges")
-                    ? new Reply(200, "application/json", "{\"version\":1,\"nonce\":\"secret\",\"expiresAt\":1}") : null;
+            fixture.override = request -> request.path().equals("/registry/v2/challenges")
+                    ? new Reply(200, "application/json", "{\"version\":2,\"nonce\":\"secret\",\"expiresAt\":1}") : null;
             assertThatThrownBy(() -> fixture.client().mutate(identity, LISTING, () -> false)).hasMessage(DirectoryClient.UNAVAILABLE);
-            assertThat(fixture.paths).containsExactly("POST /registry/v1/challenges");
+            assertThat(fixture.paths).containsExactly("POST /registry/v2/challenges");
             var cancelled = new AtomicBoolean();
             fixture.override = request -> { cancelled.set(true); return null; };
             assertThatThrownBy(() -> fixture.client().mutate(identity, LISTING, cancelled::get))
@@ -178,8 +185,8 @@ class DirectoryClientTest {
 
     @Test void mutationReplyCannotChangeTheRegistryTtl() throws Exception {
         try (var fixture = new Fixture(); var identity = new DirectoryIdentity(temporary.resolve("identity"))) {
-            fixture.override = request -> request.path().equals("/registry/v1/listings")
-                    ? Reply.json(DirectoryClient.JSON.createObjectNode().put("version", 1).put("id", identity.id())
+            fixture.override = request -> request.path().equals("/registry/v2/listings")
+                    ? Reply.json(DirectoryClient.JSON.createObjectNode().put("version", 2).put("id", identity.id())
                         .put("state", "listed").put("updatedAt", 1_800_000_000_000L).put("expiresAt", 1_800_000_090_001L)) : null;
             assertThatThrownBy(() -> fixture.client().mutate(identity, LISTING, () -> false))
                     .hasMessage(DirectoryClient.UNAVAILABLE);
@@ -191,7 +198,7 @@ class DirectoryClientTest {
             fixture.override = request -> new Reply(429, "text/plain", "private-registry-error");
             assertThatThrownBy(() -> fixture.client().mutate(identity, LISTING, () -> false))
                     .hasMessage(DirectoryClient.BUSY).hasCause(null);
-            assertThat(fixture.paths).containsExactly("POST /registry/v1/challenges");
+            assertThat(fixture.paths).containsExactly("POST /registry/v2/challenges");
         }
     }
 
@@ -201,13 +208,13 @@ class DirectoryClientTest {
             fixture.override = request -> {
                 try { release.await(8, TimeUnit.SECONDS); }
                 catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); }
-                return Reply.json(new DirectoryClient.Listings(1, System.currentTimeMillis(), List.of()));
+                return Reply.json(new DirectoryClient.Listings(2, System.currentTimeMillis(), List.of()));
             };
             long before = System.nanoTime();
             try {
                 assertThatThrownBy(() -> fixture.client().listings()).hasMessage(DirectoryClient.UNAVAILABLE);
                 assertThat(Duration.ofNanos(System.nanoTime() - before)).isLessThan(Duration.ofSeconds(6));
-                assertThat(fixture.paths).containsExactly("GET /registry/v1/listings");
+                assertThat(fixture.paths).containsExactly("GET /registry/v2/listings");
             } finally { release.countDown(); }
         }
     }
@@ -240,9 +247,16 @@ class DirectoryClientTest {
                 }
                 web.post().uri("/api/directory/stop").contentType(org.springframework.http.MediaType.APPLICATION_JSON)
                         .bodyValue("{}").exchange().expectStatus().isOk();
+                long published = fixture.clock.millis();
+                fixture.entry = new DirectoryClient.Entry("a".repeat(64), LISTING.hostLabel(), LISTING.model(),
+                        LISTING.guestUrl(), published, published + 90_000, true, null);
                 web.get().uri("/api/directory/listings?url=http://forbidden.invalid&query=secret").exchange()
-                        .expectStatus().isOk().expectBody().jsonPath("$.listings").isArray();
-                assertThat(fixture.paths).containsExactly("GET /registry/v1/listings");
+                        .expectStatus().isOk().expectBody().consumeWith(response -> {
+                            var row = DirectoryClient.JSON.readTree(response.getResponseBody()).get("listings").get(0);
+                            assertThat(row.get("requestsAccepted")).isNotNull();
+                            assertThat(row.get("requestsAccepted").isNull()).isTrue();
+                        });
+                assertThat(fixture.paths).containsExactly("GET /registry/v2/listings");
                 fixture.override = request -> new Reply(503, "text/plain", "secret-registry-error");
                 web.get().uri("/api/directory/listings").exchange().expectStatus().isEqualTo(503)
                         .expectHeader().valueEquals("Cache-Control", "no-store")
@@ -296,7 +310,7 @@ class DirectoryClientTest {
                 var request = new Request(method, path, bytes.length == 0 ? null : DirectoryClient.JSON.readTree(bytes));
                 Reply reply = override.apply(request);
                 if (reply == null) reply = protocol(request);
-                if (path.equals("/registry/v1/listings") && method.equals("POST") && request.body() != null
+                if (path.equals("/registry/v2/listings") && method.equals("POST") && request.body() != null
                         && DirectoryClient.JSON.readTree(Base64.getUrlDecoder().decode(request.body().get("payload").stringValue()))
                             .get("operation").stringValue().equals("publish") && publishEntered != null) {
                     publishEntered.countDown();
@@ -312,19 +326,19 @@ class DirectoryClientTest {
             finally { exchange.close(); }
         }
         private synchronized Reply protocol(Request request) throws Exception {
-            if (request.method().equals("GET") && request.path().equals("/registry/v1/listings"))
-                return Reply.json(new DirectoryClient.Listings(1, clock.millis(), entry == null ? List.of() : List.of(entry)));
+            if (request.method().equals("GET") && request.path().equals("/registry/v2/listings"))
+                return Reply.json(new DirectoryClient.Listings(2, clock.millis(), entry == null ? List.of() : List.of(entry)));
             JsonNode body = request.body();
-            if (request.path().equals("/registry/v1/challenges")) {
+            if (request.path().equals("/registry/v2/challenges")) {
                 exact(body, "publicKey");
                 nonceKey = body.get("publicKey").stringValue();
                 byte[] random = new byte[32]; new java.security.SecureRandom().nextBytes(random);
                 nonce = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
                 challenges.incrementAndGet();
-                return Reply.json(DirectoryClient.JSON.createObjectNode().put("version", 1).put("nonce", nonce)
+                return Reply.json(DirectoryClient.JSON.createObjectNode().put("version", 2).put("nonce", nonce)
                         .put("expiresAt", clock.millis() + 30_000));
             }
-            if (!request.path().equals("/registry/v1/listings") || !request.method().equals("POST")) throw new IllegalStateException();
+            if (!request.path().equals("/registry/v2/listings") || !request.method().equals("POST")) throw new IllegalStateException();
             exact(body, "publicKey", "payload", "signature");
             String publicKey = body.get("publicKey").stringValue();
             byte[] der = Base64.getUrlDecoder().decode(publicKey);
@@ -336,7 +350,7 @@ class DirectoryClientTest {
             if (!signature.verify(Base64.getUrlDecoder().decode(body.get("signature").stringValue()))) throw new IllegalStateException();
             var mutation = DirectoryClient.JSON.readTree(payload);
             exact(mutation, "version", "audience", "nonce", "operation", "listing");
-            if (mutation.get("version").intValue() != 1 || !publicKey.equals(nonceKey)
+            if (mutation.get("version").intValue() != 2 || !publicKey.equals(nonceKey)
                     || !mutation.get("audience").stringValue().equals(configuration().origin().toString())
                     || !mutation.get("nonce").stringValue().equals(nonce)) throw new IllegalStateException();
             nonce = null;
@@ -345,17 +359,17 @@ class DirectoryClientTest {
             long updated = clock.millis();
             if (operation.equals("publish")) {
                 var listing = mutation.get("listing");
-                exact(listing, "hostLabel", "model", "guestUrl", "invitationRequired");
-                if (!listing.get("invitationRequired").booleanValue()) throw new IllegalStateException();
+                exact(listing, "hostLabel", "model", "guestUrl", "invitationRequired", "requestsAccepted");
+                if (!listing.get("requestsAccepted").isBoolean() || !listing.get("invitationRequired").booleanValue()) throw new IllegalStateException();
                 DirectoryClient.Listing validated = DirectoryClient.listing(listing.get("hostLabel").stringValue(),
                         listing.get("model").stringValue(), listing.get("guestUrl").stringValue());
                 entry = new DirectoryClient.Entry(id, validated.hostLabel(), validated.model(), validated.guestUrl(),
-                        updated, updated + 90_000, true);
+                        updated, updated + 90_000, true, listing.get("requestsAccepted").booleanValue());
             } else if (operation.equals("withdraw") && mutation.get("listing").isNull()) {
                 if (failWithdraw) return new Reply(503, "application/json", "secret-withdraw-error");
                 entry = null;
             } else throw new IllegalStateException();
-            var result = DirectoryClient.JSON.createObjectNode().put("version", 1).put("id", id)
+            var result = DirectoryClient.JSON.createObjectNode().put("version", 2).put("id", id)
                     .put("state", entry == null ? "off" : "listed");
             if (entry == null) result.putNull("updatedAt").putNull("expiresAt");
             else result.put("updatedAt", entry.updatedAt()).put("expiresAt", entry.expiresAt());

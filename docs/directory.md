@@ -31,8 +31,8 @@ requirements are addressed.
    permission and active requests.
 
 Only the host name, one model, credential-free guest URL, stable installation ID,
-update/expiry times and the requirement for host permission appear in the directory.
-The version 1 wire field remains `invitationRequired: true`: clients always need a
+update/expiry times, requirement for host permission and reported request availability
+appear in the directory. `invitationRequired: true` means clients always need a
 key, whether privately supplied or obtained through host approval. Search
 stays in the browser and browsing does not contact listed hosts. Opening a guest
 page contacts that host and Cloudflare; Cloudflare terminates TLS and can see
@@ -52,6 +52,31 @@ Failed or uncertain removal is reported: a listing may remain fresh for up to
 90 seconds after its last update. Removing a listing never stops the tunnel or
 revokes a guest key. A failed refresh keeps previous search results visible but
 disables opening them until a successful refresh.
+
+## Find hosts accepting access requests
+
+**Requests reported open** filters both All listings and Saved hosts by the host's
+latest unexpired signed report, even if Include expired listings is selected.
+Rows distinguish open, closed and unreported request status.
+Closed requests do not invalidate existing invitation keys; opening the guest page
+still works when its listing is fresh. An empty filtered view explains how to see
+closed or unreported hosts again. Search and this filter never contact hosts.
+
+At each verified tunnel heartbeat, the publisher samples the request inbox's
+availability, including intake being enabled and room for another approved key.
+The report can become stale before its next heartbeat and remains only a report
+until the listing expires. The guest page checks current availability separately,
+and the host still decides whether to approve. The owner panel shows the last
+confirmed published report and explains that full key capacity can close requests
+while intake remains enabled. A failed or uncertain publication clears that report
+when its outcome is unknown. Publication neither enables intake
+nor promises spare inference capacity. Expired listings and failed directory checks
+retain the earlier report but disable opening as before.
+
+Older publishers do not supply this field. Version 2 directory reads represent
+these reports as `null`, never as open or closed. Unlisted saved hosts likewise have
+no current report. Filtering may hide them; clearing the filter restores the saved
+view without removing bookmarks.
 
 ## Return to saved hosts
 
@@ -96,8 +121,7 @@ The owner-proxied `/api/directory/listings` response now includes `registryUrl`,
 by the gateway from the same immutable configuration used to fetch that response.
 The embedded frontend rejects a missing or mismatched source and tells the owner to
 reload setup or update/restart the gateway. This prevents a restarted/reconfigured
-gateway from resolving old saves against another registry. The public registry wire
-protocol is unchanged; its standalone client fetches directly from its own origin.
+gateway from resolving old saves against another registry. The standalone client fetches version 2 listings directly from its own origin.
 
 ## Run the registry locally
 
@@ -136,7 +160,7 @@ For an operator-provided public registry, place a TLS reverse proxy in front of
 the loopback registry and set `HOSTAI_DIRECTORY_PUBLIC_ORIGIN` on the registry to
 the canonical HTTPS root origin, for example `https://directory.example`.
 Preserve that exact Host header on upstream requests and serve both the client
-page and `/registry/v1/*` from this origin. Each host configures the same origin
+page and both `/registry/v1/*` and `/registry/v2/*` from this origin. Each host configures the same origin
 as `HOSTAI_DIRECTORY_URL`. The server validates Host and browser Origin and
 ignores forwarding headers. All clients behind the same proxy share its bounded
 socket-peer rate budget; these limits are not a production abuse defense.
@@ -160,17 +184,32 @@ key and a 64-byte signature. The host ID is lowercase SHA-256 of the SPKI bytes.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /registry/v1/listings` | Version, registry `servedAt`, at most 100 public listings |
-| `POST /registry/v1/challenges` | `{publicKey}` returns a random nonce and 30-second expiry |
-| `POST /registry/v1/listings` | `{publicKey,payload,signature}` publishes or withdraws |
+| `GET /registry/v2/listings` | Version, registry `servedAt`, at most 100 public listings |
+| `POST /registry/v2/challenges` | `{publicKey}` returns a random nonce and 30-second expiry |
+| `POST /registry/v2/listings` | `{publicKey,payload,signature}` publishes or withdraws |
 
 The decoded, signed payload has exactly `version`, `audience`, `nonce`,
-`operation` and `listing`. Version is 1. Audience is the exact configured registry
+`operation` and `listing`. Version is 2. Audience is the exact configured registry
 origin without a trailing slash, preventing a different registry from relaying a
-host's proof. Operation is `publish` with `{hostLabel,model,guestUrl,invitationRequired:true}`,
+host's proof. Operation is `publish` with `{hostLabel,model,guestUrl,invitationRequired:true,requestsAccepted:boolean}`,
 or `withdraw` with `listing:null`. Only canonical HTTPS single-label
 `trycloudflare.com` guest roots are accepted, without credentials, ports, paths,
 queries or fragments. No private invite key can be included.
+
+Version 1 routes remain available with their original exact schemas: v1 reads omit
+request status, and v1 publishers cannot supply it. A v1 update replaces any prior
+capability report with unknown. Payload versions must match the mutation route.
+Both versions share the same identities, nonce pool, admission budgets and store;
+using another API version does not provide a separate quota or replay opportunity.
+
+Upgrade the registry before the gateway and directory frontend: these clients now
+use `/registry/v2/` and do not silently downgrade to a registry without v2. Older
+v1 clients and publishers continue to work against the updated registry. Storage
+reads existing document version 1 and writes version 2 on the next mutation; new
+stores start at document version 2. The SQLite table and signing-key format do not
+change. An older registry binary cannot reopen a version 2 document; take an
+operator-managed backup before an upgrade if rollback is needed. No deployed
+registry or existing user database was upgraded during development.
 
 An unsigned challenge request reuses an outstanding nonce without extending its
 expiry. A nonce is tied to the signing identity, consumed once, and discarded on

@@ -13,9 +13,14 @@ export function DirectorySharing({ requestsEnabled = false }: { requestsEnabled?
       />
       <div className={css({ px: "5", pb: "5" })}>
         <p className={muted}>
-          Publishing makes your host name, model, public address and stable host ID visible to
-          everyone browsing that directory. Access keys remain private; clients still need your
-          invitation{requestsEnabled ? " or your approval of their access request." : "."}
+          Publishing makes your host name, model, public address, stable host ID and whether you
+          accept access requests visible to everyone browsing that directory. Access keys remain
+          private; clients still need an existing invitation key
+          {requestsEnabled ? " or your approval of their access request." : "."}
+        </p>
+        <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
+          The directory reports requests closed when intake is off or approved-key capacity is full.
+          Existing keys may still work. Each verified connection update sends a new report.
         </p>
         {!status ? (
           <p role="status" className={`${muted} ${css({ mt: "3" })}`}>
@@ -45,6 +50,14 @@ export function DirectorySharing({ requestsEnabled = false }: { requestsEnabled?
                   failed: "Listing status needs attention",
                 }[status.state]
               }
+            </p>
+            <p className={`${muted} ${css({ mt: "2", fontSize: "sm" })}`}>
+              {status.reportedRequestsAccepted === true
+                ? "Last confirmed published report: requests open."
+                : status.reportedRequestsAccepted === false
+                  ? "Last confirmed published report: requests closed."
+                  : "No confirmed request-availability report."}
+              {error && " Directory status could not be refreshed."}
             </p>
             {status.identityId && (
               <p className={`${muted} ${css({ fontSize: "xs", overflowWrap: "anywhere" })}`}>

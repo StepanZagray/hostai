@@ -16,8 +16,8 @@ function owner() {
   const der = pair.publicKey.export({ format: 'der', type: 'spki' });
   return { ...pair, publicKey: der.toString('base64url'), id: createHash('sha256').update(der).digest('hex') };
 }
-function proof(owner, nonce, { operation = 'publish', value = listing, audience: targetAudience = audience, raw } = {}) {
-  const bytes = Buffer.from(raw ?? JSON.stringify({ version: 1, audience: targetAudience, nonce,
+function proof(owner, nonce, { version = 1, operation = 'publish', value = listing, audience: targetAudience = audience, raw } = {}) {
+  const bytes = Buffer.from(raw ?? JSON.stringify({ version, audience: targetAudience, nonce,
     operation, listing: operation === 'withdraw' ? null : value }));
   return { publicKey: owner.publicKey, payload: bytes.toString('base64url'), signature: sign(null, bytes, owner.privateKey).toString('base64url') };
 }
@@ -56,6 +56,65 @@ test('exact-byte Ed25519 proof derives only its own id and cannot alter another 
   f.protocol.mutate(proof(b, bNonce, { value: { ...listing, hostLabel: 'Second host' } }));
   f.protocol.mutate(proof(b, f.nonce(b), { operation: 'withdraw' }));
   assert.deepEqual(f.protocol.list().listings.map(row => row.id), [a.id]);
+});
+
+test('v2 publish requires a signed boolean capability and rejects capability tampering', t => {
+  const f = fixture(t);
+  const a = owner();
+  const challenge = f.protocol.challenge({ publicKey: a.publicKey }, 2);
+  assert.deepEqual(challenge, { version: 2, nonce: challenge.nonce, expiresAt: f.now + CHALLENGE_MS });
+  const signed = proof(a, challenge.nonce, { version: 2, value: { ...listing, requestsAccepted: true } });
+  const payload = JSON.parse(Buffer.from(signed.payload, 'base64url').toString());
+  payload.listing.requestsAccepted = false;
+  const tampered = { ...signed, payload: Buffer.from(JSON.stringify(payload)).toString('base64url') };
+  assert.throws(() => f.protocol.mutate(tampered, 2), status(403));
+  for (const value of [listing, ...[null, 'true', 'false', 0, 1, {}, []]
+    .map(requestsAccepted => ({ ...listing, requestsAccepted }))]) {
+    assert.throws(() => f.protocol.mutate(proof(a, challenge.nonce, { version: 2, value }), 2), status(400));
+  }
+  assert.deepEqual(f.protocol.list(2), { version: 2, servedAt: f.now, listings: [] });
+  assert.deepEqual(f.protocol.mutate(signed, 2),
+    { version: 2, id: a.id, state: 'listed', updatedAt: f.now, expiresAt: f.now + FRESH_MS });
+  assert.equal(f.protocol.list(2).listings[0].requestsAccepted, true);
+});
+
+test('v1 and v2 proof versions must match the endpoint and v1 publication schema stays exact', t => {
+  const f = fixture(t);
+  const a = owner();
+  const nonce = f.nonce(a);
+  const legacy = proof(a, nonce);
+  const current = proof(a, nonce, { version: 2, value: { ...listing, requestsAccepted: false } });
+  assert.throws(() => f.protocol.mutate(legacy, 2), status(400));
+  assert.throws(() => f.protocol.mutate(current), status(400));
+  for (const requestsAccepted of [true, false, null]) {
+    assert.throws(() => f.protocol.mutate(proof(a, nonce, { value: { ...listing, requestsAccepted } })), status(400));
+  }
+  assert.deepEqual(f.protocol.mutate(legacy),
+    { version: 1, id: a.id, state: 'listed', updatedAt: f.now, expiresAt: f.now + FRESH_MS });
+  const row = { id: a.id, ...listing, updatedAt: f.now, expiresAt: f.now + FRESH_MS };
+  assert.deepEqual(f.protocol.list(), { version: 1, servedAt: f.now, listings: [row] });
+  assert.deepEqual(f.protocol.list(2), { version: 2, servedAt: f.now,
+    listings: [{ ...row, requestsAccepted: null }] });
+});
+
+test('v2 capability true, false and legacy republishing replace the signal across restarts', t => {
+  const f = fixture(t);
+  const a = owner();
+  for (const requestsAccepted of [true, false, null]) {
+    const version = requestsAccepted === null ? 1 : 2;
+    const value = { ...listing, ...(version === 2 ? { requestsAccepted } : {}) };
+    f.protocol.mutate(proof(a, f.nonce(a), { version, value }), version);
+    f.restart();
+    const row = { id: a.id, ...listing, updatedAt: f.now, expiresAt: f.now + FRESH_MS };
+    assert.deepEqual(f.protocol.list(2), { version: 2, servedAt: f.now,
+      listings: [{ ...row, requestsAccepted }] });
+    assert.deepEqual(f.protocol.list(), { version: 1, servedAt: f.now, listings: [row] });
+    f.advance(1000);
+  }
+  assert.deepEqual(f.protocol.mutate(proof(a, f.nonce(a), { version: 2, operation: 'withdraw' }), 2),
+    { version: 2, id: a.id, state: 'off', updatedAt: null, expiresAt: null });
+  f.restart();
+  assert.deepEqual(f.protocol.list(2).listings, []);
 });
 
 test('unsigned challenges preserve pending updates and original expiry; nonces are one shot and lost on restart', t => {

@@ -114,7 +114,13 @@ export function DirectoryListing({
                   : `Updated ${updated}`}
         </Badge>
         <p className={`${muted} ${css({ fontSize: "xs" })}`}>
-          Host permission required · one shared model
+          {listing?.requestsAccepted === true
+            ? "Requests reported open"
+            : listing?.requestsAccepted === false
+              ? "Requests reported closed · existing key needed"
+              : "Request availability not reported"}
+          <br />
+          At last update · host approval required
         </p>
         {!expired && !error && listing && snapshot && changed ? (
           <Button

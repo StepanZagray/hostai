@@ -856,3 +856,58 @@ to load its matching bundle. Evidence is retained under `test-results/owner-retr
 chat and sharing responses; no real model, GPU work, public tunnel, backend test run
 or Java packaging was used. All owned advisor, Node and private display processes
 and runtime directories were removed. No remote push or deployment was performed.
+
+
+## Directory request-availability reports — 10 September 2026
+
+Directory v2 carries a signed boolean requestsAccepted on publication. Every
+verified heartbeat samples SharingService request availability; changing intake or
+running out of key slots can change the next report without changing the listed
+model or enabling access. Legacy v1 publishers remain supported, with v2 reads
+returning null for unknown status. V1 readers receive their original exact shape.
+Both protocol versions share nonce and admission state. Storage reads documents
+1/2 and writes 2; a registry binary predating this change cannot reopen document 2.
+No user store or deployed service was migrated.
+
+Validation passed 304 frontend tests, 77 registry tests, and 555 backend tests,
+including Java packaging. The actual Java-to-Node integration fixture verifies
+closed→open→closed reports over signed heartbeats. Registry tests cover signature
+tampering, wrong types, path/version mismatches, legacy republishing, fresh v2
+storage and legacy document migration/reopen. GPT-6 Astra XHigh independently
+added the registry tests in an isolated worktree; the primary reviewed and reran
+them. The initial backend run found an outdated mock without request status; that
+fixture was corrected before the successful full run.
+
+The isolated browser suite passed 27 directory/publication scenarios. It exercised
+the production standalone page with a real disposable registry and signed v2
+publication, plus embedded owner fixtures, filtered saved hosts, report changes,
+empty recovery, and keyboard navigation at 320/768/1024/1440px. Existing expectations
+were updated for the new filter in the tab order and clearing it to reveal an
+unlisted saved host; exact-text assertions now include the report's supporting
+copy. Two focused capture scenarios were rerun, not counted as additional distinct
+tests. Desktop and 320px viewport captures were visually inspected; the reports,
+filter and guest link fit. Evidence is retained under `test-results/directory-requests/`.
+
+These checks use synthetic tunnel observations and metadata; no real model,
+public tunnel or public directory was started. The browser owner→Java→directory
+path was not enabled in this run; Java wire interoperability and the standalone
+browser path were tested separately. This report improves informed selection,
+not identity verification, guaranteed availability or approval. Request-name
+retention and bookmark-storage-independent model acknowledgement remain follow-ups.
+
+A second Claude Opus 5 High review found the capacity-related wording and the
+saved-view expiry inconsistency, and requested direct coverage of the legacy null
+HTTP response. Closed copy now says an existing key is needed; the host sees its
+last confirmed published report and the capacity explanation. Publication updates
+the report with its confirmed timestamps, and removal/unknown publication clears
+it. The request filter requires an unexpired report in both views. Tests exercise
+these states and assert that the controller response retains an explicit null
+request-status field; the existing serialization annotation already worked.
+The full frontend/backend and browser checks were repeated after these fixes.
+
+Final validation passed all 555 backend tests and packaging after the expected
+owner-status schema was updated for reportedRequestsAccepted. Type/lint/format
+checks and frontend production bundles passed. All owned advisor, server, JVM and
+private display processes were reaped, and temporary runtimes and the delegated
+worktree were removed. Cleanup evidence records exact process IDs and paths.
+No remote push or deployment was performed.

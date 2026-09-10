@@ -10,12 +10,16 @@ export interface Publication {
   updatedAt: number | null;
   expiresAt: number | null;
   error: string | null;
+  reportedRequestsAccepted?: boolean | null;
 }
 function parse(value: unknown): Publication | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Publication;
   if (
     !["off", "publishing", "listed", "withdrawing", "interrupted", "failed"].includes(item.state) ||
+    (item.reportedRequestsAccepted !== undefined &&
+      item.reportedRequestsAccepted !== null &&
+      typeof item.reportedRequestsAccepted !== "boolean") ||
     typeof item.configured !== "boolean" ||
     typeof item.enabled !== "boolean" ||
     typeof item.canPublish !== "boolean" ||

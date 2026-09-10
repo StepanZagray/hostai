@@ -25,7 +25,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 class DirectoryPublicationTest {
     private static final Duration WAIT = Duration.ofSeconds(4);
-    private static final DirectoryPublication.Shared SHARED = new DirectoryPublication.Shared(true, "Fixture host", "fixture:small");
+    private static final DirectoryPublication.Shared SHARED = new DirectoryPublication.Shared(true, "Fixture host", "fixture:small", false);
     @TempDir Path temporary;
 
     @Test void absentAndInvalidConfigurationNeverOpenIdentityOrCallSharing() {
@@ -40,7 +40,7 @@ class DirectoryPublicationTest {
                 assertThat(directory.stop().enabled()).isFalse();
                 var json = DirectoryClient.JSON.valueToTree(directory.status());
                 assertThat(json.propertyNames()).containsExactlyInAnyOrder("state", "configured", "registryUrl", "enabled",
-                        "canPublish", "identityId", "updatedAt", "expiresAt", "error");
+                        "canPublish", "identityId", "updatedAt", "expiresAt", "error", "reportedRequestsAccepted");
                 for (String field : List.of("registryUrl", "identityId", "updatedAt", "expiresAt")) assertThat(json.get(field).isNull()).isTrue();
             }
             assertThat(transport.observers).isEmpty();
@@ -79,7 +79,7 @@ class DirectoryPublicationTest {
                 transport.emit("live", 1, DirectoryClientTest.GUEST);
                 assertThat(directory.status().canPublish()).isTrue();
                 assertThat(Files.exists(identityPath)).isFalse();
-                shared.set(new DirectoryPublication.Shared(false, "Fixture host", "fixture:small"));
+                shared.set(new DirectoryPublication.Shared(false, "Fixture host", "fixture:small", false));
                 assertThat(directory.start().enabled()).isFalse();
                 assertThat(opens.get()).isZero();
                 shared.set(SHARED);
@@ -255,7 +255,7 @@ class DirectoryPublicationTest {
             when(sharing.status()).thenReturn(new SharingService.Status("local", "Fixture host", "fixture:small", null, null, List.of(), null, null));
             try (var directory = new DirectoryPublication(fixture.configuration(), () -> {
                 var status = sharing.status();
-                return new DirectoryPublication.Shared(status.state().equals("local"), status.hostLabel(), status.model());
+                return new DirectoryPublication.Shared(status.state().equals("local"), status.hostLabel(), status.model(), false);
             }, transport.internet, () -> { throw new IllegalStateException("private-fixture-secret"); })) {
                 directory.start();
                 await().atMost(WAIT).untilAsserted(() -> assertThat(directory.status().error()).isEqualTo(DirectoryPublication.IDENTITY_ERROR));
@@ -376,7 +376,7 @@ class DirectoryPublicationTest {
                 try {
                     assertThat(entered.await(1, TimeUnit.SECONDS)).isTrue();
                     assertThatThrownBy(directory::listings).isInstanceOf(DirectoryClient.Failure.class);
-                    assertThat(fixture.paths).containsExactly("GET /registry/v1/listings");
+                    assertThat(fixture.paths).containsExactly("GET /registry/v2/listings");
                 } finally { release.countDown(); reader.join(Duration.ofSeconds(5)); }
                 assertThat(reader.isAlive()).isFalse();
                 assertThat(error.get()).isNull();
@@ -388,8 +388,8 @@ class DirectoryPublicationTest {
     }
 
     @Test void changedModelOrLabelWithdrawsWithoutPublishingDriftedMetadata() throws Exception {
-        for (var changed : List.of(new DirectoryPublication.Shared(true, "Different label", "fixture:small"),
-                new DirectoryPublication.Shared(true, "Fixture host", "fixture:other"))) {
+        for (var changed : List.of(new DirectoryPublication.Shared(true, "Different label", "fixture:small", false),
+                new DirectoryPublication.Shared(true, "Fixture host", "fixture:other", false))) {
             try (var fixture = new DirectoryClientTest.Fixture()) {
                 var selected = new AtomicReference<>(SHARED);
                 var transport = new Transport(); transport.emit("live", 1, DirectoryClientTest.GUEST);

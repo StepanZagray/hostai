@@ -30,6 +30,11 @@ function editDocument(directory, edit) {
     db.prepare('UPDATE registry SET document = ?').run(edit(old));
   } finally { db.close(); }
 }
+function readDocument(directory) {
+  const db = new DatabaseSync(join(directory, 'registry.sqlite'), { readOnly: true });
+  try { return JSON.parse(db.prepare('SELECT document FROM registry').get().document); }
+  finally { db.close(); }
+}
 function childAttempt(directory) {
   const result = spawnSync(process.execPath, ['--input-type=module', '-e',
     `import { DirectoryStore } from ${JSON.stringify(storeUrl)};
@@ -60,6 +65,54 @@ test('private durable store, same-process rejection and OS exclusive lock surviv
   store = new DirectoryStore(directory);
   assert.equal(store.list(now + 2000)[0].updatedAt, first.updatedAt + 1000);
   assert.equal(store.list(now + 2000)[0].expiresAt, first.expiresAt + 1000);
+});
+
+test('fresh storage and publication write document v2', t => {
+  const { directory, onCleanup } = fixture(t);
+  let store = new DirectoryStore(directory);
+  onCleanup(() => store.close());
+  store.close();
+  assert.deepEqual(readDocument(directory), { version: 2, listings: [] });
+  store = new DirectoryStore(directory);
+  const row = store.publish(id, { ...listing, requestsAccepted: false }, now);
+  store.close();
+  assert.deepEqual(readDocument(directory), { version: 2, listings: [row] });
+});
+
+test('legacy v1 documents migrate on commit and preserve mixed legacy/v2 rows across reopen', t => {
+  const { directory, onCleanup } = fixture(t);
+  let store = new DirectoryStore(directory);
+  onCleanup(() => store.close());
+  const legacy = store.publish(id, listing, now);
+  store.close();
+  editDocument(directory, () => JSON.stringify({ version: 1, listings: [legacy] }));
+  store = new DirectoryStore(directory);
+  assert.deepEqual(store.list(now), [legacy]);
+  const enabled = store.publish('b'.repeat(64), { ...listing, requestsAccepted: true }, now + 1);
+  const disabled = store.publish('c'.repeat(64), { ...listing, requestsAccepted: false }, now + 2);
+  store.close();
+  assert.deepEqual(readDocument(directory), { version: 2, listings: [legacy, enabled, disabled] });
+  store = new DirectoryStore(directory);
+  assert.deepEqual(store.list(now + 2), [disabled, enabled, legacy]);
+  const renewed = store.publish(id, listing, now + 3);
+  store.close();
+  store = new DirectoryStore(directory);
+  assert.deepEqual(store.list(now + 3), [renewed, disabled, enabled]);
+});
+
+test('malformed capability writes fail without changing the saved listing', t => {
+  const { directory, onCleanup } = fixture(t);
+  let store = new DirectoryStore(directory);
+  onCleanup(() => store.close());
+  const initial = store.publish(id, { ...listing, requestsAccepted: true }, now);
+  for (const requestsAccepted of [null, 'true', 'false', 0, 1, {}, []]) {
+    assert.throws(() => store.publish(id, { ...listing, requestsAccepted }, now + 1),
+      error => error.status === 400 && error.code === 'malformed_request');
+    assert.deepEqual(store.list(now + 1), [initial]);
+  }
+  store.close();
+  store = new DirectoryStore(directory);
+  assert.deepEqual(store.list(now + 1), [initial]);
 });
 
 test('abrupt process death releases OS lock without repair and preserves committed timestamps', async t => {
@@ -94,7 +147,18 @@ test('startup fails closed on corrupt documents, duplicate ids, timestamps and s
     () => '{',
     () => '{"version":1,"version":1,"listings":[]}',
     old => JSON.stringify({ ...JSON.parse(old), extra: true }),
-    old => old.replace('"version":1', '"version":2'),
+    old => JSON.stringify({ ...JSON.parse(old), version: 3 }),
+    ...[null, 'true', 'false', 0, 1, {}, []].map(requestsAccepted => old => {
+      const doc = JSON.parse(old);
+      doc.listings[0].requestsAccepted = requestsAccepted;
+      return JSON.stringify(doc);
+    }),
+    old => {
+      const doc = JSON.parse(old);
+      doc.version = 1;
+      doc.listings[0].requestsAccepted = true;
+      return JSON.stringify(doc);
+    },
     old => { const doc = JSON.parse(old); doc.listings.push(doc.listings[0]); return JSON.stringify(doc); },
     old => { const doc = JSON.parse(old); doc.listings[0].expiresAt++; return JSON.stringify(doc); },
     old => { const doc = JSON.parse(old); doc.listings[0].updatedAt = -1; return JSON.stringify(doc); },

@@ -37,14 +37,16 @@ const fileIdentity = stat => `${stat.dev}:${stat.ino}`;
 function decodeDocument(bytes) {
   const document = parseJson(bytes, MAX_DOCUMENT_BYTES);
   exactFields(document, ['version', 'listings']);
-  if (document.version !== 1 || !Array.isArray(document.listings)
+  if (![1, 2].includes(document.version) || !Array.isArray(document.listings)
       || document.listings.length > MAX_LISTINGS) throw new StorageError();
   const rows = new Map();
   for (const value of document.listings) {
-    exactFields(value, ['id', 'hostLabel', 'model', 'guestUrl', 'invitationRequired', 'updatedAt', 'expiresAt']);
+    exactFields(value, ['id', 'hostLabel', 'model', 'guestUrl', 'invitationRequired', 'updatedAt', 'expiresAt',
+      ...(document.version === 2 && Object.hasOwn(value, 'requestsAccepted') ? ['requestsAccepted'] : [])]);
     if (typeof value.id !== 'string' || !/^[0-9a-f]{64}$/.test(value.id) || rows.has(value.id)) throw new StorageError();
     const listing = validateListing({ hostLabel: value.hostLabel, model: value.model,
-      guestUrl: value.guestUrl, invitationRequired: value.invitationRequired });
+      guestUrl: value.guestUrl, invitationRequired: value.invitationRequired,
+      ...(Object.hasOwn(value, 'requestsAccepted') ? { requestsAccepted: value.requestsAccepted } : {}) });
     epoch(value.updatedAt);
     if (!Number.isSafeInteger(value.expiresAt) || value.expiresAt !== value.updatedAt + FRESH_MS) throw new StorageError();
     rows.set(value.id, { id: value.id, ...listing, updatedAt: value.updatedAt, expiresAt: value.expiresAt });
@@ -94,7 +96,7 @@ export class DirectoryStore {
       this.#db.exec('PRAGMA trusted_schema=OFF; PRAGMA locking_mode=EXCLUSIVE; PRAGMA journal_mode=DELETE; PRAGMA synchronous=EXTRA; PRAGMA max_page_count=256; BEGIN EXCLUSIVE');
       if (fresh) {
         this.#db.exec(`${SCHEMA}; PRAGMA application_id=${APPLICATION_ID}; PRAGMA user_version=1`);
-        this.#db.prepare('INSERT INTO registry VALUES (1, ?)').run('{"version":1,"listings":[]}');
+        this.#db.prepare('INSERT INTO registry VALUES (1, ?)').run('{"version":2,"listings":[]}');
       } else {
         const schema = this.#db.prepare('SELECT type, name, sql FROM sqlite_schema').all();
         if (schema.length !== 1 || schema[0].type !== 'table' || schema[0].name !== 'registry' || schema[0].sql !== SCHEMA
@@ -140,7 +142,7 @@ export class DirectoryStore {
   #commit(rows) {
     this.assertAvailable();
     try {
-      const bytes = Buffer.from(JSON.stringify({ version: 1, listings: [...rows.values()] }));
+      const bytes = Buffer.from(JSON.stringify({ version: 2, listings: [...rows.values()] }));
       // Validate both persisted and proposed documents through the same schema.
       const committed = decodeDocument(bytes);
       this.#db.exec('BEGIN EXCLUSIVE');

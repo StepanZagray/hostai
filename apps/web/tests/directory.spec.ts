@@ -21,6 +21,7 @@ const host = (id = "a", model = "fixture-model:small") => ({
   updatedAt: now,
   expiresAt: now + 90000,
   invitationRequired: true,
+  requestsAccepted: null as boolean | null,
 });
 async function directory(page: Page) {
   await hostFixture(page);
@@ -40,7 +41,7 @@ async function directory(page: Page) {
       json: state.fail
         ? { detail: "private provider text" }
         : {
-            version: 1,
+            version: 2,
             registryUrl: state.config.registryUrl,
             servedAt: state.servedAt,
             listings: state.entries,
@@ -201,6 +202,8 @@ for (const width of [320, 768, 1024, 1440])
     );
     await page.getByLabel("Search model or host").focus();
     await page.keyboard.press("Tab");
+    await expect(page.getByLabel("Requests reported open", { exact: true })).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(page.getByLabel("Include expired listings")).toBeFocused();
     await page.screenshot({
       path: `test-results/directory-${width}.png`,
@@ -239,13 +242,13 @@ test("standalone directory serves its own client surface", async ({ page, reques
   const pair = generateKeyPairSync("ed25519");
   const publicKey = pair.publicKey.export({ format: "der", type: "spki" }).toString("base64url");
   async function mutate(operation: "publish" | "withdraw") {
-    const challenge = await request.post(`${origin}/registry/v1/challenges`, {
+    const challenge = await request.post(`${origin}/registry/v2/challenges`, {
       data: { publicKey },
     });
     expect(challenge.status()).toBe(200);
     const payload = Buffer.from(
       JSON.stringify({
-        version: 1,
+        version: 2,
         audience: origin,
         nonce: (await challenge.json()).nonce,
         operation,
@@ -257,10 +260,11 @@ test("standalone directory serves its own client surface", async ({ page, reques
                 model: "directory-browser:small",
                 guestUrl: "https://directory-browser-fixture.trycloudflare.com/",
                 invitationRequired: true,
+                requestsAccepted: true,
               },
       }),
     );
-    const result = await request.post(`${origin}/registry/v1/listings`, {
+    const result = await request.post(`${origin}/registry/v2/listings`, {
       data: {
         publicKey,
         payload: payload.toString("base64url"),
@@ -297,6 +301,7 @@ test("standalone directory serves its own client surface", async ({ page, reques
     await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
     await expect(page.getByText("The host must approve access.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Saved hosts (0)", exact: true })).toBeVisible();
+    await page.getByLabel("Requests reported open", { exact: true }).check();
     await page.getByLabel("Search model or host").fill("directory-browser");
     await expect(
       page.getByRole("heading", { name: "directory-browser:small", exact: true }),
@@ -314,6 +319,7 @@ test("standalone directory serves its own client surface", async ({ page, reques
       .click();
     await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
     await mutate("withdraw");
+    await page.getByLabel("Requests reported open", { exact: true }).uncheck();
     await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "directory-browser:small", exact: true }),
@@ -427,7 +433,7 @@ test("saved views reject failed checks and wrong-registry provenance and isolate
     mismatched
       ? route.fulfill({
           json: {
-            version: 1,
+            version: 2,
             registryUrl: "https://other.example",
             servedAt: now,
             listings: [host()],
@@ -583,5 +589,103 @@ test("a delayed storage event cannot turn Save into an unintended removal", asyn
     .getByRole("button", { name: "Remove saved host Alice’s shared model", exact: true })
     .click();
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
+  expect(state.unexpected).toEqual([]);
+});
+
+test("request availability filters informed choices without contacting hosts and follows refreshed reports", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  state.entries[0].requestsAccepted = true;
+  state.entries.push({
+    ...host("b", "closed-model:small"),
+    hostLabel: "Closed host",
+    requestsAccepted: false,
+  });
+  state.entries.push({ ...host("c", "legacy-model:small"), hostLabel: "Legacy host" });
+  await page.goto("/hosts");
+  const rows = page.getByRole("region", { name: "Host listings" }).getByRole("listitem");
+  await expect(rows).toHaveCount(3);
+  await expect(page.getByText("Requests reported closed · existing key needed")).toBeVisible();
+  await expect(page.getByText("Request availability not reported")).toBeVisible();
+  await rows.last().scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "test-results/directory-request-report-desktop.png",
+    animations: "disabled",
+  });
+  await page.getByLabel("Requests reported open", { exact: true }).check();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("Alice’s shared model");
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+  await expect(rows).toHaveCount(1);
+  state.entries[0].requestsAccepted = false;
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "No matching saved hosts", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Requests reported open", { exact: true }).uncheck();
+  await expect(rows).toHaveCount(1);
+  await expect(rows.first()).toContainText("Requests reported closed");
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toBeVisible();
+  expect(state.unexpected).toEqual([]);
+});
+
+test("request report filter explains empty results and remains usable on a narrow screen", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  await page.setViewportSize({ width: 320, height: 1100 });
+  await page.goto("/hosts");
+  await page.getByLabel("Requests reported open", { exact: true }).check();
+  await expect(
+    page.getByRole("heading", { name: "No matching hosts report requests open" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Existing invitation keys may still work/)).toBeVisible();
+  await page.getByLabel("Requests reported open", { exact: true }).uncheck();
+  await expect(page.getByText("Request availability not reported")).toBeVisible();
+  await page.getByRole("region", { name: "Host listings" }).scrollIntoViewIfNeeded();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: "test-results/directory-request-report-mobile.png",
+    animations: "disabled",
+  });
+  expect(state.unexpected).toEqual([]);
+});
+
+test("requests-open filter excludes expired reports in both all and saved views", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  state.entries[0].requestsAccepted = true;
+  state.entries[0].updatedAt = now - 95000;
+  state.entries[0].expiresAt = now - 5000;
+  state.entries.push({
+    ...host("b", "fresh-model:small"),
+    hostLabel: "Fresh host",
+    requestsAccepted: true,
+  });
+  await page.goto("/hosts");
+  await page.getByLabel("Include expired listings").check();
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await page.getByLabel("Requests reported open", { exact: true }).check();
+  await expect(page.getByRole("heading", { name: "fresh-model:small", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "fixture-model:small", exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "No matching saved hosts", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Requests reported open", { exact: true }).uncheck();
+  await expect(page.getByText("Listing expired", { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
   expect(state.unexpected).toEqual([]);
 });

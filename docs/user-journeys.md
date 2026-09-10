@@ -27,7 +27,7 @@ real model was downloaded or inference benchmark run.
 | Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Playground and the Client access start form distinguish available-to-try from a completed, nonempty reply in the retained conversation for that model name. Clear/reload remove this evidence; it is not a durable readiness or memory-fit assessment. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
 | Host: start serving | [Client access](../apps/web/src/routes/sharing.tsx) publishes one selected model on a separate local guest listener | Explicit model links and the gateway’s last configuration survive the start/stop handoff; host-name drafts survive the Playground round trip in tab memory, and missing choices explain recovery. Starting checks library presence, not memory fit or successful inference. Access restarts stopped. | Choose which model clients may use, test it, then enable serving deliberately. |
 | Host: share over internet | [Java config](../backend/src/main/resources/application.properties) and [web server](../apps/web/server.mjs) bind loopback | Temporary Cloudflare Quick Tunnel sharing checks HTTPS streaming before issuing internet keys. Cloudflare sees traffic; there is no production uptime guarantee or verified identity. | Share a verified endpoint with selected clients; expose status and Stop sharing in the same place. |
-| Client: find a host | [Optional directory](directory.md) provides model/host search, signed updates and a standalone browser page | Requires an operator-provided registry; saves now persist per directory/browser origin, but there is no public deployment, verified URL ownership or moderation. Updated does not mean online. | Browse explicitly listed models, understand freshness and access requirements, then open guest chat. |
+| Client: find a host | [Optional directory](directory.md) provides model/host search, signed updates and a standalone browser page | Hosts report request availability and clients can filter for requests reported open; current access still needs a guest-page check and approval. Requires an operator-provided registry; saves now persist per directory/browser origin, but there is no public deployment, verified URL ownership or moderation. Updated does not mean online. | Browse explicitly listed models, understand freshness and access requirements, then open guest chat. |
 | Host: approve a guest | [Request inbox](access-requests.md) shows an unverified name, matching code and model; duration must be chosen explicitly | Intake is internet-only and starts off. Approved permissions survive closing intake; 20 active request keys and 100 total stored keys are the limits. | Review a specific guest, approve a scoped permission, and revoke it from Access keys. |
 | Client: request access | Guest page discovers intake, generates credentials in memory and waits for approval | No accounts or identity verification. Reload loses credentials. Disconnect retains request credentials for cancellation/reconnect; request records have a shorter lifetime than approved keys, which still require expiry or revocation. | Retry lost responses without duplicate requests, cancel explicitly, then connect without sending a prompt automatically. |
 | Client: connect | [Shell](../apps/web/src/components/shell.tsx) exposes one local host workspace | The separate guest page checks model and channel permissions. An internet invite needs no client installation; the host name remains self-asserted. | See host identity, model and access requirements; connect without installing Java, Ollama or a model. |
@@ -100,7 +100,9 @@ model—not a generic metrics dashboard.
    shared directory and registration/moderation policy. Explicit saved hosts now retain
    installation IDs and remembered labels, resolving current listings without retaining URLs
    or keys; changed models require acknowledgement before opening.
-   The opt-in guest access-request path is now implemented. Private invites work without a listing. Removing
+   The opt-in guest access-request path is now implemented. Signed directory v2 reports
+   request availability without probing hosts; open/closed/unknown labels and filtering
+   help clients choose a host before contacting it. Private invites work without a listing. Removing
    a listing leaves the tunnel and keys usable; Stop and Revoke remain separate.
 
 These priorities preserve the requested public host-discovery destination. Private
@@ -184,8 +186,9 @@ selected model stay eligible, within the existing request limits. Stop suppresse
 its click's default action and has a separate button identity from Send, so restoring
 a draft cannot accidentally submit it during that same click.
 
-Conversation storage across reloads, deletion recovery, owner Retry-After feedback,
-catalog discovery and runtime fit guidance remain follow-up work.
+Conversation storage across reloads, deletion recovery, catalog discovery and
+runtime fit guidance remain follow-up work. Owner Retry-After feedback is now
+implemented across models and navigation within the tab.
 
 Owner conversations now live in the workspace provider, separately for each model.
 Navigation and model switching retain drafts, completed/partial output and run

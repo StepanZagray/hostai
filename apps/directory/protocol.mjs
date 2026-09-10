@@ -116,8 +116,10 @@ function isCanonicalOrigin(value) {
   } catch { return false; }
 }
 
-export function validateListing(value) {
-  exactFields(value, ['hostLabel', 'model', 'guestUrl', 'invitationRequired']);
+export function validateListing(value, version = Object.hasOwn(value ?? {}, 'requestsAccepted') ? 2 : 1) {
+  exactFields(value, ['hostLabel', 'model', 'guestUrl', 'invitationRequired',
+    ...(version === 2 ? ['requestsAccepted'] : [])]);
+  if (version === 2 && typeof value.requestsAccepted !== 'boolean') throw malformed();
   if (!printable(value.hostLabel, 80) || !printable(value.model, 200)
       || !/^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(value.model)
       || value.model.endsWith(':cloud') || value.model.endsWith('-cloud')
@@ -130,7 +132,8 @@ export function validateListing(value) {
   try { url = new URL(value.guestUrl); } catch { throw malformed(); }
   if (url.href !== value.guestUrl || url.username || url.password || url.port
       || url.search || url.hash || url.pathname !== '/') throw malformed();
-  return { hostLabel: value.hostLabel, model: value.model, guestUrl: value.guestUrl, invitationRequired: true };
+  return { hostLabel: value.hostLabel, model: value.model, guestUrl: value.guestUrl, invitationRequired: true,
+    ...(version === 2 ? { requestsAccepted: value.requestsAccepted } : {}) };
 }
 
 export function epoch(value) {
@@ -206,7 +209,7 @@ export class DirectoryProtocol {
     }
     return owner;
   }
-  challenge(body) {
+  challenge(body, version = 1) {
     this.assertAvailable();
     exactFields(body, ['publicKey']);
     const now = epoch(this.clock());
@@ -214,16 +217,16 @@ export class DirectoryProtocol {
     // Unsigned callers can retrieve a pending challenge, but cannot invalidate
     // an in-flight proof or prolong the original authentication window.
     const pending = this.#nonces.get(id);
-    if (pending) return { version: 1, ...pending };
+    if (pending) return { version, ...pending };
     if (this.#nonces.size >= this.maxChallenges) throw limited(30);
     const bytes = this.random(32);
     if (!Buffer.isBuffer(bytes) || bytes.length !== 32) throw unavailable();
     const nonce = bytes.toString('base64url');
     const expiresAt = now + CHALLENGE_MS;
     this.#nonces.set(id, { nonce, expiresAt });
-    return { version: 1, nonce, expiresAt };
+    return { version, nonce, expiresAt };
   }
-  mutate(body) {
+  mutate(body, version = 1) {
     this.assertAvailable();
     exactFields(body, ['publicKey', 'payload', 'signature']);
     const now = epoch(this.clock());
@@ -232,14 +235,14 @@ export class DirectoryProtocol {
     const signature = decodeBase64(body.signature, 64, 64);
     const payload = parseJson(bytes);
     exactFields(payload, ['version', 'audience', 'nonce', 'operation', 'listing']);
-    if (payload.version !== 1 || !['publish', 'withdraw'].includes(payload.operation)) throw malformed();
+    if (payload.version !== version || !['publish', 'withdraw'].includes(payload.operation)) throw malformed();
     if (!isCanonicalOrigin(payload.audience)) throw malformed();
     let audience;
     try { audience = this.audience(); } catch { throw unavailable(); }
     if (!isCanonicalOrigin(audience)) throw unavailable();
     if (payload.audience !== audience) throw forbidden();
     decodeBase64(payload.nonce, 32, 32);
-    const listing = payload.operation === 'publish' ? validateListing(payload.listing) : null;
+    const listing = payload.operation === 'publish' ? validateListing(payload.listing, version) : null;
     if (payload.operation === 'withdraw' && payload.listing !== null) throw malformed();
     if (!verify(null, bytes, key, signature)) throw forbidden();
     const challenge = this.#nonces.get(id);
@@ -252,12 +255,14 @@ export class DirectoryProtocol {
     this.#nonces.delete(id);
     const row = this.#storage(() => payload.operation === 'publish'
       ? this.store.publish(id, listing, now) : this.store.withdraw(id, now));
-    return { version: 1, id, state: row ? 'listed' : 'off',
+    return { version, id, state: row ? 'listed' : 'off',
       updatedAt: row?.updatedAt ?? null, expiresAt: row?.expiresAt ?? null };
   }
-  list() {
+  list(version = 1) {
     this.assertAvailable();
     const servedAt = epoch(this.clock());
-    return { version: 1, servedAt, listings: this.#storage(() => this.store.list(servedAt)) };
+    const rows = this.#storage(() => this.store.list(servedAt));
+    return { version, servedAt, listings: rows.map(({ requestsAccepted, ...row }) =>
+      version === 2 ? { ...row, requestsAccepted: requestsAccepted ?? null } : row) };
   }
 }

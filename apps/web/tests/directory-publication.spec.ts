@@ -12,6 +12,7 @@ async function fixture(page: Page) {
     updatedAt: null as number | null,
     expiresAt: null as number | null,
     error: null as string | null,
+    reportedRequestsAccepted: null as boolean | null,
   };
   const sharing = {
     state: "local",
@@ -53,13 +54,20 @@ async function fixture(page: Page) {
         identityId: "a".repeat(64),
         updatedAt: Date.now(),
         expiresAt: Date.now() + 90000,
+        reportedRequestsAccepted: true,
       });
       if (loseStart) {
         failRead = true;
         return route.abort();
       }
     }
-    if (path.endsWith("/stop")) Object.assign(state, { state: "off", enabled: false, error: null });
+    if (path.endsWith("/stop"))
+      Object.assign(state, {
+        state: "off",
+        enabled: false,
+        error: null,
+        reportedRequestsAccepted: null,
+      });
     return route.fulfill({ json: state });
   });
   return {
@@ -141,4 +149,36 @@ test("stale directory status disables publishing but keeps removing a known list
     section.getByRole("button", { name: "Publish listing", exact: true }),
   ).toBeDisabled();
   await expect(section.getByRole("button", { name: "Remove listing", exact: true })).toBeEnabled();
+});
+
+test("host sees the last confirmed published request report and key-capacity explanation", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  await page.goto("/sharing");
+  const section = page.getByRole("region", { name: "Public directory listing" });
+  await expect(
+    section.getByText("No confirmed request-availability report.", { exact: true }),
+  ).toBeVisible();
+  await section.getByRole("button", { name: "Publish listing", exact: true }).click();
+  await expect(
+    section.getByText("Last confirmed published report: requests open.", { exact: true }),
+  ).toBeVisible();
+  state.state.reportedRequestsAccepted = false;
+  await page.reload();
+  await expect(
+    section.getByText("Last confirmed published report: requests closed.", { exact: true }),
+  ).toBeVisible();
+  await expect(section).toContainText("approved-key capacity is full");
+  await expect(section).toContainText("Existing keys may still work");
+  await section.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "test-results/directory-owner-request-report.png",
+    animations: "disabled",
+  });
+  await section.getByRole("button", { name: "Remove listing", exact: true }).click();
+  await expect(
+    section.getByText("No confirmed request-availability report.", { exact: true }),
+  ).toBeVisible();
+  expect(state.calls).toEqual(["/api/directory/start", "/api/directory/stop"]);
 });

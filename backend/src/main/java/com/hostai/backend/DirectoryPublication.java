@@ -53,7 +53,7 @@ final class DirectoryPublication implements AutoCloseable {
             @Value("${hostai.access-directory:}") String accessDirectory) {
         this(DirectoryClient.Configuration.parse(registry, allowLoopback), () -> {
             var status = sharing.status();
-            return new Shared(status.state().equals("local"), status.hostLabel(), status.model());
+            return new Shared(status.state().equals("local"), status.hostLabel(), status.model(), status.requests().available());
         }, internet, () -> openIdentity(accessDirectory));
     }
 
@@ -66,7 +66,7 @@ final class DirectoryPublication implements AutoCloseable {
         this.identityStore = identityStore;
         state = new AtomicReference<>(new Snapshot(0, internet.observation(), null,
                 configuration.error() == null || configuration.error().equals(DirectoryClient.MISSING) ? "off" : "failed",
-                null, null, null, configuration.error(), false));
+                null, null, null, configuration.error(), false, null));
         worker = Thread.ofVirtual().name("hostai-directory-publication").unstarted(this::run);
         observation = internet.observe(this::changed);
         worker.start();
@@ -122,7 +122,7 @@ final class DirectoryPublication implements AutoCloseable {
         boolean canPublish = configured && !current.closing() && live(current.event())
                 && current.intent() == null && !current.phase().equals("withdrawing");
         return new Status(current.phase(), configured, configured ? configuration.origin().toString() : null,
-                current.intent() != null, canPublish, current.id(), current.updated(), current.expires(), current.error());
+                current.intent() != null, canPublish, current.id(), current.updated(), current.expires(), current.error(), current.reportedRequestsAccepted());
     }
 
     Status start() {
@@ -151,7 +151,7 @@ final class DirectoryPublication implements AutoCloseable {
             }
             var intent = new Intent(before.event().attempt(), origin(before.event()), listing);
             var after = new Snapshot(before.generation() + 1, before.event(), intent, "publishing",
-                    before.id(), before.updated(), before.expires(), null, false);
+                    before.id(), before.updated(), before.expires(), null, false, before.reportedRequestsAccepted());
             if (state.compareAndSet(before, after)) { signal(); return status(after); }
         }
     }
@@ -159,7 +159,7 @@ final class DirectoryPublication implements AutoCloseable {
     Status stop() {
         var after = state.updateAndGet(before -> before.closing() ? before : new Snapshot(before.generation() + 1,
                 before.event(), null, configuration.origin() == null ? before.phase() : "withdrawing",
-                before.id(), before.updated(), before.expires(), configuration.error(), false));
+                before.id(), before.updated(), before.expires(), configuration.error(), false, before.reportedRequestsAccepted()));
         signal();
         return status(after);
     }
@@ -208,7 +208,7 @@ final class DirectoryPublication implements AutoCloseable {
                     generation++; phase = "publishing"; error = null;
                 }
             }
-            return new Snapshot(generation, event, intent, phase, before.id(), before.updated(), before.expires(), error, false);
+            return new Snapshot(generation, event, intent, phase, before.id(), before.updated(), before.expires(), error, false, before.reportedRequestsAccepted());
         });
         signal();
     }
@@ -269,9 +269,11 @@ final class DirectoryPublication implements AutoCloseable {
             state.updateAndGet(before -> before.result(before.phase(), id, before.updated(), before.expires(), before.error()));
             if (cancelled(work)) return;
             mayBeListed = true; // Includes a timed-out/cancelled mutation whose remote outcome is unknown.
-            var result = client.mutate(identity, work.intent().listing(), () -> cancelled(work));
+            var result = client.mutate(identity, work.intent().listing().withRequestsAccepted(selected.requestsAccepted()), () -> cancelled(work));
             visibilityDeadline = result.expiresAt();
-            if (!cancelled(work)) complete(work, "listed", result.updatedAt(), result.expiresAt(), null);
+            if (!cancelled(work)) state.updateAndGet(before -> before.generation() != work.generation() ? before
+                    : before.result("listed", before.id(), result.updatedAt(), result.expiresAt(), null)
+                            .reporting(selected.requestsAccepted()));
         } catch (CancellationException ignored) {
             if (mayBeListed) visibilityDeadline = null;
             // The next iteration withdraws any uncertain publication.
@@ -310,12 +312,12 @@ final class DirectoryPublication implements AutoCloseable {
     private void clearIntent(Snapshot work, String error) {
         state.updateAndGet(before -> before.generation() != work.generation() ? before
                 : new Snapshot(before.generation() + 1, before.event(), null, "failed", before.id(),
-                        before.updated(), before.expires(), error, before.closing()));
+                        before.updated(), before.expires(), error, before.closing(), before.reportedRequestsAccepted()));
     }
 
     @Override @PreDestroy public void close() {
         state.updateAndGet(before -> before.closing() ? before : new Snapshot(before.generation() + 1,
-                before.event(), null, "withdrawing", before.id(), before.updated(), before.expires(), before.error(), true));
+                before.event(), null, "withdrawing", before.id(), before.updated(), before.expires(), before.error(), true, before.reportedRequestsAccepted()));
         try { observation.close(); }
         catch (Exception ignored) { cleanupFailure = "The directory observer could not be unregistered."; }
         signal();
@@ -327,15 +329,19 @@ final class DirectoryPublication implements AutoCloseable {
         if (cleanupFailure != null) throw new IllegalStateException(cleanupFailure);
     }
 
-    record Shared(boolean enabled, String hostLabel, String model) {}
+    record Shared(boolean enabled, String hostLabel, String model, boolean requestsAccepted) {}
     private record Intent(long attempt, String origin, DirectoryClient.Listing listing) {}
     private record Snapshot(long generation, InternetSharing.Observation event, Intent intent, String phase,
-                            String id, Long updated, Long expires, String error, boolean closing) {
+                            String id, Long updated, Long expires, String error, boolean closing, Boolean reportedRequestsAccepted) {
         Snapshot result(String phase, String id, Long updated, Long expires, String error) {
-            return new Snapshot(generation, event, intent, phase, id, updated, expires, error, closing);
+            return new Snapshot(generation, event, intent, phase, id, updated, expires, error, closing,
+                    updated == null ? null : reportedRequestsAccepted);
+        }
+        Snapshot reporting(boolean accepted) {
+            return new Snapshot(generation, event, intent, phase, id, updated, expires, error, closing, accepted);
         }
     }
     @JsonInclude(JsonInclude.Include.ALWAYS)
     record Status(String state, boolean configured, String registryUrl, boolean enabled, boolean canPublish,
-                  String identityId, Long updatedAt, Long expiresAt, String error) {}
+                  String identityId, Long updatedAt, Long expiresAt, String error, Boolean reportedRequestsAccepted) {}
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { DirectorySourceError, readDirectory, type DirectorySnapshot } from "./registry";
 
 export function useDirectory(
-  endpoint: "/registry/v1/listings" | "/api/directory/listings",
+  endpoint: "/registry/v2/listings" | "/api/directory/listings",
   registryOrigin: string,
 ) {
   const [snapshot, setSnapshot] = useState<DirectorySnapshot | null>(null);
