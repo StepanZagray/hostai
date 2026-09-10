@@ -1,5 +1,34 @@
 # Verification
 
+## Missing download records and recovery
+
+The recovery change passes `pnpm check`, 318 frontend tests and all production
+bundles. Twenty isolated download browser scenarios pass. Pure history tests
+cover absent running records, ordinary terminal eviction, initially empty lists,
+returning IDs, mutation reconciliation and the separate 20-notice bound. Browser
+cases verify a single library refresh per missing episode, no automatic starts,
+explicit retry with a new ID, available-model handoff, failed library reads,
+returning completion, and dismissal without cancelling work or recreating a notice.
+The final cases also exercise multiple missing records, model-specific accessible
+names, a persistent announcement region with a changing count, focus recovery
+from a removed Cancel button, preservation of unrelated input focus, uncertain-start
+guards and a manual check joining a held background poll. Gateway lists over 20
+records are rejected by the API parser before history reconciliation.
+
+Initial discovery keeps the starter selector and model input disabled until the
+first status read settles. A held-response test pins that behavior. The first
+browser run exposed an early starter-selection race; keyboard tests were then
+updated to wait for the now-explicit enabled state before sending ArrowDown.
+Recovery at 320px and 1440px was exercised and visually inspected, with a page
+overflow assertion and viewport captures. Logs, screenshots, Opus advice and
+private-display cleanup evidence are retained in `test-results/download-recovery/`.
+
+These browser scenarios use the production owner bundle with intercepted local
+API fixtures, including a successful empty download list. They do not restart
+a real gateway, download files, run Ollama or prove that a missing job stopped.
+Backend storage and lifecycle behavior are unchanged. Notices are local to the
+mounted Models page; durable recovery and automatic resumption remain unimplemented.
+
 ## Saved model review with unavailable browser storage
 
 The change passes `pnpm check`, all 308 frontend tests, and the owner, guest and

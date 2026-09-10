@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Page, type Route } from "@playwright/test";
 import { hostFixture } from "./support/host-fixture";
 import type { ModelDownload } from "../src/lib/model-downloads";
 
@@ -26,7 +26,13 @@ async function fixture(page: Page, initial: ModelDownload[] = []) {
     starts: [] as { requestId: string; model: string }[],
     failRead: false,
     loseStartResponse: false,
+    modelChecks: 0,
+    cancels: [] as string[],
   };
+  await page.route("**/api/models", (route) => {
+    state.modelChecks++;
+    return route.fallback();
+  });
   await page.route("**/api/model-downloads", async (route) => {
     if (route.request().method() === "POST") {
       const body = route.request().postDataJSON();
@@ -45,6 +51,7 @@ async function fixture(page: Page, initial: ModelDownload[] = []) {
   });
   await page.route("**/api/model-downloads/*/cancel", (route) => {
     const job = state.jobs.find((item) => route.request().url().includes(item.id))!;
+    state.cancels.push(job.id);
     job.state = "cancelled";
     job.message = "Download cancelled.";
     return route.fulfill({ json: job });
@@ -331,6 +338,7 @@ for (const width of [320, 768, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto("/models");
     const chooser = page.getByLabel("Choose a starter model", { exact: true });
+    await expect(chooser).toBeEnabled();
     await chooser.focus();
     await page.keyboard.press("ArrowDown");
     await expect(chooser).toHaveValue("qwen2.5:0.5b");
@@ -390,4 +398,299 @@ test("an installed starter requires actual chat admission before offering Try", 
     0,
   );
   expect(state.starts).toHaveLength(0);
+});
+
+for (const width of [320, 1440]) {
+  test(`a missing running download retains an honest recovery notice at ${width}px`, async ({
+    page,
+  }) => {
+    await page.clock.install();
+    const state = await fixture(page, [download()]);
+    await page.setViewportSize({ width, height: 1100 });
+    await page.goto("/models");
+    const panel = page.getByRole("region", { name: "Model downloads", exact: true });
+    await expect(panel.getByRole("progressbar")).toBeVisible();
+    const checks = state.modelChecks;
+    const cancel = panel.getByRole("button", { name: "Cancel download", exact: true });
+    await cancel.focus();
+    await expect(cancel).toBeFocused();
+    state.jobs = [];
+    await page.clock.fastForward(2000);
+    await expect(panel.getByText("Status unknown", { exact: true })).toBeVisible();
+    await expect(
+      panel.getByRole("heading", {
+        name: `Download status unknown for ${download().model}`,
+        exact: true,
+      }),
+    ).toBeFocused();
+    await expect(panel).toContainText("does not confirm whether they finished");
+    await expect(panel.getByRole("progressbar")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "Cancel download", exact: true })).toHaveCount(
+      0,
+    );
+    await expect.poll(() => state.modelChecks).toBe(checks + 1);
+    await expect(
+      panel.getByRole("button", {
+        name: `Check model library for ${download().model}`,
+        exact: true,
+      }),
+    ).toBeEnabled();
+    expect(state.starts).toHaveLength(0);
+    const checkStatus = panel.getByRole("button", { name: "Check download status", exact: true });
+    await checkStatus.click();
+    await expect(checkStatus).toBeEnabled();
+    await checkStatus.click();
+    await expect(checkStatus).toBeEnabled();
+    expect(state.modelChecks).toBe(checks + 1);
+    state.failRead = true;
+    await checkStatus.click();
+    await expect(panel.getByRole("alert")).toContainText("Saved progress may be out of date");
+    await expect(
+      panel.getByRole("button", { name: `Download again ${download().model}`, exact: true }),
+    ).toBeDisabled();
+    await expect(panel.getByText("Status unknown", { exact: true })).toHaveCount(1);
+    state.failRead = false;
+    await checkStatus.click();
+    await expect(checkStatus).toBeEnabled();
+    await expect(panel.getByText("Status unknown", { exact: true })).toHaveCount(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+    await panel
+      .getByRole("button", { name: `Dismiss notice for ${download().model}`, exact: true })
+      .evaluate((element) => element.scrollIntoView({ block: "end" }));
+    await page.screenshot({
+      path: `test-results/download-unreported-${width}.png`,
+      animations: "disabled",
+    });
+
+    await panel
+      .getByRole("button", { name: `Download again ${download().model}`, exact: true })
+      .click();
+    await expect(panel.getByRole("progressbar")).toBeVisible();
+    expect(state.starts).toHaveLength(1);
+    expect(state.starts[0].model).toBe(download().model);
+    expect(state.starts[0].requestId).not.toBe(id);
+    await panel
+      .getByRole("button", { name: `Dismiss notice for ${download().model}`, exact: true })
+      .click();
+    await expect(page.getByLabel("Model and tag", { exact: true })).toBeFocused();
+    await expect(panel.getByText("Status unknown", { exact: true })).toHaveCount(0);
+    await expect(panel.getByRole("progressbar")).toBeVisible();
+    expect(state.starts).toHaveLength(1);
+    expect(state.cancels).toHaveLength(0);
+  });
+}
+
+test("a missing download checks for an available model, then reconciles a returning completed record", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const state = await fixture(page, [download()]);
+  await page.goto("/models");
+  await expect(page.getByRole("progressbar")).toBeVisible();
+  await page.route("**/api/models", (route) => {
+    state.modelChecks++;
+    return route.fulfill({
+      json: {
+        connected: true,
+        models: [
+          {
+            name: download().model,
+            sizeBytes: 100000000,
+            parameterSize: "",
+            quantization: "",
+            modifiedAt: "",
+            chatUnavailableReason: null,
+          },
+        ],
+      },
+    });
+  });
+  state.jobs = [];
+  await page.clock.fastForward(2000);
+  await expect(
+    page.getByRole("link", { name: `Try available model ${download().model}`, exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("Status unknown", { exact: true })).toBeVisible();
+  expect(state.starts).toHaveLength(0);
+  const before = state.modelChecks;
+  state.jobs = [download({ state: "completed", message: "Download completed." })];
+  await page.getByRole("button", { name: "Check download status", exact: true }).click();
+  await expect(page.getByText("Status unknown", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Try downloaded model", exact: true })).toBeVisible();
+  await expect.poll(() => state.modelChecks).toBe(before + 1);
+  expect(state.starts).toHaveLength(0);
+});
+
+test("failed library recovery stays actionable and dismissing unknown status does not recreate it", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const state = await fixture(page, [download()]);
+  await page.goto("/models");
+  await expect(page.getByRole("progressbar")).toBeVisible();
+  await page.route("**/api/models", (route) =>
+    route.fulfill({ status: 503, json: { detail: "Unavailable" } }),
+  );
+  state.jobs = [];
+  await page.clock.fastForward(2000);
+  await expect(
+    page.getByText(
+      "The model library could not be checked. Check it again before downloading more files.",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: `Try available model ${download().model}`, exact: true }),
+  ).toHaveCount(0);
+  await page
+    .getByRole("button", { name: `Dismiss notice for ${download().model}`, exact: true })
+    .click();
+  await page.clock.fastForward(16000);
+  await expect(page.getByText("Status unknown", { exact: true })).toHaveCount(0);
+  expect(state.starts).toHaveLength(0);
+  expect(state.cancels).toHaveLength(0);
+});
+
+test("initial download discovery keeps the form inactive until it can retain edits", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  let release: (() => void) | undefined;
+  await page.route("**/api/model-downloads", async (route) => {
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await route.fulfill({ json: { downloads: [] } });
+  });
+  try {
+    await page.goto("/models");
+    await expect.poll(() => !!release).toBe(true);
+    const chooser = page.getByLabel("Choose a starter model", { exact: true });
+    const input = page.getByLabel("Model and tag", { exact: true });
+    await expect(chooser).toBeDisabled();
+    await expect(input).toBeDisabled();
+    release!();
+    await expect(chooser).toBeEnabled();
+    await chooser.selectOption("gemma3:1b");
+    await expect(input).toHaveValue("gemma3:1b");
+    expect(state.starts).toHaveLength(0);
+  } finally {
+    release?.();
+  }
+});
+
+test("multiple unknown records have named actions, protect uncertain starts and keep manual checks usable during polling", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const state = await fixture(page, [download()]);
+  const other = download({
+    id: "7c1778da-716f-49a2-b7f0-6bd5bcd841ee",
+    model: "another-model:small",
+  });
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        connected: true,
+        models: [download().model, other.model].map((name) => ({
+          name,
+          sizeBytes: 1000000,
+          chatUnavailableReason: null,
+        })),
+      },
+    }),
+  );
+  await page.goto("/models");
+  const panel = page.getByRole("region", { name: "Model downloads", exact: true });
+  await expect(panel.getByRole("progressbar")).toBeVisible();
+  const noticeId = await panel.getByRole("status").last().getAttribute("id");
+  expect(noticeId).toBeTruthy();
+  await page.getByLabel("Model and tag", { exact: true }).fill("draft-model:small");
+  state.jobs = [];
+  await page.clock.fastForward(2000);
+  await expect(page.getByLabel("Model and tag", { exact: true })).toBeFocused();
+  const check = panel.getByRole("button", { name: "Check download status", exact: true });
+  await expect(check).toBeEnabled();
+  state.jobs = [other];
+  await check.click();
+  await expect(panel.getByRole("progressbar")).toBeVisible();
+  state.jobs = [];
+  await check.click();
+  await expect(
+    panel.getByRole("status").filter({ hasText: "2 previously running downloads" }),
+  ).toHaveAttribute("id", noticeId!);
+  const restart = panel.getByRole("button", {
+    name: `Download again ${download().model}`,
+    exact: true,
+  });
+  await expect(restart).toBeEnabled();
+  await expect(
+    panel.getByRole("button", { name: `Download again ${other.model}`, exact: true }),
+  ).toBeEnabled();
+  await expect(panel.getByRole("link", { name: /^Try available model / })).toHaveCount(2);
+
+  let hideJobs = true;
+  await page.route("**/api/model-downloads", (route) =>
+    route.request().method() === "GET" && hideJobs
+      ? route.fulfill({ json: { downloads: [] } })
+      : route.fallback(),
+  );
+  state.loseStartResponse = true;
+  await restart.click();
+  await expect(
+    panel.getByRole("button", { name: "Retry start request", exact: true }),
+  ).toBeVisible();
+  await expect(restart).toBeDisabled();
+  for (const model of [download().model, other.model]) {
+    await expect(
+      panel.getByRole("button", { name: `Dismiss notice for ${model}`, exact: true }),
+    ).toBeDisabled();
+  }
+  await expect(panel.getByRole("link", { name: /^Try available model / })).toHaveCount(0);
+  expect(state.starts).toHaveLength(1);
+  hideJobs = false;
+  state.loseStartResponse = false;
+  await check.click();
+  await expect(panel.getByRole("progressbar")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Retry start request", exact: true })).toHaveCount(
+    0,
+  );
+
+  let release: (() => void) | undefined;
+  let pollReads = 0;
+  const hold = async (route: Route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    pollReads++;
+    await new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await route.fulfill({ json: { downloads: state.jobs } }).catch(() => {});
+  };
+  await page.route("**/api/model-downloads", hold);
+  try {
+    await page.clock.fastForward(2000);
+    await expect.poll(() => pollReads).toBe(1);
+    await expect(check).toBeEnabled();
+    await check.click();
+    await expect(
+      panel.getByRole("button", { name: "Checking download status…", exact: true }),
+    ).toBeDisabled();
+    expect(pollReads).toBe(1);
+    release!();
+    await expect(check).toBeEnabled();
+    expect(pollReads).toBe(1);
+  } finally {
+    release?.();
+    await page.unroute("**/api/model-downloads", hold);
+  }
+  await panel
+    .getByRole("link", { name: `Try available model ${download().model}`, exact: true })
+    .click();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    download().model,
+  );
+  expect(state.starts).toHaveLength(1);
+  expect(state.cancels).toHaveLength(0);
 });

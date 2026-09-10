@@ -1,5 +1,35 @@
 # Autonomous improvement log
 
+## Recover when the gateway stops reporting a download
+
+Claude Opus 5 High identified that a successful empty status response after a
+gateway restart silently removed an observed running job. The client now retains
+that job in a separate, bounded collection of unknown outcomes, checks the model
+library once per missing episode and offers explicit check, try, start-again and
+dismiss actions. A returning ID reconciles with the authoritative response;
+evicted completed, failed or cancelled records need no warning.
+
+The outcome stays unknown: a missing record alone cannot establish whether a
+download completed, stopped, aged out or continues through another Ollama client.
+Starting again uses a new request ID and discloses possible additional transfer.
+Dismissing only clears the notice and returns focus to the model input. No model
+download, inference or public sharing starts automatically. Recovery history is
+limited to 20 notices in the mounted Models page; navigation/reload clears it.
+Gateway history and download resumption remain non-durable.
+
+Browser verification also exposed an early-render starter-selection race. The
+model entry and starter selector now remain disabled until initial download
+discovery completes, so edits cannot be accepted before the form can retain them.
+The check can fail and still release editing; starting still requires known status.
+
+The final Opus review improved keyboard and screen-reader recovery: removal of a
+focused Cancel button transfers focus to that model's unknown-status heading,
+actions include their model in accessible names, and a persistent live region
+announces the missing-record count. Background polling no longer disables the
+manual status check; a manual check can join the active poll with visible feedback.
+The final browser cases cover these transitions, multiple records and uncertain
+starts. Oversized gateway responses remain rejected by the existing API parser.
+
 ## Keep model review usable when bookmark storage fails
 
 Claude Opus 5 High confirmed that Use current model was a storage-dependent gate:

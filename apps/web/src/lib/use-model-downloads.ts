@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { mergeDownload, reconcileDownloads, type DownloadHistory } from "./download-history";
 import {
   cancelDownload,
   DownloadRequestError,
@@ -8,8 +9,9 @@ import {
   type ModelDownload,
 } from "./model-downloads";
 
-export function useModelDownloads(onCompleted: () => Promise<void>) {
-  const [downloads, setDownloads] = useState<ModelDownload[]>([]);
+export function useModelDownloads(refreshLibrary: () => Promise<void>) {
+  const [history, setHistory] = useState<DownloadHistory>({ downloads: [], unreported: [] });
+  const { downloads, unreported } = history;
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [statusError, setStatusError] = useState("");
@@ -20,16 +22,21 @@ export function useModelDownloads(onCompleted: () => Promise<void>) {
   const read = useRef<AbortController | null>(null);
   const action = useRef<AbortController | null>(null);
   const completed = useRef(new Set<string>());
-  const refresh = useCallback(async () => {
-    if (read.current) return;
+  const checkedUnreported = useRef(new Set<string>());
+  const refresh = useCallback(async (interactive = false) => {
+    if (read.current) {
+      // A manual check joins the in-flight poll and gets visible feedback.
+      if (interactive) setRefreshing(true);
+      return;
+    }
     const controller = new AbortController();
     read.current = controller;
-    setRefreshing(true);
+    setRefreshing(interactive);
     const timer = setTimeout(() => controller.abort(), 12_000);
     try {
       const jobs = await listDownloads(controller.signal);
       if (read.current !== controller || controller.signal.aborted) return;
-      setDownloads(jobs);
+      setHistory((previous) => reconcileDownloads(previous, jobs));
       setStatusError("");
       if (unresolved.current && jobs.some((job) => job.id === unresolved.current!.requestId)) {
         unresolved.current = null;
@@ -86,10 +93,13 @@ export function useModelDownloads(onCompleted: () => Promise<void>) {
         changed = true;
       }
     }
-    if (changed) void onCompleted();
-  }, [downloads, onCompleted]);
-  const merge = (job: ModelDownload) =>
-    setDownloads((current) => [job, ...current.filter((item) => item.id !== job.id)].slice(0, 20));
+    for (const job of unreported) {
+      if (!checkedUnreported.current.has(job.id)) changed = true;
+    }
+    checkedUnreported.current = new Set(unreported.map((job) => job.id));
+    if (changed) void refreshLibrary();
+  }, [downloads, unreported, refreshLibrary]);
+  const merge = (job: ModelDownload) => setHistory((previous) => mergeDownload(previous, job));
   async function mutate(request: DownloadRequest | null, id?: string) {
     if (action.current) return;
     const controller = new AbortController();
@@ -138,13 +148,19 @@ export function useModelDownloads(onCompleted: () => Promise<void>) {
   }
   return {
     downloads,
+    unreported,
+    dismissUnreported: (id: string) =>
+      setHistory((previous) => ({
+        ...previous,
+        unreported: previous.unreported.filter((job) => job.id !== id),
+      })),
     loading,
     refreshing,
     statusError,
     actionError,
     pending,
     uncertain,
-    refresh,
+    refresh: () => refresh(true),
     dismissUncertain: () => {
       unresolved.current = null;
       setUncertain(null);

@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
@@ -8,6 +8,7 @@ import { downloadModelError } from "../lib/model-downloads";
 import { starterModels } from "../lib/starter-models";
 import { chatUnavailableReason } from "../lib/model-admission";
 import { Badge, Button, ExternalLink, PanelHeading, button, muted, panel } from "./ui";
+import { UnreportedDownloads } from "./unreported-downloads";
 
 const sizes = new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 });
 const bytes = (value: number) =>
@@ -18,6 +19,16 @@ export function ModelDownloads() {
   const jobs = useModelDownloads(refresh);
   const [model, setModel] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const modelInput = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const removedFocus = useRef<string | null>(null);
+  useEffect(() => {
+    const id = removedFocus.current;
+    removedFocus.current = null;
+    if (id && jobs.unreported.some((job) => job.id === id))
+      panelRef.current?.querySelector<HTMLElement>(`[data-unreported-download="${id}"]`)?.focus();
+  }, [jobs.unreported]);
+  const editingDisabled = jobs.loading || jobs.pending || !!jobs.uncertain;
   const selected = jobs.uncertain?.model ?? model.trim();
   const starter = starterModels.find((item) => item.tag === selected);
   const installedSelection = models.find((item) => item.name === selected);
@@ -32,7 +43,7 @@ export function ModelDownloads() {
   const canStart =
     !!status?.ollamaConnected && !jobs.loading && !jobs.statusError && !jobs.pending && !active;
   return (
-    <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Model downloads">
+    <section ref={panelRef} className={`${panel} ${css({ mb: "6" })}`} aria-label="Model downloads">
       <PanelHeading
         title="Download a model"
         description="Bring a model from the Ollama library onto this host."
@@ -54,7 +65,7 @@ export function ModelDownloads() {
           <select
             id="starter-model"
             value={starter?.tag ?? ""}
-            disabled={jobs.pending || !!jobs.uncertain}
+            disabled={editingDisabled}
             aria-describedby="starter-help download-help"
             onChange={(event) => {
               setModel(event.target.value);
@@ -95,10 +106,11 @@ export function ModelDownloads() {
             className={css({ display: "flex", gap: "3", flexWrap: "wrap", alignItems: "start" })}
           >
             <input
+              ref={modelInput}
               id="download-model"
               value={jobs.uncertain?.model ?? model}
               onChange={(event) => setModel(event.target.value)}
-              disabled={jobs.pending || !!jobs.uncertain}
+              disabled={editingDisabled}
               aria-describedby={
                 submitted && validation ? "download-help download-error" : "download-help"
               }
@@ -339,13 +351,21 @@ export function ModelDownloads() {
                             : " · Total size unknown"}
                         </p>
                       )}
-                      <Button
-                        variant="ghost"
+                      <button
+                        type="button"
+                        className={button({ variant: "ghost" })}
+                        ref={(element) => {
+                          if (!element) return;
+                          return () => {
+                            removedFocus.current =
+                              document.activeElement === element ? job.id : null;
+                          };
+                        }}
                         disabled={jobs.pending}
                         onClick={() => void jobs.cancel(job.id)}
                       >
                         Cancel download
-                      </Button>
+                      </button>
                     </div>
                   )}
                   {job.state === "cancelled" && (
@@ -395,9 +415,29 @@ export function ModelDownloads() {
             })}
           </ul>
         )}
+        {jobs.unreported.length > 0 && !jobs.statusError && !jobs.uncertain && (
+          <Button disabled={jobs.refreshing} onClick={() => void jobs.refresh()}>
+            <RefreshCw size={15} />
+            {jobs.refreshing ? "Checking download status…" : "Check download status"}
+          </Button>
+        )}
+        <UnreportedDownloads
+          downloads={jobs.unreported}
+          restartDisabled={!canStart || !!jobs.uncertain}
+          dismissDisabled={jobs.pending || !!jobs.uncertain}
+          onRestart={(tag) => {
+            setModel(tag);
+            void jobs.start(tag);
+          }}
+          onDismiss={(id) => {
+            jobs.dismissUnreported(id);
+            modelInput.current?.focus();
+          }}
+        />
         <p className={`${muted} ${css({ mt: "4", fontSize: "10px" })}`}>
           The latest 20 download records are kept until the gateway restarts. Model files stay in
-          Ollama. Downloading does not start inference or share a model.
+          Ollama. Downloading does not start inference or share a model. This page remembers up to
+          20 unreported downloads until you leave or reload it.
         </p>
       </div>
     </section>

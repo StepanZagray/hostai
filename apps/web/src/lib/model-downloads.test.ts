@@ -41,6 +41,15 @@ it("accepts unknown current-layer counts without inventing progress", async () =
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ downloads: [job] })));
   expect(await listDownloads(new AbortController().signal)).toEqual([job]);
 });
+it("rejects oversized gateway history before reconciliation", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(Response.json({ downloads: Array(21).fill(job) })),
+  );
+  await expect(listDownloads(new AbortController().signal)).rejects.toThrow(
+    "Download status could not be read.",
+  );
+});
 it.each([
   { completedBytes: -1 },
   { completedBytes: 501 },
