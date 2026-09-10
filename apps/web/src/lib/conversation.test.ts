@@ -50,7 +50,7 @@ describe("conversation context", () => {
     ]);
   });
   it.each(["streaming", "failed", "cancelled"] as const)(
-    "excludes the %s answer while preserving all user messages",
+    "excludes the entire %s exchange without changing the visible history",
     (state) => {
       const interrupted = {
         ...completed,
@@ -63,7 +63,6 @@ describe("conversation context", () => {
       expect(chatHistory(turns, completed.model, "Try again")).toEqual([
         { role: "user", content: completed.prompt },
         { role: "assistant", content: completed.response },
-        { role: "user", content: "Unfinished question" },
         { role: "user", content: "Try again" },
       ]);
       expect(turns[1].response).toBe("Partial");
@@ -74,7 +73,6 @@ describe("conversation context", () => {
     "does not forward blank assistant content rejected by the gateway",
     (response) => {
       expect(chatHistory([{ ...completed, response }], completed.model, "Next")).toEqual([
-        { role: "user", content: completed.prompt },
         { role: "user", content: "Next" },
       ]);
     },
@@ -87,19 +85,17 @@ describe("conversation context", () => {
 });
 
 describe("request context budgets", () => {
-  it("admits exactly 64 messages, then removes one oldest user-only turn", () => {
-    const turns = Array.from({ length: 64 }, (_, i) => ({
+  it("does not let failed exchanges displace completed context at the message limit", () => {
+    const turns = Array.from({ length: 31 }, (_, i) => ({ ...completed, id: String(i) }));
+    const failed = Array.from({ length: 64 }, (_, i) => ({
       ...completed,
-      id: String(i),
-      prompt: `Question ${i}`,
+      id: `failed-${i}`,
       state: "failed" as const,
     }));
-    const atLimit = prepare(turns.slice(1), completed.model, "Next");
-    expect(atLimit.messages).toHaveLength(64);
-    expect(atLimit.omittedTurns).toBe(0);
-    const overLimit = prepare(turns, completed.model, "Next");
-    expect(overLimit.messages).toEqual(atLimit.messages);
-    expect(overLimit.omittedTurns).toBe(1);
+    const request = prepare([...turns, ...failed], completed.model, "Next");
+    expect(request.messages).toHaveLength(63);
+    expect(request.includedTurns).toBe(31);
+    expect(request.omittedTurns).toBe(0);
   });
 
   it("keeps exactly 65536 content code units and drops a whole turn above it", () => {
@@ -175,10 +171,7 @@ describe("request context budgets", () => {
     const turn = { ...completed, state: "cancelled" as const, response: "a".repeat(20000) };
     const request = prepare([turn], completed.model, "Try again");
     expect(request.omittedTurns).toBe(0);
-    expect(request.messages).toEqual([
-      { role: "user", content: turn.prompt },
-      { role: "user", content: "Try again" },
-    ]);
+    expect(request.messages).toEqual([{ role: "user", content: "Try again" }]);
   });
 
   it("rejects invalid new prompts instead of shortening them", () => {

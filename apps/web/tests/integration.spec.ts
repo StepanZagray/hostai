@@ -15,7 +15,7 @@ test("shared UI streams through Java and releases a cancelled request", async ({
   await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
     "test-model:small",
   );
-  await expect(page.getByText("Local inference ready", { exact: true })).toBeVisible();
+  await expect(page.getByText("Available to try", { exact: true })).toBeVisible();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Integration check");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(
@@ -33,8 +33,13 @@ test("shared UI streams through Java and releases a cancelled request", async ({
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "Generation stopped" })).toBeVisible();
   await expect(
-    page.getByText("Stopped response · Not used in later prompts.", { exact: true }),
+    page.getByText("Stopped response · Question and response excluded from later prompts.", {
+      exact: true,
+    }),
   ).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue(
+    "Cancellation check",
+  );
   await page.screenshot({ path: "test-results/cancelled-conversation.png", fullPage: true });
   await expect
     .poll(async () => (await (await page.request.get("/api/status")).json()).activeRequests)
@@ -50,7 +55,6 @@ test("shared UI streams through Java and releases a cancelled request", async ({
   expect((await nextRequest).postDataJSON().messages).toEqual([
     { role: "user", content: "Integration check" },
     { role: "assistant", content: "Hello from the isolated test runtime. Stream complete." },
-    { role: "user", content: "Cancellation check" },
     { role: "user", content: "After stopping" },
   ]);
   await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);

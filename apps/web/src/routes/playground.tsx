@@ -63,9 +63,20 @@ function Playground() {
     [turns, model, prompt, temperature, maxTokens],
   );
   const abort = useRef<AbortController | null>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const restoreFocus = useRef(false);
+  useEffect(() => {
+    if (!busy && restoreFocus.current) {
+      restoreFocus.current = false;
+      composer.current?.focus({ preventScroll: true });
+    }
+  }, [busy]);
   const scroll = useConversationScroll(turns);
   useEffect(() => () => abort.current?.abort(), []);
   const ready = !!status?.ollamaConnected && modelAvailable && modelError === null;
+  const responded = turns.some(
+    (turn) => turn.model === model && turn.state === "completed" && !!turn.response.trim(),
+  );
   async function send() {
     if (abort.current || !ready || !prompt.trim()) return;
     if (draft.error !== null) return;
@@ -104,8 +115,21 @@ function Playground() {
         if (chunk.done && chunk.outputTokens !== undefined)
           setNotice(`${chunk.outputTokens} output tokens · Generated locally`);
       });
+      if (!answer.trim()) {
+        restoreFocus.current = true;
+        setPrompt((value) => value || turn.prompt);
+        setNotice(
+          "The model returned no text. Your prompt is restored; edit and send manually to retry.",
+        );
+      }
     } catch (cause) {
-      if (current.signal.aborted) setNotice("Generation stopped. The response may be incomplete.");
+      restoreFocus.current = true;
+      setPrompt((value) => value || turn.prompt);
+      setNotice(
+        "Your prompt is restored. Edit it and send manually to retry; the unfinished exchange is excluded from context.",
+      );
+      if (current.signal.aborted)
+        setNotice("Generation stopped. Your prompt is restored; edit and send manually to retry.");
       else
         setError(cause instanceof Error ? cause.message : "Generation failed. Please try again.");
       updateTurn(answer, current.signal.aborted ? "cancelled" : "failed");
@@ -343,7 +367,7 @@ function Playground() {
                                 : message.turn.state === "failed"
                                   ? "Incomplete response"
                                   : "Empty response"}
-                              {" · Not used in later prompts."}
+                              {" · Question and response excluded from later prompts."}
                             </p>
                           )}
                       </div>
@@ -426,6 +450,7 @@ function Playground() {
               })}
             >
               <textarea
+                ref={composer}
                 aria-label="Message"
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
@@ -466,12 +491,20 @@ function Playground() {
                   Enter to send · Shift + Enter for a new line
                 </span>
                 {busy ? (
-                  <Button type="button" onClick={() => abort.current?.abort()}>
+                  <Button
+                    key="stop"
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      abort.current?.abort();
+                    }}
+                  >
                     <Square />
                     Stop
                   </Button>
                 ) : (
                   <Button
+                    key="send"
                     type="submit"
                     variant="primary"
                     disabled={!ready || draft.error !== null}
@@ -602,14 +635,32 @@ function Playground() {
           <div className={css({ borderTop: "1px solid token(colors.line)", pt: "5", mt: "6" })}>
             <Badge tone={ready ? "good" : "warning"}>
               {ready
-                ? "Local inference ready"
+                ? busy
+                  ? "Trying this model…"
+                  : responded
+                    ? "Model answered a prompt"
+                    : "Available to try"
                 : modelBlocked
                   ? "Selected model cannot chat"
                   : status?.ollamaConnected && model && !modelAvailable
                     ? "Selected model unavailable"
                     : "Runtime not ready"}
             </Badge>
+            {ready && !busy && responded && (
+              <div className={css({ mt: "3" })}>
+                <p className={`${muted} ${css({ fontSize: "xs", mb: "3" })}`}>
+                  This model answered a prompt here. Review its client access settings before
+                  sharing.
+                </p>
+                <Link to="/sharing" search={{ model }} className={button({ variant: "secondary" })}>
+                  Set up client access <ArrowRight size={14} />
+                </Link>
+              </div>
+            )}
             <p className={`${muted} ${css({ fontSize: "11px", mt: "3" })}`}>
+              {ready &&
+                !responded &&
+                "Installed does not mean tested. Send a prompt to try this model. "}
               Conversations live in this tab and clear when you leave the playground.
             </p>
           </div>

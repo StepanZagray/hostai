@@ -51,7 +51,6 @@ test("stream failures are visible and allow another request", async ({ page }) =
     if (++attempts === 1)
       return route.fulfill({ status: 429, json: { detail: "All generation slots are busy." } });
     expect(route.request().postDataJSON().messages).toEqual([
-      { role: "user", content: "Hello" },
       { role: "user", content: "Try again" },
     ]);
     return route.fulfill({
@@ -243,15 +242,14 @@ test("failed responses stay visible but are excluded from the next prompt", asyn
   await expect(page.getByRole("alert")).toHaveText("Generation interrupted");
   await expect(page.getByText("Unfinished answer", { exact: true })).toBeVisible();
   await expect(
-    page.getByText("Incomplete response · Not used in later prompts.", { exact: true }),
+    page.getByText("Incomplete response · Question and response excluded from later prompts.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Try this instead");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByText("Finished answer", { exact: true })).toBeVisible();
-  expect(sent[1]).toEqual([
-    { role: "user", content: "First attempt" },
-    { role: "user", content: "Try this instead" },
-  ]);
+  expect(sent[1]).toEqual([{ role: "user", content: "Try this instead" }]);
   await expect(page.getByText("Unfinished answer", { exact: true })).toBeVisible();
   await page.screenshot({ path: "test-results/interrupted-conversation.png", fullPage: true });
 });
@@ -273,15 +271,14 @@ test("empty completed answers do not poison the next request", async ({ page }) 
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("First question");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(
-    page.getByText("Empty response · Not used in later prompts.", { exact: true }),
+    page.getByText("Empty response · Question and response excluded from later prompts.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Please answer");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByText("Now answered", { exact: true })).toBeVisible();
-  expect(sent[1]).toEqual([
-    { role: "user", content: "First question" },
-    { role: "user", content: "Please answer" },
-  ]);
+  expect(sent[1]).toEqual([{ role: "user", content: "Please answer" }]);
 });
 
 test("model disappearance cannot silently switch an existing conversation", async ({ page }) => {
@@ -362,7 +359,6 @@ test("truncated responses are labeled incomplete and excluded from follow-up con
         body: '{"content":"Truncated answer","done":false}\n',
       });
     expect(route.request().postDataJSON().messages).toEqual([
-      { role: "user", content: "Start" },
       { role: "user", content: "Continue" },
     ]);
     return route.fulfill({
@@ -375,7 +371,9 @@ test("truncated responses are labeled incomplete and excluded from follow-up con
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByRole("alert")).toContainText("before the model finished");
   await expect(
-    page.getByText("Incomplete response · Not used in later prompts.", { exact: true }),
+    page.getByText("Incomplete response · Question and response excluded from later prompts.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Continue");
   await page.getByRole("button", { name: "Send message" }).click();
@@ -389,10 +387,7 @@ test("duplicate submissions admit one request and stopping before headers allows
   let calls = 0;
   await page.route("**/api/chat", (route) => {
     if (++calls === 1) return; // Hold headers until the browser cancels this intercepted request.
-    expect(route.request().postDataJSON().messages).toEqual([
-      { role: "user", content: "Waiting" },
-      { role: "user", content: "Retry" },
-    ]);
+    expect(route.request().postDataJSON().messages).toEqual([{ role: "user", content: "Retry" }]);
     return route.fulfill({
       contentType: "application/x-ndjson",
       body: '{"content":"Retry succeeded","done":true}\n',
@@ -409,9 +404,13 @@ test("duplicate submissions admit one request and stopping before headers allows
   await expect.poll(() => calls).toBe(1);
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(
-    page.getByText("Stopped response · Not used in later prompts.", { exact: true }),
+    page.getByText("Stopped response · Question and response excluded from later prompts.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.getByText("Thinking…", { exact: true })).toHaveCount(0);
+  await expect(input).toHaveValue("Waiting");
+  expect(calls).toBe(1);
   await input.fill("Retry");
   await page.getByRole("button", { name: "Send message" }).click();
   await expect(page.getByText("Retry succeeded", { exact: true })).toBeVisible();

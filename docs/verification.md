@@ -422,3 +422,42 @@ Visual evidence includes `guest-onboarding-{320,768,1024,1440}.png`,
 isolation checks passed, and its exact compositor PID/runtime were absent afterward.
 Claude Opus 5 High provided the focused read-only UX advice. The test services used
 private storage and were stopped after verification.
+
+
+## Owner prompt recovery and model-test handoff
+
+The final run passed 279 frontend tests, TypeScript, lint, formatting, production
+builds and 73 isolated browser scenarios. The shared context builder now excludes
+both halves of failed, cancelled, streaming and empty completed exchanges. Its
+existing character/byte/message boundary tests still pass; completed context remains
+ordered and model-scoped, and excluded failed exchanges do not consume its budget.
+
+Five owner recovery browser cases cover capacity rejection, network failure,
+malformed records, truncated responses and an empty terminal response. They inspect
+the edited request body, restored composer/focus and retained transcript at
+320/768/1024/1440px. The sharing handoff checks that a completed response links to
+the selected model and sends no sharing mutation. Existing guest, Markdown,
+scrolling, model-admission and context-budget browser regressions also ran.
+
+The real proxy/Java integration used the isolated Ollama stub: it completed one
+response, cancelled another, checked active requests returned to zero, and verified
+the following request omitted the cancelled question and answer. The separate
+synthetic download scenario also passed cancel, retry, install confirmation and
+chat with that exact model. No actual model files, GPU inference or public tunnel
+were used. Backend implementation did not change; Java packaging was run with
+tests skipped, and this cycle makes no new claim of a full backend test run.
+
+The initial browser run had 37 passes and three failures. Two required updating an
+old context expectation and a label locator; the third exposed Stop's reused button
+becoming Send before the click completed once a draft was restored. Separate button
+identities and preventing the Stop click's default action fixed the unintended
+submission. The final suite asserts only one request exists after Stop until the
+user explicitly sends again. All 73 scenarios passed after those corrections.
+
+Evidence under `test-results/` includes `owner-recovery-*.png`,
+`owner-model-tested.png` and `cancelled-conversation.png`. These were visually
+inspected on the proved private Sway 1.12/pixman display. Its compositor/runtime
+were removed; all private Java, Node and stub services were stopped after checks.
+Claude Opus 5 High supplied the focused read-only advice. A model answering a
+prompt is evidence for that conversation only, not a persistent readiness or
+memory-fit assessment; navigation/model switching still clears owner history.

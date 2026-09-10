@@ -89,7 +89,9 @@ test("unfinished code remains readable and a failed answer can be copied as part
     'print("unfinished")',
   );
   await expect(
-    page.getByText("Incomplete response · Not used in later prompts.", { exact: true }),
+    page.getByText("Incomplete response · Question and response excluded from later prompts.", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Copy partial response", exact: true }),
@@ -136,7 +138,7 @@ test("copy feedback belongs to the current command even when writes finish out o
     });
   });
   await page.goto("/playground");
-  await expect(page.getByText("Local inference ready", { exact: true })).toBeVisible();
+  await expect(page.getByText("Available to try", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "API example", exact: true }).click();
   const copy = page.getByRole("button", { name: "Copy command", exact: true });
   await copy.click();

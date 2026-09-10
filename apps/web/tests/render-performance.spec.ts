@@ -121,7 +121,7 @@ for (const kind of ["prose", "markdown"] as const) {
         { content },
       );
       await page.goto("/playground");
-      await expect(page.getByText("Local inference ready", { exact: true })).toBeVisible();
+      await expect(page.getByText("Available to try", { exact: true })).toBeVisible();
       await page
         .getByRole("textbox", { name: "Message", exact: true })
         .fill("Measure a long answer");

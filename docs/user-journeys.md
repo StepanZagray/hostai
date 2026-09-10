@@ -24,7 +24,7 @@ real model was downloaded or inference benchmark run.
 | Host: prepare inference | [Setup](../apps/web/src/routes/connection.tsx) shows Ollama commands | Ollama installation/startup are external; a failed status check is not proof that a process is stopped. | Detect existing runtime, explain the missing part, show only the action needed. |
 | Host: choose/download a model | [Library](../apps/web/src/routes/models.tsx) lists installed models and manages explicit tagged downloads | No catalog search, fit estimate or automatic recovery after a gateway restart. | Review model size/requirements, explicitly start download, see progress, recover, then test that same model. |
 | Host: refresh discovery | [HostProvider](../apps/web/src/lib/host-context.tsx) polls every 15 seconds while visible; manual refresh also exists | Download completion refreshes the library and offers an explicit Try action when the model is admitted. | Confirm the actual installed model before enabling Try; download status polls separately from host metadata. |
-| Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Admission means allowed to try, not successfully loaded or proven to fit memory. No explicit first-run test status. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
+| Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Playground distinguishes available-to-try from a completed, nonempty reply in the current conversation. This is not a durable readiness or memory-fit assessment. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
 | Host: start serving | [Client access](../apps/web/src/routes/sharing.tsx) publishes one selected model on a separate local guest listener | Starting checks library presence, not memory fit or successful inference. Access restarts stopped. | Choose which model clients may use, test it, then enable serving deliberately. |
 | Host: share over internet | [Java config](../backend/src/main/resources/application.properties) and [web server](../apps/web/server.mjs) bind loopback | Temporary Cloudflare Quick Tunnel sharing checks HTTPS streaming before issuing internet keys. Cloudflare sees traffic; there is no production uptime guarantee or verified identity. | Share a verified endpoint with selected clients; expose status and Stop sharing in the same place. |
 | Client: find a host | [Optional directory](directory.md) provides model/host search, signed updates and a standalone browser page | Requires an operator-provided registry; no public deployment, saved hosts, verified URL ownership or moderation. Updated does not mean online. | Browse explicitly listed models, understand freshness and access requirements, then open guest chat. |
@@ -32,7 +32,7 @@ real model was downloaded or inference benchmark run.
 | Client: request access | Guest page discovers intake, generates credentials in memory and waits for approval | No accounts or identity verification. Reload/disconnect loses credentials; approved keys still require expiry or revocation. | Retry lost responses without duplicate requests, cancel explicitly, then connect without sending a prompt automatically. |
 | Client: connect | [Shell](../apps/web/src/components/shell.tsx) exposes one local host workspace | The separate guest page checks model and channel permissions. An internet invite needs no client installation; the host name remains self-asserted. | See host identity, model and access requirements; connect without installing Java, Ollama or a model. |
 | Client: chat | Current Playground uses same-origin `/api/chat` | Guest chat has its own bundle/API and retains draft and partial output through reconnects. Temporary internet access requires a live verified tunnel and a separate internet key. | A client-only conversation surface, with authenticated access to allowed models and useful recovery states. |
-| Either: recover a send | Failed/stopped prompt stays in the transcript; partial answers are excluded from later context | Owner Playground still needs draft recovery. Guest chat restores failed prompts, excludes unfinished exchanges and respects Retry-After without autosending. | Edit/retry the failed turn without manually copying text or duplicating its context; preserve partial output. |
+| Either: recover a send | Failed/stopped prompt stays in the transcript; partial answers are excluded from later context | Owner Playground and guest chat restore failed/stopped prompts and exclude the entire unfinished exchange. Guest chat additionally respects Retry-After; owner retry-delay feedback remains missing. | Edit/retry the failed turn without manually copying text or duplicating its context; preserve partial output. |
 | Either: return to work | Conversations live in route-local state | Navigation, Clear and model switching discard conversations; model switch has no undo. | Keep conversations scoped to host/model, make New chat explicit, and provide recovery for destructive actions. |
 
 ## Initial changes implemented
@@ -69,9 +69,9 @@ model—not a generic metrics dashboard.
    Download cancellation must not imply all cached layers were deleted.
 2. **Make local chat recovery reliable.** Preserve conversations across navigation,
    keep host/model identity attached to each conversation, and add Edit & retry.
-   Do not merely restore the prompt and append another turn: interrupted user
-   messages are already retained in outgoing context, so naive retry duplicates
-   them. Expose capacity/retry delay without automatically generating extra work.
+   Failed, stopped and empty responses now restore the prompt while both halves of
+   that exchange stay out of outgoing context. Earlier completed exchanges remain
+   eligible. Expose owner capacity/retry delay without automatically generating extra work.
 3. **Build one private sharing journey end to end.** Separate operator-only runtime,
    request history and management APIs from guest model/chat APIs. Add durable
    access grants, revocation and per-client admission before internet exposure.
@@ -93,8 +93,8 @@ model—not a generic metrics dashboard.
    registry now supports signed installation continuity, explicit publication,
    model/host search, heartbeats and expiring listings. It is passive and does
    not verify guest URL ownership or availability. Next, establish an operated
-   shared directory, registration/moderation policy and an access-request path;
-   consider saved recent hosts. Private invites work without a listing. Removing
+   shared directory and registration/moderation policy; consider saved recent hosts.
+   The opt-in guest access-request path is now implemented. Private invites work without a listing. Removing
    a listing leaves the tunnel and keys usable; Stop and Revoke remain separate.
 
 These priorities preserve the requested public host-discovery destination. Private
@@ -113,8 +113,9 @@ Do not expose the current owner workspace by changing bind addresses alone.
   not a confirmed bug in the current library-to-chat path. Normal navigation from
   the library mounts the selected model correctly. Do not add an effect that
   silently changes an active conversation before reproducing the precise case.
-- A failed prompt is not lost entirely: it remains visible and can remain in later
-  context. The confirmed friction is missing composer/retry recovery.
+- At the initial audit, a failed prompt remained visible and in later context. The
+  owner-recovery cycle now restores it to the composer and excludes its whole
+  unfinished exchange from later requests. Earlier completed context is retained.
 - [Ollama's qwen3:0.6b listing](https://ollama.com/library/qwen3:0.6b) confirms the
   existing example tag. Its displayed 523MB is model storage, not a RAM estimate.
   HostAI did not download or run it during this audit.
@@ -160,3 +161,22 @@ Guests see the relay privacy disclosure and self-asserted host identity before
 sending. Public chat uses WebSockets, with the same expiry, revocation, Stop and
 admission behavior as local chat. [Guest access](guest-access.md) documents its
 limits. Public discovery remains a separate required product capability.
+
+
+## Testing a local model and recovering a prompt
+
+Playground now labels metadata admission **Available to try**. A completed,
+nonempty reply changes that to **Model answered a prompt** and offers **Set up
+client access** for the same model. This records evidence only within the current
+conversation; it does not benchmark memory fit or persist across navigation. The
+link opens settings and never starts sharing or inference by itself.
+
+A failed, stopped or empty reply restores its question to the composer for explicit
+editing and sending. Partial output and the original question remain visible, but
+neither half is included in later context. Earlier completed exchanges for the
+selected model stay eligible, within the existing request limits. Stop suppresses
+its click's default action and has a separate button identity from Send, so restoring
+a draft cannot accidentally submit it during that same click.
+
+Conversation persistence, non-destructive model switching, owner Retry-After
+feedback, catalog discovery and runtime fit guidance remain follow-up work.

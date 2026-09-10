@@ -12,9 +12,7 @@ export interface ConversationTurn {
 function turnMessages(turn: ConversationTurn): ChatMessage[] {
   return [
     { role: "user", content: turn.prompt },
-    ...(turn.state === "completed" && turn.response.trim()
-      ? [{ role: "assistant" as const, content: turn.response }]
-      : []),
+    { role: "assistant", content: turn.response },
   ];
 }
 
@@ -55,7 +53,11 @@ export function prepareChatRequest(
   let body = serialize(messages);
   if (bytes(body) > MAX_BODY_BYTES)
     return { error: "This message is too large. Shorten it before sending." };
-  const matching = turns.filter((turn) => turn.model === model);
+  // An interrupted exchange stays visible but contributes neither its question
+  // nor its partial answer. Retrying a restored prompt must not send it twice.
+  const matching = turns.filter(
+    (turn) => turn.model === model && turn.state === "completed" && turn.response.trim(),
+  );
   let includedTurns = 0;
   // Work backwards, keeping a contiguous suffix of whole exchanges. Stop at
   // the first boundary rather than skipping a large turn and reviving older context.

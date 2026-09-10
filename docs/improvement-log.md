@@ -1,5 +1,34 @@
 # Autonomous improvement log
 
+## Owner prompt recovery and model-test handoff
+
+Failed, stopped and empty owner replies now restore the prompt for editing. The
+shared context builder includes only completed, nonempty exchanges for the selected
+model, so retrying cannot duplicate an interrupted question. The whole visible
+exchange is labelled excluded; earlier completed context remains eligible.
+
+Playground distinguishes **Available to try** from **Model answered a prompt** and
+links a completed test to that model’s client-access settings. It does not enable
+sharing, run another prompt or promise future memory fit. This observation lasts
+only for the current conversation.
+
+Claude Opus 5 High independently identified the orphan-question bug and missing
+draft recovery. Its suggestion to discard all context before an interruption was
+not adopted: preserving earlier completed exchanges supports a retry in the same
+conversation. Size limits still truncate a contiguous suffix of eligible completed
+exchanges. Browser verification also caught a Stop/Send button-reuse race after
+draft restoration; separate button identities and preventing the Stop click’s
+default action keep cancellation from starting another generation.
+
+Validation: 279 frontend tests, type/lint/format checks, production builds and 73
+isolated browser scenarios passed. These include actual Java/proxy download and
+cancellation flows against the synthetic Ollama fixture, guest chat regression,
+owner failure recovery at 320/768/1024/1440px, and same-model sharing handoff without
+a mutation. Screenshots were inspected. No real model download, GPU workload or
+public tunnel was used. Conversation persistence, model-switch history recovery and
+owner Retry-After feedback remain incomplete.
+
+
 ## Guest onboarding without a key
 
 A guest arriving from discovery now sees the request path before manual key entry.
@@ -188,8 +217,9 @@ skipped in this cycle; proxy and Java code were not changed. Screenshots are in 
 
 A browser regression reproduced an unfinished answer being included in the next
 request. With Opus 5 High advice, display turns now carry lifecycle state and
-produce a separate wire history: all user messages for the selected model remain,
-but only completed, nonblank assistant responses are reused. Interrupted and empty
+produced a separate wire history at that milestone: all user messages for the selected
+model remained, but only completed, nonblank assistant responses were reused. The
+owner-recovery cycle above corrects this to exclude the whole unfinished exchange. Interrupted and empty
 responses stay visible with an exclusion label. This also prevents blank completed
 answers from violating the backend's nonblank-message validation on the next send.
 

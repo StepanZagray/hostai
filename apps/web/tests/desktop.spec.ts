@@ -65,7 +65,7 @@ test("Electron renders the shared localhost app with an isolated renderer", asyn
     await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
     await hostFixture(page);
     await page.goto(new URL("/playground", address).href);
-    await expect(page.getByText("Local inference ready", { exact: true })).toBeVisible();
+    await expect(page.getByText("Available to try", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "API example", exact: true }).click();
     const ipc = resolve(
       process.env.XDG_RUNTIME_DIR!,
