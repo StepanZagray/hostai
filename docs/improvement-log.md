@@ -1,5 +1,25 @@
 # Autonomous improvement log
 
+## Keep keyboard focus with download outcomes
+
+A browser reproduction confirmed that keyboard cancellation dropped focus to the
+document instead of the model's result. Claude Opus 5 High identified both the
+terminal-state gap and earlier focus loss when a pending action disables Cancel.
+The former ref-cleanup path also depended on incidental ref churn during rendering.
+
+The panel now tracks the focused download row and element. When layout removes
+or disables that element, focus stays with the same model's heading, including
+transitions to and from an unknown-outcome notice. A fully evicted record returns
+to the existing model draft, or the panel if editing is unavailable. Explicit focus
+or pointer movement elsewhere clears that intent; progress updates preserve the
+current control. Tracking is local to the mounted panel and cleans up on navigation.
+
+Each reported model heading describes its current status message. Focusing an
+outcome never activates Retry or Try; the next Tab reaches the available action.
+The advisor's malformed-ID selector concern is already covered by strict UUID
+parsing in the download API. Runtime/download behavior and request IDs are unchanged.
+
+
 ## Recover invitation handoff when clipboard access fails
 
 The invite panel previously told the owner to select text manually after a failed

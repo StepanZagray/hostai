@@ -1,5 +1,27 @@
 # Verification
 
+## Keyboard recovery for download outcomes
+
+The original keyboard-cancel scenario failed against the previous production
+bundle. With the fix, all 41 download, download-session and download-focus browser
+scenarios pass, with no skips. Twelve new cases exercise cancellation at 320, 768,
+1024 and 1440px, natural completion/failure, pending cancellation with focus moved
+elsewhere, rejected cancellation, unchanged progress, draft preservation, pointer
+movement, missing/returning records and terminal-record eviction. The existing
+session cases cover navigation boundaries and retained operations.
+
+`pnpm check`, all 293 frontend tests and both owner/guest production builds pass.
+Narrow and desktop cancellation captures were visually inspected. Tests assert
+browser focus, accessible descriptions and Tab behavior; no actual screen reader
+speech is measured. Evidence is in `test-results/download-focus/`, including the
+failing baseline, final logs, Opus advice, four viewport captures and process cleanup.
+
+The production owner bundle used intercepted API fixtures. No real download,
+Ollama, Java lifecycle or public sharing was exercised or changed in this cycle.
+The cancellation message still distinguishes this gateway request from work
+another Ollama client may continue.
+
+
 ## Invitation clipboard recovery
 
 `pnpm check`, all 293 frontend tests and owner/guest production builds pass.
@@ -77,7 +99,7 @@ a full idle interval after returning, and completion refresh counts settle befor
 the baseline is captured. All nine session cases and `pnpm check` pass again.
 Continued polling after leaving Models is intentional while this owner tab is
 visible; uncertain jobs retain the existing fast cadence until resolved/dismissed.
-A pre-existing normal-cancellation focus gap remains outside this lifetime change.
+The subsequent keyboard-recovery change above closes the normal-cancellation focus gap.
 
 ## Missing download records and recovery
 

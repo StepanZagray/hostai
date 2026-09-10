@@ -42,6 +42,7 @@ export function UnreportedDownloads({
             return (
               <li
                 key={job.id}
+                data-download-row={job.id}
                 className={css({ borderTop: "1px solid token(colors.line)", pt: "4" })}
               >
                 <div

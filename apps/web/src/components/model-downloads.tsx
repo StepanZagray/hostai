@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useLayoutEffect, useRef } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
@@ -20,13 +20,40 @@ export function ModelDownloads() {
   const { modelDraft: model, editModel: setModel, submitted, setSubmitted } = jobs;
   const modelInput = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
-  const removedFocus = useRef<string | null>(null);
+  const statusPrefix = useId();
+  const focusedDownload = useRef<{ id: string; element: HTMLElement } | null>(null);
   useEffect(() => {
-    const id = removedFocus.current;
-    removedFocus.current = null;
-    if (id && jobs.unreported.some((job) => job.id === id))
-      panelRef.current?.querySelector<HTMLElement>(`[data-unreported-download="${id}"]`)?.focus();
-  }, [jobs.unreported]);
+    const focusMoved = (event: FocusEvent) => {
+      if (event.target !== focusedDownload.current?.element) focusedDownload.current = null;
+    };
+    const pointerMoved = (event: PointerEvent) => {
+      if (event.target instanceof Node && !focusedDownload.current?.element.contains(event.target))
+        focusedDownload.current = null;
+    };
+    document.addEventListener("focusin", focusMoved, true);
+    document.addEventListener("pointerdown", pointerMoved, true);
+    return () => {
+      document.removeEventListener("focusin", focusMoved, true);
+      document.removeEventListener("pointerdown", pointerMoved, true);
+    };
+  }, []);
+  // Layout changes can disable or remove the focused action, even without a new job list.
+  useLayoutEffect(() => {
+    const focused = focusedDownload.current;
+    if (!focused || (focused.element.isConnected && !focused.element.matches(":disabled"))) return;
+    const activeElement = document.activeElement;
+    if (activeElement && activeElement !== document.body && activeElement !== focused.element) {
+      focusedDownload.current = null;
+      return;
+    }
+    focusedDownload.current = null;
+    const heading = panelRef.current?.querySelector<HTMLElement>(
+      `[data-download-heading="${focused.id}"], [data-unreported-download="${focused.id}"]`,
+    );
+    const target =
+      heading ?? (!modelInput.current?.disabled ? modelInput.current : null) ?? panelRef.current;
+    target?.focus({ preventScroll: true });
+  });
   const editingDisabled = jobs.loading || jobs.pending || !!jobs.uncertain;
   const selected = jobs.uncertain?.model ?? model.trim();
   const starter = starterModels.find((item) => item.tag === selected);
@@ -42,7 +69,18 @@ export function ModelDownloads() {
   const canStart =
     !!status?.ollamaConnected && !jobs.loading && !jobs.statusError && !jobs.pending && !active;
   return (
-    <section ref={panelRef} className={`${panel} ${css({ mb: "6" })}`} aria-label="Model downloads">
+    <section
+      ref={panelRef}
+      tabIndex={-1}
+      className={`${panel} ${css({ mb: "6" })}`}
+      aria-label="Model downloads"
+      onFocusCapture={(event) => {
+        const row = event.target.closest<HTMLElement>("[data-download-row]");
+        focusedDownload.current = row?.dataset.downloadRow
+          ? { id: row.dataset.downloadRow, element: event.target }
+          : null;
+      }}
+    >
       <PanelHeading
         title="Download a model"
         description="Bring a model from the Ollama library onto this host."
@@ -275,6 +313,7 @@ export function ModelDownloads() {
               return (
                 <li
                   key={job.id}
+                  data-download-row={job.id}
                   className={css({ borderTop: "1px solid token(colors.line)", pt: "4" })}
                 >
                   <div
@@ -287,6 +326,9 @@ export function ModelDownloads() {
                     })}
                   >
                     <h3
+                      tabIndex={-1}
+                      data-download-heading={job.id}
+                      aria-describedby={`${statusPrefix}-${job.id}`}
                       className={css({
                         fontFamily: "mono",
                         fontSize: "sm",
@@ -315,6 +357,7 @@ export function ModelDownloads() {
                     </Badge>
                   </div>
                   <p
+                    id={`${statusPrefix}-${job.id}`}
                     role="status"
                     aria-atomic="true"
                     className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}
@@ -353,13 +396,6 @@ export function ModelDownloads() {
                       <button
                         type="button"
                         className={button({ variant: "ghost" })}
-                        ref={(element) => {
-                          if (!element) return;
-                          return () => {
-                            removedFocus.current =
-                              document.activeElement === element ? job.id : null;
-                          };
-                        }}
                         disabled={jobs.pending}
                         onClick={() => void jobs.cancel(job.id)}
                       >
