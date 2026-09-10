@@ -10,6 +10,9 @@ import {
 } from "./model-downloads";
 
 export function useModelDownloads(refreshLibrary: () => Promise<void>) {
+  const [active, setActive] = useState(false);
+  const [modelDraft, setModelDraft] = useState("");
+  const [submitted, setSubmitted] = useState(false);
   const [history, setHistory] = useState<DownloadHistory>({ downloads: [], unreported: [] });
   const { downloads, unreported } = history;
   const [loading, setLoading] = useState(true);
@@ -64,7 +67,7 @@ export function useModelDownloads(refreshLibrary: () => Promise<void>) {
   const needsFrequentRefresh = useRef(false);
   needsFrequentRefresh.current = !!uncertain || downloads.some((job) => job.state === "running");
   useEffect(() => {
-    void refresh();
+    if (!active) return;
     let ticks = 0;
     const visible = () => {
       if (document.visibilityState === "visible") void refresh();
@@ -77,6 +80,10 @@ export function useModelDownloads(refreshLibrary: () => Promise<void>) {
     return () => {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", visible);
+    };
+  }, [active, refresh]);
+  useEffect(() => {
+    return () => {
       const previous = read.current;
       read.current = null;
       previous?.abort();
@@ -84,15 +91,22 @@ export function useModelDownloads(refreshLibrary: () => Promise<void>) {
       action.current = null;
       mutation?.abort();
     };
+  }, []);
+  const activate = useCallback(() => {
+    setActive(true);
+    // Opening Models checks immediately, including when returning to the page.
+    void refresh();
   }, [refresh]);
   useEffect(() => {
     let changed = false;
     for (const job of downloads) {
       if (job.state === "completed" && !completed.current.has(job.id)) {
-        completed.current.add(job.id);
         changed = true;
       }
     }
+    completed.current = new Set(
+      downloads.filter((job) => job.state === "completed").map((job) => job.id),
+    );
     for (const job of unreported) {
       if (!checkedUnreported.current.has(job.id)) changed = true;
     }
@@ -147,6 +161,13 @@ export function useModelDownloads(refreshLibrary: () => Promise<void>) {
     }
   }
   return {
+    activate,
+    modelDraft,
+    editModel: (value: string) => {
+      if (!action.current && !unresolved.current) setModelDraft(value);
+    },
+    submitted,
+    setSubmitted,
     downloads,
     unreported,
     dismissUnreported: (id: string) =>
@@ -166,7 +187,12 @@ export function useModelDownloads(refreshLibrary: () => Promise<void>) {
       setUncertain(null);
       setActionError("");
     },
-    start: (model: string) => mutate(uncertain ?? { requestId: crypto.randomUUID(), model }),
+    start: (model: string) => {
+      if (action.current) return Promise.resolve();
+      const request = unresolved.current ?? { requestId: crypto.randomUUID(), model };
+      setModelDraft(request.model);
+      return mutate(request);
+    },
     cancel: (id: string) => mutate(null, id),
   };
 }

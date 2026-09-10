@@ -1,5 +1,27 @@
 # Autonomous improvement log
 
+## Keep downloads intact through workspace navigation
+
+Claude Opus 5 High advised moving the download session into the owner workspace:
+leaving Models previously discarded drafts and recovery details and aborted the
+browser's pending mutation. The owner tab now retains the model entry, validation
+state, pending actions, uncertain request IDs and up to 20 missing-job notices.
+Returning to Models checks status immediately without repeating a mutation. An
+explicit retry keeps the original uncertain request ID and model.
+
+Checks start only after the first Models visit. One polling loop then continues
+while the document is visible, using the existing active/idle intervals. Completed
+record tracking is bounded to the currently reported history. DOM focus references
+remain local to the mounted panel, so navigation does not restore stale focus.
+Nothing is written to browser storage or URLs; reload, closing the tab and a new
+tab start a fresh local session. Gateway history remains separate and non-durable.
+
+Nine new isolated browser cases exercise actual navigation links, pending start
+and cancel responses, uncertainty, missing records, completion refreshes, blank
+and custom drafts, and reload/new-tab boundaries. Narrow and desktop captures were
+visually inspected. Download, owner-memory and sharing regressions also pass;
+real backend sharing remains an opt-in test and was skipped in this fixture run.
+
 ## Recover when the gateway stops reporting a download
 
 Claude Opus 5 High identified that a successful empty status response after a
@@ -14,7 +36,8 @@ download completed, stopped, aged out or continues through another Ollama client
 Starting again uses a new request ID and discloses possible additional transfer.
 Dismissing only clears the notice and returns focus to the model input. No model
 download, inference or public sharing starts automatically. Recovery history is
-limited to 20 notices in the mounted Models page; navigation/reload clears it.
+limited to 20 notices. Initially these lived in the mounted Models page; the
+owner-tab session change above extends their lifetime through navigation.
 Gateway history and download resumption remain non-durable.
 
 Browser verification also exposed an early-render starter-selection race. The

@@ -1,5 +1,31 @@
 # Verification
 
+## Download sessions through owner navigation
+
+`pnpm check`, all 318 frontend tests and the owner, guest and directory production
+builds pass. The combined download, download-session, owner-memory and sharing
+browser run passes 63 cases, with one opt-in real backend sharing case skipped.
+The nine new session cases use navigation links and a same-document marker to
+establish SPA behavior. They cover draft retention at 320px and 1440px, independent
+new tabs, reload clearing, lazy first activation, a single polling loop, pending
+start/cancel responses surviving navigation, exact uncertain-request retries,
+missing-job dismissal, and completed-record library refresh deduplication.
+
+The production owner bundle ran with intercepted API fixtures on an isolated
+local server. Both viewport captures were visually inspected. Evidence, logs,
+Opus reviews and private-display cleanup are in `test-results/download-session/`.
+These tests do not download a real model, run Ollama, exercise Java lifecycle or
+open a public tunnel. Recovery remains memory-only within one owner tab; durable
+download history and automatic resumption are not implemented.
+
+Final Opus feedback tightened the session tests: GET responses remain at the
+pre-mutation state while start/cancel replies are held, the polling check spans
+a full idle interval after returning, and completion refresh counts settle before
+the baseline is captured. All nine session cases and `pnpm check` pass again.
+Continued polling after leaving Models is intentional while this owner tab is
+visible; uncertain jobs retain the existing fast cadence until resolved/dismissed.
+A pre-existing normal-cancellation focus gap remains outside this lifetime change.
+
 ## Missing download records and recovery
 
 The recovery change passes `pnpm check`, 318 frontend tests and all production
@@ -26,8 +52,9 @@ private-display cleanup evidence are retained in `test-results/download-recovery
 These browser scenarios use the production owner bundle with intercepted local
 API fixtures, including a successful empty download list. They do not restart
 a real gateway, download files, run Ollama or prove that a missing job stopped.
-Backend storage and lifecycle behavior are unchanged. Notices are local to the
-mounted Models page; durable recovery and automatic resumption remain unimplemented.
+Backend storage and lifecycle behavior are unchanged. The later owner-tab session
+change above retains notices through navigation; durable recovery and automatic
+resumption remain unimplemented.
 
 ## Saved model review with unavailable browser storage
 

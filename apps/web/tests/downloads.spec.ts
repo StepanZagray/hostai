@@ -1,63 +1,6 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 import { hostFixture } from "./support/host-fixture";
-import type { ModelDownload } from "../src/lib/model-downloads";
-
-const id = "5ed717e7-26ce-4c7d-b2ea-aa03292cb572";
-function download(patch: Partial<ModelDownload> = {}): ModelDownload {
-  return {
-    id,
-    model: "fixture-model:small",
-    state: "running",
-    phase: "downloading",
-    message: "Downloading model layer.",
-    digest: "sha256:abcd1234567890",
-    completedBytes: 25_000_000,
-    totalBytes: 100_000_000,
-    createdAt: "2026-09-09T19:00:00Z",
-    updatedAt: "2026-09-09T19:00:00Z",
-    error: null,
-    ...patch,
-  };
-}
-async function fixture(page: Page, initial: ModelDownload[] = []) {
-  await hostFixture(page, true, []);
-  const state = {
-    jobs: initial,
-    starts: [] as { requestId: string; model: string }[],
-    failRead: false,
-    loseStartResponse: false,
-    modelChecks: 0,
-    cancels: [] as string[],
-  };
-  await page.route("**/api/models", (route) => {
-    state.modelChecks++;
-    return route.fallback();
-  });
-  await page.route("**/api/model-downloads", async (route) => {
-    if (route.request().method() === "POST") {
-      const body = route.request().postDataJSON();
-      state.starts.push(body);
-      let job = state.jobs.find((item) => item.id === body.requestId);
-      if (!job) {
-        job = download({ id: body.requestId, model: body.model });
-        state.jobs.unshift(job);
-      }
-      if (state.loseStartResponse) return route.abort("failed");
-      return route.fulfill({ status: 202, json: job });
-    }
-    return state.failRead
-      ? route.fulfill({ status: 503, json: { detail: "Gateway unavailable." } })
-      : route.fulfill({ json: { downloads: state.jobs } });
-  });
-  await page.route("**/api/model-downloads/*/cancel", (route) => {
-    const job = state.jobs.find((item) => route.request().url().includes(item.id))!;
-    state.cancels.push(job.id);
-    job.state = "cancelled";
-    job.message = "Download cancelled.";
-    return route.fulfill({ json: job });
-  });
-  return state;
-}
+import { download, downloadFixture as fixture, downloadId as id } from "./support/download-fixture";
 
 test("download is explicit, persists across navigation, cancels and retries with a new ID", async ({
   page,

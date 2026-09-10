@@ -1,9 +1,9 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Download, RefreshCw } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
-import { useModelDownloads } from "../lib/use-model-downloads";
+import { useModelDownloadSession } from "../lib/model-download-context";
 import { downloadModelError } from "../lib/model-downloads";
 import { starterModels } from "../lib/starter-models";
 import { chatUnavailableReason } from "../lib/model-admission";
@@ -16,9 +16,8 @@ const bytes = (value: number) =>
 
 export function ModelDownloads() {
   const { status, models, errors, refresh } = useHost();
-  const jobs = useModelDownloads(refresh);
-  const [model, setModel] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const jobs = useModelDownloadSession();
+  const { modelDraft: model, editModel: setModel, submitted, setSubmitted } = jobs;
   const modelInput = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const removedFocus = useRef<string | null>(null);
@@ -379,7 +378,6 @@ export function ModelDownloads() {
                       variant="ghost"
                       disabled={!canStart || !!jobs.uncertain}
                       onClick={() => {
-                        setModel(job.model);
                         void jobs.start(job.model);
                       }}
                     >
@@ -426,7 +424,6 @@ export function ModelDownloads() {
           restartDisabled={!canStart || !!jobs.uncertain}
           dismissDisabled={jobs.pending || !!jobs.uncertain}
           onRestart={(tag) => {
-            setModel(tag);
             void jobs.start(tag);
           }}
           onDismiss={(id) => {
@@ -436,8 +433,9 @@ export function ModelDownloads() {
         />
         <p className={`${muted} ${css({ mt: "4", fontSize: "10px" })}`}>
           The latest 20 download records are kept until the gateway restarts. Model files stay in
-          Ollama. Downloading does not start inference or share a model. This page remembers up to
-          20 unreported downloads until you leave or reload it.
+          Ollama. Downloading does not start inference or share a model. This tab keeps your model
+          entry and up to 20 notices for missing downloads through navigation. Reloading or closing
+          the tab clears your entry and recovery details.
         </p>
       </div>
     </section>

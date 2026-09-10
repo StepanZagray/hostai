@@ -2,6 +2,7 @@ import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 import { Shell } from "../components/shell";
 import { OwnerConversationsProvider } from "../lib/owner-conversations-context";
 import { SharingDraftProvider } from "../lib/sharing-draft-context";
+import { ModelDownloadProvider } from "../lib/model-download-context";
 import { HostProvider } from "../lib/host-context";
 import "@fontsource-variable/manrope";
 import "@fontsource-variable/geist-mono";
@@ -29,7 +30,9 @@ export const Route = createRootRoute({
         <HostProvider>
           <OwnerConversationsProvider>
             <SharingDraftProvider>
-              <Shell />
+              <ModelDownloadProvider>
+                <Shell />
+              </ModelDownloadProvider>
             </SharingDraftProvider>
           </OwnerConversationsProvider>
         </HostProvider>

@@ -148,8 +148,9 @@ If a running download disappears from a successful status check, the Models page
 retains a **Status unknown** notice and checks the library. You can try the model
 if it is available, check status again, explicitly download again with a new
 request, or dismiss the notice. A missing record does not prove that Ollama stopped
-or that the model finished. Up to 20 notices stay in this Models view; leaving or
-reloading the page clears them. Dismissing a notice does not cancel work or delete files.
+or that the model finished. Up to 20 notices and your model entry stay in this owner
+tab through navigation; reloading or closing the tab clears the entry and recovery
+details. Dismissing a notice does not cancel work or delete files.
 
 ## Checks
 
