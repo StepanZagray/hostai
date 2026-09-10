@@ -632,7 +632,7 @@ test("real owner link connects a guest and revocation ends an active response", 
   try {
     await guest.goto(invite.inviteUrl);
     await expect(
-      guest.getByText("Guest access checked. You can send a message.", { exact: true }),
+      guest.getByText("Access was available at the last check.", { exact: true }),
     ).toBeVisible();
     expect(new URL(guest.url()).hash).toBe("");
     await guest.getByLabel("Message", { exact: true }).fill("Guest integration");

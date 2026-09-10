@@ -680,3 +680,48 @@ revocation discard warning. Mobile/desktop cancellation, missing-record and fail
 revocation states were visually inspected. All test-owned services, both advisor
 processes, the exact compositor PID and private runtime directories were removed
 after verification. No remote push or deployment was performed.
+
+
+## Guest device clock independence — 10 September 2026
+
+The page now treats host session authentication and stream outcomes as authoritative.
+A displayed expiry instant cannot reject a healthy session or abort an answer based
+on the guest device date. The existing protocol is unchanged; no lifetime countdown
+or automatic resume/recheck is introduced. An idle page learns expiry on its next
+manual send or reconnect. The existing host stream timer still determines active
+expiry; this cycle does not redesign host-clock corrections or host suspend behavior.
+
+Validation passed 301 frontend tests in 17 files, type/lint/format checks, all
+production bundles and Java packaging. Forty backend tests passed across
+SharingLifecycleTest, SharingHttpTest and GuestSocketTest, including expiry closing
+an actual upstream connection and rejecting further chat admission. This is targeted
+backend coverage, not a full backend-suite run.
+
+All 54 guest and access-request browser scenarios passed on the proved-private
+Sway/pixman display. New coverage includes guest clocks 48 hours fast and slow,
+forward/backward changes during a stream with timer advancement, preserved draft
+focus on a host terminal error, host 401 on reconnect and monotonic retry waits.
+The changed connected and expired-access states were visually inspected. Evidence
+is retained under `test-results/guest-clock/`.
+
+The Java gateway served the built guest bundle with disposable access storage and
+synthetic Ollama metadata. Guest API and WebSocket responses were intercepted
+fixtures. No real model download, GPU inference or public Cloudflare tunnel was
+used. Rate-limit courtesy waits are capped at five monotonic minutes; HTTP-date
+headers without a valid host Date do not impose a guessed device-clock wait.
+Browser suspend can pause monotonic waits, while host rate limits remain enforced.
+
+Claude Opus 5 High supplied initial advice and a successful final review. The
+review inspected supporting backend tests and transport code beyond its named
+scope; its enforcement claims were checked against local code and the targeted
+backend run. Review led to status wording explicitly describing the last access
+check, clearing completed retry timers, deterministic clock advancement in the
+cooldown browser test, and unit checks that HTTP-date waits never read Date.now
+and numeric waits ignore an invalid Date header. Host terminal errors remain
+intentionally generic until a manual access check; no provider text is echoed.
+HTTP-date retry behavior has unit coverage; browser scenarios use the numeric
+header emitted by the gateway. Request-inbox timer policies are unchanged.
+
+All owned advisor, service and display processes and private runtime directories
+were removed after validation. Screenshots include desktop and 320px layouts.
+No remote push or deployment was performed.

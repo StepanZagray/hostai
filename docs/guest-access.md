@@ -51,6 +51,15 @@ not production hosting. A key is a bearer permission, not a verified identity.
    focus to the composer; involuntary expiry leaves draft focus in place instead
    of moving typing into the key field. Retry is manual; an empty answer does not require a new
    access check when the existing session is still usable.
+   The displayed expiry is the host's timestamp rendered in your time zone, not a
+   browser countdown. A wrong device clock or clock correction cannot invalidate
+   a successful access check or interrupt an answer. The host checks every send
+   and terminates expired streams. An idle page learns that access ended on its
+   next explicit send or reconnect; no background access check or chat replay is
+   added. Retry waits use elapsed monotonic time, capped at five minutes. HTTP-date
+   retry headers require a valid host Date; otherwise retry is available manually.
+   On browsers whose monotonic clock pauses during sleep, a wait resumes after
+   waking. Host-side rate limits apply regardless of the browser timer.
 7. Revoke a key to end permission and its active requests. Stop client access to
    end all guest requests and the tunnel. Stop internet sharing ends only public
    access. Unrevoked keys retain permission when the same model and their channel

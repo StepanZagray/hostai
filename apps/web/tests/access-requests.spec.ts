@@ -533,7 +533,7 @@ for (const width of [320, 768, 1024, 1440]) {
     await key.press("Enter");
     await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
     await expect(
-      page.getByText("Guest access checked. You can send a message.", { exact: true }),
+      page.getByText("Access was available at the last check.", { exact: true }),
     ).toBeVisible();
     expect(state.sessions).toBe(1);
     expect(state.submissions).toHaveLength(0);

@@ -28,13 +28,12 @@ export function useGuestChat() {
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [retryAt, setRetryAt] = useState(0);
-  const [now, setNow] = useState(Date.now);
+  const [now, setNow] = useState(() => performance.now());
   const metadata = useRef<AbortController | null>(null);
   const active = useRef<ActiveChat | null>(null);
   const sequence = useRef(0);
   const retrySeconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
-  const expired = !!session && Date.parse(session.expiresAt) <= now;
-  const ready = phase === "ready" && !!session?.available && !expired && retrySeconds === 0;
+  const ready = phase === "ready" && !!session?.available && retrySeconds === 0;
 
   function abortAll() {
     metadata.current?.abort();
@@ -87,7 +86,7 @@ export function useGuestChat() {
     setPhase(response.status === 401 ? "needs-key" : "blocked");
     setError(responseProblem(response.status));
     setRetryAt(response.status === 429 ? retryAfter(response) : 0);
-    setNow(Date.now());
+    setNow(performance.now());
   }
 
   async function connect(candidate: string) {
@@ -98,7 +97,7 @@ export function useGuestChat() {
       if (phase === "checking") setPhase("needs-key");
       return;
     }
-    if (candidate === key.current && retryAt > Date.now()) return;
+    if (candidate === key.current && retryAt > performance.now()) return;
     const differentKey = candidate !== key.current;
     if (differentKey) {
       abortAll();
@@ -130,12 +129,11 @@ export function useGuestChat() {
       if (metadata.current !== controller) return;
       if (!next) throw new Error("Invalid guest metadata");
       setSession(next);
-      setNow(Date.now());
+      setNow(performance.now());
       setRetryAt(0);
-      if (Date.parse(next.expiresAt) <= Date.now()) {
-        setPhase("needs-key");
-        setError(responseProblem(401));
-      } else if (!next.available) {
+      // The host authenticated this key. Its expiry instant cannot be compared
+      // with the guest's wall clock, which may be wrong or change mid-answer.
+      if (!next.available) {
         setPhase("blocked");
         setError("This host is not accepting guest messages. Reconnect to check availability.");
       } else {
@@ -155,11 +153,6 @@ export function useGuestChat() {
 
   async function send() {
     if (!ready || !session || !key.current || active.current || metadata.current) return;
-    if (Date.parse(session.expiresAt) <= Date.now()) {
-      setPhase("needs-key");
-      setError(responseProblem(401));
-      return;
-    }
     // Exclude the entire unfinished exchange, including its user prompt. Retrying
     // the restored draft therefore cannot duplicate it in the request context.
     const prepared = prepareChatRequest(
@@ -260,19 +253,14 @@ export function useGuestChat() {
   }, []);
 
   useEffect(() => {
-    if (!session && !retryAt) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    if (!retryAt) return;
+    const timer = window.setInterval(() => {
+      const current = performance.now();
+      setNow(current);
+      if (current >= retryAt) setRetryAt(0);
+    }, 1000);
     return () => window.clearInterval(timer);
-  }, [session, retryAt]);
-
-  useEffect(() => {
-    if (!expired || phase !== "ready") return;
-    stop("Guest access expired. The response is incomplete.");
-    setPhase("needs-key");
-    setError(responseProblem(401));
-    // Expiry must also terminate a response already in flight.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expired, phase]);
+  }, [retryAt]);
 
   return {
     phase,

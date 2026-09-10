@@ -1,5 +1,25 @@
 # Autonomous improvement log
 
+## Guest access with an incorrect device clock
+
+A successful host access check now remains usable regardless of the guest device's
+wall clock. The page no longer invents a 401 or interrupts a stream from local
+expiry arithmetic. The host still authenticates every send and terminates expired
+streams. Expiry is explicitly labelled host-reported and rendered in the guest's
+time zone; idle pages learn that access ended on the next manual send or reconnect.
+No relative lifetime contract, countdown, background access check or replay is added.
+
+Retry delays now use monotonic deadlines. HTTP-date delays use the response's Date
+instead of the guest date, require a valid host Date, and are capped at five minutes.
+Host rate limits remain authoritative. Browser sleep can pause this courtesy wait
+on platforms where the monotonic clock stops during suspend.
+
+Claude Opus 5 High confirmed the duplicate-authority bug. Its optional relative
+lifetime/countdown design was not needed for this fix: expiry remains informational.
+Validation includes wrong clocks in both directions, clock corrections during a
+stream, host-reported expiry recovery and existing backend expiry cancellation.
+Evidence and limitations are recorded in [verification](verification.md).
+
 ## Guest control of requested access after connecting
 
 The request controller now belongs to the guest page, independently of the chat

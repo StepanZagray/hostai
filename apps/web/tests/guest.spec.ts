@@ -178,7 +178,7 @@ async function openGuest(page: Page, key?: string) {
 async function connected(page: Page) {
   await openGuest(page, access);
   await expect(
-    page.getByText("Guest access checked. You can send a message.", { exact: true }),
+    page.getByText("Access was available at the last check.", { exact: true }),
   ).toBeVisible();
 }
 async function send(page: Page, text: string) {
@@ -277,7 +277,7 @@ test("temporary internet metadata enables chat with Cloudflare and host identity
   await page.getByLabel("Access key", { exact: true }).fill(` ${access} `);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
-    page.getByText("Guest access checked. You can send a message.", { exact: true }),
+    page.getByText("Access was available at the last check.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Temporary internet access", { exact: true })).toBeVisible();
   const disclosure = page.locator("#guest-disclosure");
@@ -683,7 +683,7 @@ test("different key clears history even if handshake fails; disconnect aborts an
   state.stream = true;
   await page.getByRole("button", { name: "Reconnect", exact: true }).click();
   await expect(
-    page.getByText("Guest access checked. You can send a message.", { exact: true }),
+    page.getByText("Access was available at the last check.", { exact: true }),
   ).toBeVisible();
   await send(page, "New key's question");
   await push(page, "New partial output");
@@ -695,7 +695,9 @@ test("different key clears history even if handshake fails; disconnect aborts an
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
 });
 
-test("expired and unavailable metadata never enable sending", async ({ page }) => {
+test("unavailable metadata and host-rejected expired keys never enable sending", async ({
+  page,
+}) => {
   const state = await fixture(page);
   state.metadata.available = false;
   state.metadata.unavailableReason = `Do not echo ${access}`;
@@ -704,7 +706,7 @@ test("expired and unavailable metadata never enable sending", async ({ page }) =
   await page.getByLabel("Message", { exact: true }).fill("Draft while waiting");
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
   state.metadata.available = true;
-  state.metadata.expiresAt = new Date(Date.now() - 60_000).toISOString();
+  state.sessionStatus = 401;
   await page.getByRole("button", { name: "Reconnect", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("A valid access key is required");
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Draft while waiting");
@@ -761,31 +763,91 @@ test("metadata transport failure retains the draft; an unsupported scope fails c
   expect(state.chatRequests).toHaveLength(0);
 });
 
-test("expiry aborts an active answer and keeps its partial transcript", async ({ page }) => {
+for (const hours of [-48, 48]) {
+  test(`a guest clock ${hours} hours off cannot overrule host authentication`, async ({ page }) => {
+    const state = await fixture(page);
+    await page.clock.setFixedTime(new Date(Date.now() + hours * 3_600_000));
+    await connected(page);
+    await send(page, "A question from a device with the wrong clock");
+    await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+    expect(state.sessionRequests).toHaveLength(1);
+    expect(state.chatRequests).toHaveLength(1);
+    await expect(page.getByText(/Host-reported expiry:/)).toBeVisible();
+    if (hours > 0) {
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await page.screenshot({
+        path: "test-results/guest-clock-skew.png",
+        fullPage: true,
+        animations: "disabled",
+      });
+    }
+  });
+}
+
+test("clock changes cannot interrupt a stream; host expiry preserves partial output and draft focus", async ({
+  page,
+}) => {
   const state = await fixture(page);
   state.stream = true;
-  state.metadata.expiresAt = new Date(Date.now() + 5000).toISOString();
+  await page.clock.install();
   await connected(page);
   await send(page, "A question near expiry");
   await push(page, "Output before expiry");
   await page.getByLabel("Message", { exact: true }).fill("Keep typing here");
-  await expect(page.getByRole("alert")).toContainText("A valid access key is required", {
-    timeout: 8000,
-  });
-  await expect(page.getByText("Output before expiry", { exact: true })).toBeVisible();
+  // Move far beyond the displayed expiry, then back. No local date can prove
+  // expiry, including after a device resumes. Only a host response ends access.
+  await page.clock.setFixedTime(new Date(Date.now() + 48 * 3_600_000));
+  await page.clock.runFor(1500);
+  await push(page, " still streaming");
+  await expect(
+    page.getByText("Output before expiry still streaming", { exact: true }),
+  ).toBeVisible();
+  await page.clock.setFixedTime(new Date(Date.now() - 48 * 3_600_000));
+  await page.clock.runFor(1500);
+  await push(page, " after clock correction");
+  expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.aborts)).toBe(0);
+  expect(state.sessionRequests).toHaveLength(1);
+  await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
+  await push(page, "", true, "Access ended");
+  await expect(page.getByRole("alert")).toContainText("Access may have ended");
+  await expect(
+    page.getByText("Output before expiry still streaming after clock correction", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText(/Incomplete exchange ·/)).toBeVisible();
   await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
   await page.keyboard.type(" after expiry");
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
     "Keep typing here after expiry",
   );
+  // Rechecking gets the host's authoritative 401 without generating another answer.
+  state.sessionStatus = 401;
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("A valid access key is required");
   await expect(page.getByLabel("Access key", { exact: true })).toHaveValue("");
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: "test-results/guest-expired-draft-focus.png",
     fullPage: true,
     animations: "disabled",
   });
-  expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.aborts)).toBe(1);
+  expect(state.chatRequests).toHaveLength(1);
+});
+
+test("wall-clock changes cannot bypass or extend a host cooldown", async ({ page }) => {
+  const state = await fixture(page);
+  await page.clock.install();
+  await connected(page);
+  state.chatStatus = 429;
+  state.retryAfter = "2";
+  await send(page, "Wait for host capacity");
+  await expect(page.getByRole("alert")).toContainText("request limit");
+  const reconnect = page.getByRole("button", { name: "Reconnect", exact: true });
+  await page.clock.setFixedTime(new Date(Date.now() + 48 * 3_600_000));
+  await expect(reconnect).toBeDisabled();
+  await page.clock.setFixedTime(new Date(Date.now() - 48 * 3_600_000));
+  await page.clock.runFor(3000);
+  await expect(reconnect).toBeEnabled();
+  expect(state.sessionRequests).toHaveLength(1);
   expect(state.chatRequests).toHaveLength(1);
 });
 

@@ -185,14 +185,15 @@ function GuestChatSession({
               </p>
             </div>
             <p className={`${muted} ${css({ gridColumn: "1 / -1" })}`}>
-              Access expires{" "}
+              Host-reported expiry:{" "}
               <time dateTime={chat.session.expiresAt}>
                 {new Intl.DateTimeFormat(undefined, {
                   dateStyle: "medium",
                   timeStyle: "long",
                 }).format(new Date(chat.session.expiresAt))}
               </time>{" "}
-              (your local time).
+              (your time zone). The host checks access when you send and ends responses when access
+              expires.
               {chat.phase !== "ready" && " Details from the last access check."}
             </p>
           </div>
@@ -204,7 +205,7 @@ function GuestChatSession({
               : requestPaused
                 ? "This request’s access is paused. Manage the request below."
                 : chat.ready
-                  ? "Guest access checked. You can send a message."
+                  ? "Access was available at the last check."
                   : "Connect with a valid key before sending a message."}
           </p>
         )}
