@@ -101,8 +101,19 @@ pending first check makes no absence claim. These states do not prove the host i
 offline: it may have stopped publishing while private invitations still work.
 
 A changed model displays both the saved and current model and requires **Use current
-model** before a guest link is offered. This updates remembered details but neither
-opens the host nor grants access. A changed host name displays its saved name too.
+model** before a guest link is offered. Review belongs to the visible listing, so
+blocked browser storage does not prevent it. The action also attempts to update
+remembered details when storage is usable, but neither opens the host nor grants
+access. A failed write or unconfirmed reread leaves its error and remembered model
+visible while the reviewed current model can be opened. Keyboard focus moves to
+the guest link without activating it.
+
+**Check saved model** retries reading storage. If the saved model still differs,
+**Update saved model** explicitly retries the write using fresh listing details.
+Temporary review is cleared when that row leaves the view, its current model
+changes, the directory changes or the page reloads. Changing only the temporary
+address or saved labels does not undo review of the same current model; opening
+still uses the current URL and checks freshness. A changed host name displays its saved name too.
 The current hostname is always shown; old addresses are not retained or compared.
 The installation ID denotes signing-key continuity, not a verified person or URL
 owner. Guest session metadata still determines actual access and model permission.
@@ -111,8 +122,8 @@ owner. Guest session metadata still determines actual access and model permissio
 recent removal while this directory view remains mounted, including an unlisted
 host. Its remembered name and model identify the current undo target. It never restores a URL or permission. Blocked/full/damaged browser storage
 produces a visible error; failed reads never reset or overwrite stored data. Check
-saved hosts retries storage access, also available beside a blocked model-change
-review. A completed write followed by a failed reread is reported separately from
+saved hosts retries storage access, also available beside a changed-model listing.
+A completed write followed by a failed reread is reported separately from
 a rejected write. Clearing browser site data removes saved hosts.
 No automatic host request, prefetch, favicon, account sync or registry write occurs
 when saving or browsing saves.

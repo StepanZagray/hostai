@@ -524,14 +524,15 @@ test("a saved write followed by a failed reread is reported honestly and recover
   await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
   await page.getByRole("button", { name: "Use current model", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("The change reached browser storage");
-  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /Open guest chat for/ })).toBeVisible();
+  await expect(page.getByText(/Current model reviewed for this view/)).toBeVisible();
   await page.screenshot({
     path: "test-results/saved-host-model-recovery.png",
     fullPage: true,
     animations: "disabled",
   });
   await page.evaluate(() => Reflect.set(window, "failSavedRead", false));
-  await page.getByRole("button", { name: "Check saves to review model", exact: true }).click();
+  await page.getByRole("button", { name: "Check saved model", exact: true }).click();
   await expect(page.getByRole("link", { name: /Open guest chat for/ })).toBeVisible();
   expect(state.unexpected).toEqual([]);
 });
@@ -687,5 +688,166 @@ test("requests-open filter excludes expired reports in both all and saved views"
   await page.getByLabel("Requests reported open", { exact: true }).uncheck();
   await expect(page.getByText("Listing expired", { exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: /Open guest chat for/ })).toHaveCount(0);
+  expect(state.unexpected).toEqual([]);
+});
+
+for (const width of [320, 1440]) {
+  test(`model review remains usable with failed storage at ${width}px and never accepts a later change`, async ({
+    page,
+  }) => {
+    const state = await directory(page);
+    await page.setViewportSize({ width, height: 1100 });
+    await page.goto("/hosts");
+    await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+    await page.getByRole("button", { name: "Saved hosts (1)", exact: true }).click();
+    await page.evaluate(() => {
+      const set = Storage.prototype.setItem;
+      Reflect.set(window, "blockedSaveAttempts", 0);
+      Reflect.set(window, "blockHostSaves", true);
+      Storage.prototype.setItem = function (key, value) {
+        if (key.startsWith("hostai.saved-host.") && Reflect.get(window, "blockHostSaves")) {
+          Reflect.set(
+            window,
+            "blockedSaveAttempts",
+            Reflect.get(window, "blockedSaveAttempts") + 1,
+          );
+          throw new Error("private quota failure");
+        }
+        set.call(this, key, value);
+      };
+    });
+    const refresh = page.getByRole("button", { name: "Refresh listings", exact: true });
+    const review = page.getByRole("button", { name: "Use current model", exact: true });
+    const open = page.getByRole("link", {
+      name: "Open guest chat for Alice’s shared model",
+      exact: true,
+    });
+    state.entries = [host("a", "second-model:small")];
+    await refresh.click();
+    await review.focus();
+    await page.keyboard.press("Enter");
+    await expect(open).toBeFocused();
+    await expect(page.getByRole("alert")).toContainText("This change could not be saved");
+    await expect(page.getByText(/Current model reviewed for this view/)).toBeVisible();
+    await expect(open).toHaveAccessibleDescription(
+      /Saved details have not been confirmed as updated/,
+    );
+    expect(
+      await page.evaluate(
+        () =>
+          JSON.parse(
+            localStorage.getItem(
+              Object.keys(localStorage).find((key) => key.startsWith("hostai.saved-host."))!,
+            )!,
+          ).model,
+      ),
+    ).toBe("fixture-model:small");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      width,
+    );
+    // A viewport capture preserves the narrow layout and fixed header without
+    // Chromium's full-page scrollbar/capture reflow. Include the recovery controls.
+    await page
+      .getByRole("button", { name: "Check saved model", exact: true })
+      .evaluate((element) => element.scrollIntoView({ block: "end" }));
+    await page.screenshot({
+      path: `test-results/saved-model-review-${width}.png`,
+      animations: "disabled",
+    });
+
+    // A review of one model must not authorize the next, even with writes already blocked.
+    state.entries = [host("a", "third-model:small")];
+    await refresh.click();
+    await expect(open).toHaveCount(0);
+    await expect(review).toBeEnabled();
+    await review.click();
+    await expect(open).toBeFocused();
+    expect(await page.evaluate(() => Reflect.get(window, "blockedSaveAttempts"))).toBe(1);
+    state.entries = [host("a", "second-model:small")];
+    await refresh.click();
+    await expect(open).toHaveCount(0);
+    await review.click();
+    await expect(open).toBeVisible();
+
+    // An unavailable directory still blocks opening after review.
+    state.fail = true;
+    await refresh.click();
+    await expect(open).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Refresh before opening", exact: true }),
+    ).toBeDisabled();
+    state.fail = false;
+    await refresh.click();
+    await expect(open).toBeVisible();
+
+    // Leaving the listing drops a temporary review; the old bookmark is preserved.
+    await page.getByLabel("Search model or host").fill("no such host");
+    await expect(open).toHaveCount(0);
+    await page.getByRole("button", { name: "Clear search", exact: true }).click();
+    await expect(review).toBeEnabled();
+    await review.click();
+    await expect(open).toBeFocused();
+    await page.reload();
+    await expect(open).toHaveCount(0);
+    await expect(review).toBeEnabled();
+    expect(state.unexpected).toEqual([]);
+  });
+}
+
+test("checking storage after a failed model update does not claim a save and allows an explicit retry", async ({
+  page,
+}) => {
+  const state = await directory(page);
+  await page.goto("/hosts");
+  await page.getByRole("button", { name: "Save host Alice’s shared model", exact: true }).click();
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    Reflect.set(window, "blockHostSaves", true);
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("hostai.saved-host.") && Reflect.get(window, "blockHostSaves"))
+        throw new Error("quota");
+      set.call(this, key, value);
+    };
+  });
+  state.entries = [host("a", "new-model:small")];
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await page.getByRole("button", { name: "Use current model", exact: true }).click();
+  const open = page.getByRole("link", { name: /Open guest chat for/ });
+  await expect(open).toBeFocused();
+  await page.evaluate(() => Reflect.set(window, "blockHostSaves", false));
+  await page.getByRole("button", { name: "Check saved model", exact: true }).click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText(/Model changed. Saved model: fixture-model:small/)).toBeVisible();
+  await expect(open).toBeVisible();
+  state.fail = true;
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Update saved model", exact: true }),
+  ).toBeDisabled();
+  await expect(open).toHaveCount(0);
+  state.fail = false;
+  await page.getByRole("button", { name: "Refresh listings", exact: true }).click();
+  await page.evaluate(() => Reflect.set(window, "blockHostSaves", true));
+  await expect(page.getByRole("button", { name: "Update saved model", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Update saved model", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(open).toBeFocused();
+  await expect(page.getByRole("alert")).toContainText("This change could not be saved");
+  await expect(open).toHaveAccessibleDescription(
+    /Saved details have not been confirmed as updated/,
+  );
+  await page.evaluate(() => Reflect.set(window, "blockHostSaves", false));
+  await page.getByRole("button", { name: "Check saved model", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Update saved model", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Update saved model", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await expect(open).toBeFocused();
+  await expect(open).not.toHaveAttribute("aria-describedby");
+  await expect(
+    page.getByText("Saved model updated. Open guest chat when you are ready."),
+  ).toBeVisible();
+  await expect(page.getByText(/Model changed. Saved model:/)).toHaveCount(0);
+  await page.reload();
+  await expect(open).toBeVisible();
   expect(state.unexpected).toEqual([]);
 });

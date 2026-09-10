@@ -99,7 +99,9 @@ model—not a generic metrics dashboard.
    not verify guest URL ownership or availability. Next, establish an operated
    shared directory and registration/moderation policy. Explicit saved hosts now retain
    installation IDs and remembered labels, resolving current listings without retaining URLs
-   or keys; changed models require acknowledgement before opening.
+   or keys; changed models require acknowledgement before opening. Reviewing a
+   current model works even if saving fails, and the storage error stays visible.
+   A later model change requires a new review; opening still checks listing freshness.
    The opt-in guest access-request path is now implemented. Signed directory v2 reports
    request availability without probing hosts; open/closed/unknown labels and filtering
    help clients choose a host before contacting it. Private invites work without a listing. Removing

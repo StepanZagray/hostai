@@ -1,4 +1,5 @@
 import { ArrowUpRight, Star } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
 import { css } from "../../styled-system/css";
 import { Badge, Button, button, muted } from "../components/ui";
 import { fresh, type DirectorySnapshot, type Listing } from "./registry";
@@ -27,6 +28,14 @@ export function DirectoryListing({
   savingDisabled: boolean;
   onCheckSaves?: () => void;
 }) {
+  // The parent keys this view by directory, host ID and current model. Review is
+  // temporary UI state, independent of whether the bookmark write succeeds.
+  const [reviewed, setReviewed] = useState(false);
+  const reviewStatusId = useId();
+  const guestLink = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    if (reviewed) guestLink.current?.focus();
+  }, [reviewed]);
   const item = listing ?? saved!;
   const expired = !listing || !snapshot || !fresh(listing, snapshot, elapsed);
   const seconds =
@@ -71,8 +80,18 @@ export function DirectoryListing({
           <p
             className={css({ color: "warning", mt: "2", fontSize: "sm", overflowWrap: "anywhere" })}
           >
-            Model changed. Saved model: <bdi>{saved.model}</bdi>. Review the current model above
-            before opening.
+            Model changed. Saved model: <bdi>{saved.model}</bdi>.
+            {!reviewed && " Review the current model above before opening."}
+          </p>
+        )}
+        {changed && reviewed && (
+          <p
+            id={reviewStatusId}
+            role="status"
+            className={`${muted} ${css({ mt: "2", fontSize: "sm" })}`}
+          >
+            Current model reviewed for this view. Saved details have not been confirmed as updated.
+            Opening still requires a fresh directory check.
           </p>
         )}
         {saved && listing && saved.hostLabel !== listing.hostLabel && (
@@ -122,23 +141,26 @@ export function DirectoryListing({
           <br />
           At last update · host approval required
         </p>
-        {!expired && !error && listing && snapshot && changed ? (
+        {!expired && !error && listing && snapshot && changed && !reviewed ? (
           <Button
             variant="primary"
-            disabled={savingDisabled}
             onClick={() => {
-              if (fresh(listing, snapshot, currentElapsed())) onUpdate();
+              if (!fresh(listing, snapshot, currentElapsed())) return;
+              setReviewed(true);
+              if (!savingDisabled) onUpdate();
             }}
           >
             Use current model
           </Button>
         ) : !expired && !error && listing && snapshot ? (
           <a
+            ref={guestLink}
             className={button({ variant: "primary" })}
             href={listing.guestUrl}
             target="_blank"
             rel="noopener noreferrer"
             aria-label={`Open guest chat for ${listing.hostLabel}`}
+            aria-describedby={changed && reviewed ? reviewStatusId : undefined}
             onClick={(event) => {
               if (!fresh(listing, snapshot, currentElapsed())) event.preventDefault();
             }}
@@ -147,6 +169,18 @@ export function DirectoryListing({
           </a>
         ) : (
           <Button disabled>{error ? "Refresh before opening" : "Awaiting host update"}</Button>
+        )}
+        {changed && reviewed && !savingDisabled && (
+          <Button
+            disabled={expired || error}
+            onClick={() => {
+              if (!listing || !snapshot || !fresh(listing, snapshot, currentElapsed())) return;
+              onUpdate();
+              guestLink.current?.focus();
+            }}
+          >
+            Update saved model
+          </Button>
         )}
         <Button
           disabled={savingDisabled}
@@ -157,9 +191,7 @@ export function DirectoryListing({
           <Star aria-hidden="true" fill={saved ? "currentColor" : "none"} />
           {saved ? "Remove saved host" : "Save host"}
         </Button>
-        {changed && onCheckSaves && (
-          <Button onClick={onCheckSaves}>Check saves to review model</Button>
-        )}
+        {changed && onCheckSaves && <Button onClick={onCheckSaves}>Check saved model</Button>}
       </div>
     </li>
   );

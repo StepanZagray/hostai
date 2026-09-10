@@ -322,7 +322,7 @@ export function DirectoryPage({
           <ul>
             {rows.map(({ listing, saved }) => (
               <DirectoryListing
-                key={(listing ?? saved!).id}
+                key={JSON.stringify([registryOrigin, (listing ?? saved!).id, listing?.model])}
                 listing={listing}
                 saved={saved}
                 snapshot={snapshot}

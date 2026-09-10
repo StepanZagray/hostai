@@ -1,5 +1,22 @@
 # Verification
 
+## Saved model review with unavailable browser storage
+
+The change passes `pnpm check`, all 308 frontend tests, and the owner, guest and
+directory production builds. The isolated directory browser suite passes 25
+scenarios, including the standalone client served by a disposable local registry.
+New cases cover failed writes, failed rereads, keyboard focus, retained save errors,
+subsequent model changes (including changing back), filtering, reload, and explicit
+save recovery. Failed listing checks block both opening and retrying a model update.
+Existing tests cover click-time expiry, source mismatch and cross-tab bookmark writes.
+
+320px and desktop recovery states are visually inspected, with an explicit page
+overflow assertion and viewport capture of the recovery controls. Evidence is retained
+in `test-results/saved-model-review/`. Owner-directory responses are intercepted
+fixtures; the standalone scenario uses real local registry HTTP and temporary signed
+publications. No real guest endpoint, tunnel, Ollama or user data store is contacted.
+These checks do not establish public service availability or model quality.
+
 ## Guest request-name recovery
 
 The request-name recovery change passes `pnpm check`, all 308 frontend tests,

@@ -1,5 +1,31 @@
 # Autonomous improvement log
 
+## Keep model review usable when bookmark storage fails
+
+Claude Opus 5 High confirmed that Use current model was a storage-dependent gate:
+a failed write or reread left the old bookmark in memory and prevented the guest
+link from appearing. Review now belongs to the visible listing independently of
+the bookmark write. The same action still attempts a save when storage is usable;
+failures remain visible, and keyboard focus moves to the current guest link without
+opening it. Recovery can check storage and explicitly retry updating the saved model.
+
+Review is scoped by registry, host installation and current model. Changing the
+model away and back resets it, as do filtering the row out, changing directories
+and reload. An address-only or saved-label change preserves review of the exact
+same current model. Existing failed-check, provenance and expiry guards still
+control opening. No key, URL or review marker is added to browser storage.
+
+The final Opus review identified lost focus after an explicit save retry and a
+weak reload assertion. Both retry outcomes now return focus to the guest link,
+whose accessible description includes the unconfirmed-save explanation. Browser
+tests check that description, focus after failed and successful retries, and that
+review was active before reload. Review was static; primary verification runs the UI.
+
+The advisor's separate finding about unknown saved status after an initial storage
+read failure remains follow-up work: an error is visible, but an unreadable bookmark
+cannot currently supply a remembered model for comparison. This cycle addresses
+recovery when a remembered model is available. Verification is recorded below.
+
 ## Preserve guest request names through recovery
 
 The unsent request name now belongs to the guest tab controller. Failed details
