@@ -23,6 +23,9 @@ import {
 import { useHost } from "../lib/host-context";
 import { chatUnavailableReason } from "../lib/model-admission";
 import { errorMessage } from "../lib/api";
+import { useSharingDraft } from "../lib/sharing-draft-context";
+import { useOwnerConversations } from "../lib/owner-conversations-context";
+import { hasCompletedModelAnswer } from "../lib/conversation";
 
 export const Route = createFileRoute("/sharing")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -188,7 +191,12 @@ function Sharing() {
   const { models, status: host, refresh: refreshHost, loading, errors: hostErrors } = useHost();
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const [editedHostLabel, setEditedHostLabel] = useState<string | null>(null);
+  const {
+    hostLabel: editedHostLabel,
+    editHostLabel: setEditedHostLabel,
+    acknowledgeHostLabel,
+  } = useSharingDraft();
+  const { snapshot: conversations } = useOwnerConversations();
   const [label, setLabel] = useState("");
   const [hours, setHours] = useState("24");
   const [channel, setChannel] = useState<"local" | "internet">("local");
@@ -202,10 +210,16 @@ function Sharing() {
   const approvalNeedsRefresh = useRef(false);
   const read = useRef<AbortController | null>(null);
   const action = useRef<AbortController | null>(null);
+  const hostNameInput = useRef<HTMLInputElement>(null);
+  const servingControls = useRef<HTMLElement>(null);
   const eligible = models.filter((model) => chatUnavailableReason(model) === null);
   // Explicit URL intent wins; otherwise resume the server's last configuration.
   // Never silently substitute another model when the intended one disappears.
   const chosen = search.model || status?.model || "";
+  const modelAnswered = hasCompletedModelAnswer(
+    conversations.conversations.get(chosen)?.turns,
+    chosen,
+  );
   const hostLabel = editedHostLabel ?? status?.hostLabel ?? "Local host";
   const chosenModel = models.find((model) => model.name === chosen);
   const modelIssue = loading
@@ -357,6 +371,13 @@ function Sharing() {
         if (name.startsWith("request-") && !next.requests)
           throw new Error("Guest access request status could not be read. Refresh status.");
         applyStatus(next);
+        if (
+          name === "start" &&
+          next.state === "local" &&
+          next.model === chosen &&
+          next.hostLabel === hostLabel.trim()
+        )
+          acknowledgeHostLabel(hostLabel);
       }
     } catch (error) {
       if (action.current !== abort) return;
@@ -477,7 +498,12 @@ function Sharing() {
           {status.error}
         </p>
       )}
-      <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Serving controls">
+      <section
+        ref={servingControls}
+        tabIndex={-1}
+        className={`${panel} ${css({ mb: "6" })}`}
+        aria-label="Serving controls"
+      >
         <PanelHeading
           title={
             !status
@@ -576,6 +602,7 @@ function Sharing() {
                 <label className={labelStyle}>
                   Host name shown to clients
                   <input
+                    ref={hostNameInput}
                     className={field}
                     maxLength={80}
                     required
@@ -628,11 +655,46 @@ function Sharing() {
                   Enter a host name clients will recognize.
                 </p>
               )}
+              {chosen && (
+                <p role="status" className={css({ mt: "3", fontSize: "sm", fontWeight: 650 })}>
+                  {modelAnswered
+                    ? "This model answered a prompt in this tab."
+                    : "No completed answer for this model in this tab."}
+                </p>
+              )}
               <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
-                Try a prompt first to check that this model runs on your hardware. Starting client
-                access does not test or preload the model.
+                {modelAnswered
+                  ? "This evidence comes from the retained conversation and clears on reload or Clear. It does not prove current availability or memory fit. "
+                  : modelIssue === null
+                    ? "Try a prompt first to check that this model runs on your hardware. "
+                    : ""}
+                Starting client access does not test or preload the model.
               </p>
             </form>
+          )}
+          {editedHostLabel !== null && (
+            <div className={css({ mt: "4", pt: "4", borderTop: "1px solid token(colors.line)" })}>
+              <p
+                className={`${muted} ${css({ fontSize: "xs", mb: "2", overflowWrap: "anywhere" })}`}
+              >
+                Host-name draft kept in this tab: {editedHostLabel || "(empty)"}. It follows you to
+                Playground and back. Starting client access applies the name; reloading or closing
+                this tab clears unsaved edits.
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={!!pending}
+                onClick={() => {
+                  setEditedHostLabel(null);
+                  (hostNameInput.current ?? servingControls.current)?.focus({
+                    preventScroll: true,
+                  });
+                }}
+              >
+                Discard name draft
+              </Button>
+            </div>
           )}
         </div>
       </section>

@@ -1,5 +1,27 @@
 # Autonomous improvement log
 
+## Retain the sharing draft through a model test
+
+A host-name draft now belongs to the owner workspace tab, so Test model in
+playground and returning to Client access preserve the edit. Explicit discard
+restores the last reported server name and returns keyboard focus to the field.
+A matching successful Start acknowledges the submitted draft; a failed response,
+a lost response, or a status poll showing another running name cannot discard it.
+The draft remains separate from server state and from all access credentials.
+Reload and closing the tab clear it, and no browser storage is used.
+
+Client access derives test evidence from the chosen model name's retained
+conversation using the same completed/nonempty predicate as Playground. Switching
+models, empty/failed output and clearing history cannot leave a stale tested flag.
+The observation is advisory: it neither gates Start nor proves memory fit, current
+model-file identity, availability or client capacity.
+
+Claude Opus 5 High advised deriving evidence and using owner-tab state. A dedicated
+draft provider keeps form intent separate from conversation state. The suggested
+rule to clear on any running status was not adopted: another window or an uncertain
+write can report a different running name, and the browser test preserves the draft
+through that case. Verification and screenshots are recorded in verification.
+
 ## Preserve the intended model when enabling client access
 
 Client access now follows the model in its URL and updates that URL when the host

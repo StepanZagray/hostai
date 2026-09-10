@@ -769,3 +769,44 @@ model states and the 320px paused-key state were visually inspected. Evidence is
 retained under `test-results/host-handoff/`. All owned advisor, web-server and private
 display processes and runtime directories were removed. No remote push or deployment
 was performed.
+
+
+## Sharing draft and Playground evidence — 10 September 2026
+
+A dedicated owner-tab draft provider retains only the edited host name across
+workspace routes. Null follows the latest server name; an explicit empty string
+remains an edit. Discard clears the draft and returns focus to the name field (or
+the serving section when the form is absent). Successful Start acknowledges only
+a matching returned model/name and only the unchanged submitted draft. Polls and
+lost/rejected mutation responses cannot silently discard it. No browser storage
+or additional API is introduced; reload clears the unsaved draft.
+
+The Client access start form and Playground share a derived completed/nonempty
+answer predicate. Evidence is scoped to the model name and retained conversation;
+model-file digests are not tracked. Model changes select separate histories, and
+Clear/reload remove evidence. Starting remains available without a test response,
+and the UI disclaims current availability and memory-fit guarantees.
+
+Claude Opus 5 High advised owner-tab state and a derived selector. The implementation
+uses a separate draft context rather than adding host settings to the conversation
+store. Its suggested unconditional draft clearing on any running status was rejected:
+a lost response or another window can report a different running name. A browser
+scenario preserves the intended draft through exactly that case and allows explicit
+discard after Stop. A matching successful Start still clears the draft normally.
+
+Validation passed 301 frontend tests, type/lint/format checks and all production
+frontend bundles. The isolated browser suite passed 53 scenarios across sharing,
+owner memory/recovery and model downloads, with the real owner/guest integration
+scenario intentionally skipped. An additional focused rejected-Start navigation
+and manual-retry scenario passed, for 54 distinct browser checks. New coverage
+includes the test-and-return name draft, model-specific evidence, cleared history,
+empty/failed answers, empty drafts, reset focus, no browser storage, reload, matching
+save acknowledgement, server defaults after save, and uncertain/rejected saves.
+
+Desktop tested-model and 320px draft/reset states were visually inspected. Screenshots,
+logs, the advisor result and isolation/cleanup evidence are retained under
+`test-results/sharing-draft/`. The production owner bundle ran on a disposable Node
+loopback server with intercepted API responses. No real download, GPU inference,
+public tunnel, Java integration run or Java packaging was performed in this frontend
+cycle. All owned advisor, server and private display processes and runtime directories
+were removed. No remote push or deployment was performed.

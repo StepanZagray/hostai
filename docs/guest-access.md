@@ -72,7 +72,19 @@ explicit model choice. Stopping and restarting access in the same gateway run
 preserves its configuration; a missing model stays selected with recovery guidance
 instead of being replaced by a different installed model. A link for another model
 explains what is currently shared and requires an explicit Stop before switching.
-Manual host-name edits remain in this page only; leaving the page loses unsaved edits.
+Host-name drafts stay in this owner tab while you visit Playground or other workspace
+pages. Discard name draft returns to the last reported server name without changing
+it. A matching successful Start clears the draft; failed or lost responses and
+background status checks retain it, including when another name is running. Reload
+or closing the tab clears unsaved edits. Draft names never enter browser storage or
+leave the browser before an explicit Start.
+
+Before starting, Client access shows whether this model name has a completed,
+nonempty answer in its retained Playground conversation. That observation is
+optional and does not gate Start. Switching models checks their separate histories;
+Clear and reload remove the corresponding evidence. It is not tied to a model-file
+digest, does not prove current availability or memory fit, and is not a durable
+readiness record.
 
 Access keys show permission separately from current availability. Stopped access,
 a different served model, or an unavailable internet connection pauses their use;

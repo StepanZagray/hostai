@@ -27,7 +27,7 @@ import { useHost } from "../lib/host-context";
 import { useOwnerConversations } from "../lib/owner-conversations-context";
 import { emptyOwnerConversation } from "../lib/owner-conversations";
 import { chatUnavailableReason } from "../lib/model-admission";
-import { prepareChatRequest } from "../lib/conversation";
+import { hasCompletedModelAnswer, prepareChatRequest } from "../lib/conversation";
 import { Answer } from "../components/answer";
 import { useConversationScroll } from "../lib/use-conversation-scroll";
 
@@ -83,9 +83,7 @@ function Playground() {
     return () => conversations.stop(model, "Leaving this conversation stopped generation.");
   }, [conversations, model]);
   const ready = !!status?.ollamaConnected && modelAvailable && modelError === null;
-  const responded = turns.some(
-    (turn) => turn.model === model && turn.state === "completed" && !!turn.response.trim(),
-  );
+  const responded = hasCompletedModelAnswer(turns, model);
   const send = () =>
     conversations.send(model, ready, () => {
       void refresh();

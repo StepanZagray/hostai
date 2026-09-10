@@ -88,7 +88,9 @@ async function accessFixture(page: Page, names = [model]) {
     } else if (path === "/api/sharing/internet/stop") {
       Object.assign(state.internet!, { state: "stopping", publicUrl: null });
     } else if (path === "/api/sharing/start") {
-      Object.assign(state, route.request().postDataJSON(), {
+      const body = route.request().postDataJSON();
+      Object.assign(state, body, {
+        hostLabel: body.hostLabel.trim(),
         state: "local",
         guestUrl: "http://127.0.0.1:8081",
       });
@@ -329,6 +331,225 @@ test("internet keys distinguish paused reachability from unconfirmed status", as
   await expect(page.getByRole("button", { name: "Revoke Visitor", exact: true })).toBeEnabled();
   expect(fixture.calls).toEqual([]);
 });
+
+test("a host-name draft follows the model test round trip and evidence follows the conversation", async ({
+  page,
+}) => {
+  const other = "another-model:medium";
+  const fixture = await accessFixture(page, [model, other]);
+  let chats = 0;
+  await page.route("**/api/chat", (route) => {
+    chats++;
+    return route.fulfill({
+      contentType: "application/x-ndjson",
+      body: JSON.stringify({ content: "A completed test answer", done: true }) + "\n",
+    });
+  });
+  await page.goto(`/sharing?model=${encodeURIComponent(model)}`);
+  const start = page.getByRole("button", { name: "Start local client access", exact: true });
+  await expect(start).toBeEnabled();
+  await expect(
+    page.getByText("No completed answer for this model in this tab.", { exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Host name shown to clients").fill("  My tested host  ");
+  await page.getByRole("link", { name: "Test model in playground", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(model);
+  expect(chats).toBe(0);
+  expect(fixture.calls).toEqual([]);
+  await page
+    .getByRole("textbox", { name: "Message", exact: true })
+    .fill("Test this selected model");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(page.getByText("A completed test answer", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Set up client access", exact: true }).click();
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("  My tested host  ");
+  await expect(
+    page.getByText("This model answered a prompt in this tab.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText(/does not prove current availability or memory fit/)).toBeVisible();
+  expect(fixture.calls).toEqual([]);
+  await page
+    .getByRole("region", { name: "Serving controls", exact: true })
+    .screenshot({ path: "test-results/sharing-tested-draft.png", animations: "disabled" });
+  await page.getByLabel("Model for clients").selectOption(other);
+  await expect(
+    page.getByText("No completed answer for this model in this tab.", { exact: true }),
+  ).toBeVisible();
+  await expect(start).toBeEnabled();
+  await page.getByLabel("Model for clients").selectOption(model);
+  await expect(
+    page.getByText("This model answered a prompt in this tab.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Test model in playground", exact: true }).click();
+  await page.getByRole("button", { name: "Clear", exact: true }).click();
+  await page.goBack();
+  await expect(
+    page.getByText("No completed answer for this model in this tab.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("  My tested host  ");
+  await start.click();
+  await expect(
+    page.getByRole("heading", { name: "Local client access is on", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Discard name draft", exact: true })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "Stop client access", exact: true }).click();
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("My tested host");
+  fixture.state.hostLabel = "New server name";
+  await refreshAccess(page);
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("New server name");
+  expect(chats).toBe(1);
+  expect(fixture.calls).toEqual(["/api/sharing/start", "/api/sharing/stop"]);
+});
+
+test("draft reset follows the latest server name, while empty edits survive navigation and reload clears them", async ({
+  page,
+}) => {
+  const fixture = await accessFixture(page);
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto(`/sharing?model=${encodeURIComponent(model)}`);
+  const name = page.getByLabel("Host name shown to clients");
+  await name.fill("A private name draft");
+  fixture.state.hostLabel = "Name changed elsewhere";
+  await refreshAccess(page);
+  await expect(name).toHaveValue("A private name draft");
+  await page.getByRole("link", { name: "Test model in playground", exact: true }).click();
+  await page.goBack();
+  await expect(name).toHaveValue("A private name draft");
+  await page
+    .getByRole("region", { name: "Serving controls", exact: true })
+    .screenshot({ path: "test-results/sharing-name-draft-mobile.png", animations: "disabled" });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole("button", { name: "Discard name draft", exact: true }).click();
+  await expect(name).toHaveValue("Name changed elsewhere");
+  await expect(name).toBeFocused();
+  await name.fill("");
+  await page.getByRole("link", { name: "Test model in playground", exact: true }).click();
+  await page.goBack();
+  await expect(name).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Start local client access", exact: true }),
+  ).toBeDisabled();
+  await name.fill("A private name draft");
+  expect(
+    await page.evaluate(() =>
+      JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),
+    ),
+  ).not.toContain("A private name draft");
+  await page.reload();
+  await expect(name).toHaveValue("Name changed elsewhere");
+  await expect(page.getByRole("button", { name: "Discard name draft", exact: true })).toHaveCount(
+    0,
+  );
+  expect(fixture.calls).toEqual([]);
+});
+
+test("a rejected start keeps the draft for an explicit retry after navigation", async ({
+  page,
+}) => {
+  const fixture = await accessFixture(page);
+  let rejected = 0;
+  await page.route(
+    "**/api/sharing/start",
+    (route) => {
+      rejected++;
+      return route.fulfill({ status: 409, json: { detail: "Fixture start was rejected." } });
+    },
+    { times: 1 },
+  );
+  await page.goto(`/sharing?model=${encodeURIComponent(model)}`);
+  await page.getByLabel("Host name shown to clients").fill("Retry this name");
+  await page.getByRole("button", { name: "Start local client access", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Fixture start was rejected");
+  await page.getByRole("link", { name: "Test model in playground", exact: true }).click();
+  await page.goBack();
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("Retry this name");
+  expect(fixture.calls).toEqual([]);
+  expect(rejected).toBe(1);
+  await page.getByRole("button", { name: "Start local client access", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Local client access is on", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Discard name draft", exact: true })).toHaveCount(
+    0,
+  );
+  expect(fixture.state.hostLabel).toBe("Retry this name");
+  expect(fixture.calls).toEqual(["/api/sharing/start"]);
+});
+
+test("a lost start response and another running name cannot silently discard the draft", async ({
+  page,
+}) => {
+  const fixture = await accessFixture(page);
+  let attempts = 0;
+  await page.route("**/api/sharing/start", (route) => {
+    attempts++;
+    Object.assign(fixture.state, { state: "local", model, hostLabel: "A different running name" });
+    return route.abort();
+  });
+  await page.goto(`/sharing?model=${encodeURIComponent(model)}`);
+  await page.getByLabel("Host name shown to clients").fill("Keep my intended name");
+  await page.getByRole("button", { name: "Start local client access", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Local client access is on", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Host-name draft kept in this tab: Keep my intended name/),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Test the shared model", exact: true }).click();
+  await page.goBack();
+  await expect(
+    page.getByText(/Host-name draft kept in this tab: Keep my intended name/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Stop client access", exact: true }).click();
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue("Keep my intended name");
+  await page.getByRole("button", { name: "Discard name draft", exact: true }).click();
+  await expect(page.getByLabel("Host name shown to clients")).toHaveValue(
+    "A different running name",
+  );
+  expect(attempts).toBe(1);
+  expect(fixture.calls).toEqual(["/api/sharing/stop"]);
+});
+
+for (const outcome of ["empty", "failed"] as const) {
+  test(`${outcome} model replies do not become test evidence on Client access`, async ({
+    page,
+  }) => {
+    const fixture = await accessFixture(page);
+    let chats = 0;
+    await page.route("**/api/chat", (route) => {
+      chats++;
+      const chunks =
+        outcome === "empty"
+          ? [{ content: "   ", done: true }]
+          : [
+              { content: "Partial output", done: false },
+              { content: "", done: true, error: "Fixture failure" },
+            ];
+      return route.fulfill({
+        contentType: "application/x-ndjson",
+        body: chunks.map((chunk) => JSON.stringify(chunk) + "\n").join(""),
+      });
+    });
+    await page.goto(`/sharing?model=${encodeURIComponent(model)}`);
+    await page.getByRole("link", { name: "Test model in playground", exact: true }).click();
+    await page
+      .getByRole("textbox", { name: "Message", exact: true })
+      .fill("A test that does not complete");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+    await page.goBack();
+    await expect(
+      page.getByText("No completed answer for this model in this tab.", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Start local client access", exact: true }),
+    ).toBeEnabled();
+    expect(chats).toBe(1);
+    expect(fixture.calls).toEqual([]);
+  });
+}
 
 test("access storage failure blocks enabling guests and remains legible at 320px", async ({
   page,

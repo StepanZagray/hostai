@@ -9,6 +9,17 @@ export interface ConversationTurn {
   omittedTurns?: number;
 }
 
+export function hasCompletedModelAnswer(
+  turns: readonly ConversationTurn[] | undefined,
+  model: string,
+) {
+  return (
+    turns?.some(
+      (turn) => turn.model === model && turn.state === "completed" && !!turn.response.trim(),
+    ) ?? false
+  );
+}
+
 function turnMessages(turn: ConversationTurn): ChatMessage[] {
   return [
     { role: "user", content: turn.prompt },
