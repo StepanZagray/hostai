@@ -1,5 +1,33 @@
 # Verification
 
+## Guest feedback while access is unavailable
+
+The three missing-feedback scenarios fail against the previous production bundle.
+The updated full guest suite passes 51 scenarios with no skips, including four new
+cases for pending reconnect success/failure, same-key cooldown feedback and Enter
+during an existing response. Checks assert retained draft/transcript/focus, feedback
+that changes after the check, no queued or duplicate send, no extra same-key check,
+unchanged cooldown enforcement, and a different-key connection during that cooldown.
+The existing suite also covers clock changes, reconnects, replacement credentials,
+expired access and interrupted streams.
+
+`pnpm check`, all 295 frontend tests and the guest production build pass. Java is
+repackaged with final guest assets using `-DskipTests package`; backend source is
+unchanged and backend tests are not rerun in this cycle. The browser uses an
+isolated static guest server with intercepted HTTP/WebSocket responses on the
+proved-private Sway/pixman display. No real inference, public tunnel, deployment
+or Java HTTP integration is exercised.
+
+The first full-page captures missed paint in parts of the offscreen composer,
+although its DOM and computed styles were correct. Captures now scroll the named
+composer into view and capture that element. The two reconnect outcome scenarios
+pass again with these captures; narrow and desktop images were visually inspected
+and show the button label, focus ring and feedback. Browser focus is tested; actual
+screen-reader speech is not measured. Evidence is in
+`test-results/guest-wait-feedback/`, including the prior verified Opus 5 High review
+whose two deferred suggestions motivated this cycle, baseline failures, final logs,
+rendering investigation and cleanup checks. No new Opus invocation is claimed.
+
 ## Guest replacement-key recovery
 
 The existing browser scenario first confirmed destructive clearing after an invalid

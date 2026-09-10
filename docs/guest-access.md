@@ -63,7 +63,12 @@ not production hosting. A key is a bearer permission, not a verified identity.
    check so a rejection leaves keyboard users at the editable key field; moving
    focus elsewhere while waiting is respected. Involuntary expiry leaves draft focus in place instead
    of moving typing into the key field. Retry is manual; an empty answer does not require a new
-   access check when the existing session is still usable.
+   access check when the existing session is still usable. If Enter is pressed while
+   access is being checked, the composer says the draft was not sent and updates
+   that feedback when the check finishes. Access recovery never queues a send.
+   Re-entering the same key during a reconnect cooldown explains the remaining
+   wait without sending another check; a different key can still be checked.
+
    The displayed expiry is the host's timestamp rendered in your time zone, not a
    browser countdown. A wrong device clock or clock correction cannot invalidate
    a successful access check or interrupt an answer. The host checks every send

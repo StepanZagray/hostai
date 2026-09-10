@@ -664,6 +664,160 @@ test("same-key metadata errors and busy checks retain conversation and draft", a
   expect(state.chatRequests).toHaveLength(1);
 });
 
+for (const outcome of ["ready", "failed"] as const) {
+  test(`Enter during a pending same-key reconnect explains the draft was not sent (${outcome})`, async ({
+    page,
+  }) => {
+    const state = await fixture(page);
+    await connected(page);
+    await send(page, "A remembered question");
+    await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requested = false;
+    await page.route("**/guest/v1/session", async (route) => {
+      requested = true;
+      await gate;
+      if (outcome === "failed") state.sessionStatus = 503;
+      await route.fallback();
+    });
+
+    const reconnect = page.getByRole("button", { name: "Reconnect", exact: true });
+    const composer = page.getByLabel("Message", { exact: true });
+    try {
+      await reconnect.click();
+      await expect.poll(() => requested).toBe(true);
+      await expect(page.getByText("Checking guest access…", { exact: true })).toBeVisible();
+
+      await composer.fill("Keep this draft while access is checked");
+      await composer.press("Enter");
+      await expect(
+        page.getByText("Message not sent. Access is being checked.", { exact: false }),
+      ).toBeVisible();
+      await expect(composer).toHaveValue("Keep this draft while access is checked");
+      await expect(composer).toBeFocused();
+      await expect(page.getByText("A fixture answer.", { exact: true })).toBeVisible();
+      expect(state.chatRequests).toHaveLength(1);
+      for (const width of [320, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.getByRole("form", { name: "Message composer", exact: true }).screenshot({
+          path: `test-results/guest-pending-reconnect-${outcome}-${width}.png`,
+          animations: "disabled",
+        });
+      }
+
+      release();
+      if (outcome === "ready") {
+        await expect(
+          page.getByText("Access was available at the last check.", { exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByText("Message not sent. Access is available again.", { exact: false }),
+        ).toBeVisible();
+        await expect(composer).toHaveValue("Keep this draft while access is checked");
+        await expect(composer).toBeFocused();
+        await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+        expect(state.chatRequests).toHaveLength(1);
+
+        await composer.press("Enter");
+        await expect.poll(() => state.chatRequests.length).toBe(2);
+      } else {
+        await expect(page.getByRole("alert")).toContainText("stopped or the host is offline");
+        await expect(
+          page.getByText("Message not sent. Reconnect with usable access", { exact: false }),
+        ).toBeVisible();
+        await expect(composer).toHaveValue("Keep this draft while access is checked");
+        await expect(composer).toBeFocused();
+        await expect(
+          page.getByRole("button", { name: "Send message", exact: true }),
+        ).toBeDisabled();
+        await expect(reconnect).toBeEnabled();
+        expect(state.chatRequests).toHaveLength(1);
+      }
+      expect(state.sessionRequests).toHaveLength(2);
+    } finally {
+      release();
+    }
+  });
+}
+
+test("re-entering the current key during cooldown explains the wait and preserves work", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  await page.clock.install();
+  await connected(page);
+  await send(page, "Earlier permission question");
+  await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+
+  state.chatStatus = 429;
+  state.retryAfter = "4";
+  await send(page, "Keep this request during cooldown");
+  await expect(page.getByRole("alert")).toContainText("request limit");
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+    "Keep this request during cooldown",
+  );
+  expect(state.sessionRequests).toHaveLength(1);
+  expect(state.chatRequests).toHaveLength(2);
+
+  await page.getByRole("button", { name: "Use another key", exact: true }).click();
+  const input = page.getByLabel("Access key", { exact: true });
+  await input.fill(` ${access} `);
+  await input.press("Enter");
+  await expect(page.getByRole("alert")).toHaveText(/Wait for the reconnect delay/i);
+  await expect(page.getByText("Earlier permission question", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+    "Keep this request during cooldown",
+  );
+  await expect(page.getByText(/Try reconnecting in/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  expect(state.sessionRequests).toHaveLength(1);
+  expect(state.chatRequests).toHaveLength(2);
+  expect(await page.content()).not.toContain(access);
+
+  await page.clock.runFor(3_001);
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  await input.fill("different-fixture-key");
+  await input.press("Enter");
+  await expect(
+    page.getByText("Access was available at the last check.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(0);
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
+  await expect(page.getByText(/Message not sent/i)).toHaveCount(0);
+  expect(state.sessionRequests).toHaveLength(2);
+  expect(state.chatRequests).toHaveLength(2);
+  expect(await page.content()).not.toContain(access);
+  expect(await page.content()).not.toContain("different-fixture-key");
+});
+
+test("Enter during a busy generation does not duplicate work or report a failed send", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.stream = true;
+  await connected(page);
+  await send(page, "The active question");
+  await push(page, "A partial answer");
+  await expect(page.getByText("A partial answer", { exact: true })).toBeVisible();
+
+  const composer = page.getByLabel("Message", { exact: true });
+  await composer.fill("A draft for after the active answer");
+  await composer.press("Enter");
+  await expect(composer).toHaveValue("A draft for after the active answer");
+  await expect(page.getByText(/Message not sent/i)).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  expect(state.chatRequests).toHaveLength(1);
+
+  await push(page, " complete", true);
+  await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+  await expect(composer).toHaveValue("A draft for after the active answer");
+  expect(state.chatRequests).toHaveLength(1);
+});
+
 test("failed replacement preserves the conversation until that key connects; disconnect clears", async ({
   page,
 }) => {

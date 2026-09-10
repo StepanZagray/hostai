@@ -30,6 +30,7 @@ export function useGuestChat() {
   const [draft, setDraft] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [unsentAttempt, setUnsentAttempt] = useState(false);
   const [busy, setBusy] = useState(false);
   const [retryAt, setRetryAt] = useState(0);
   const [now, setNow] = useState(() => performance.now());
@@ -85,6 +86,7 @@ export function useGuestChat() {
     setDraft("");
     setError("");
     setNotice("");
+    setUnsentAttempt(false);
     setRetryAt(0);
     setPhase("disconnected");
   }
@@ -105,7 +107,10 @@ export function useGuestChat() {
       if (phase === "checking") setPhase("needs-key");
       return;
     }
-    if (candidate === key.current && retryAt > performance.now()) return;
+    if (candidate === key.current && retryAt > performance.now()) {
+      setError("Wait for the reconnect delay to finish before using this key again.");
+      return;
+    }
     availableSession.current = null;
     stop();
     metadata.current?.abort();
@@ -133,6 +138,7 @@ export function useGuestChat() {
           setTurns([]);
           setDraft("");
           setNotice("");
+          setUnsentAttempt(false);
         }
         // Initial unavailable metadata still owns an editable draft. Metadata
         // for an unavailable replacement must not relabel the old conversation.
@@ -163,6 +169,9 @@ export function useGuestChat() {
   }
 
   async function send() {
+    // A response is already in progress; its live status explains why another
+    // draft is not submitted. Do not replace that status or enqueue a send.
+    if (active.current) return;
     // Matching the available metadata also blocks a stale render from sending
     // retained history before React commits a successful replacement's reset.
     if (
@@ -171,10 +180,12 @@ export function useGuestChat() {
       !key.current ||
       key.current !== sessionKey.current ||
       availableSession.current !== session ||
-      active.current ||
       metadata.current
-    )
+    ) {
+      if (draft.trim()) setUnsentAttempt(true);
       return;
+    }
+    setUnsentAttempt(false);
     // Exclude the entire unfinished exchange, including its user prompt. Retrying
     // the restored draft therefore cannot duplicate it in the request context.
     const prepared = prepareChatRequest(
@@ -294,7 +305,15 @@ export function useGuestChat() {
     draft,
     setDraft,
     error,
-    notice,
+    notice: unsentAttempt
+      ? phase === "checking"
+        ? "Message not sent. Access is being checked. Your draft is kept; send it after the check finishes."
+        : retrySeconds > 0
+          ? "Message not sent. Wait for the reconnect delay, then reconnect and send your draft manually."
+          : ready
+            ? "Message not sent. Access is available again. Review your draft and send it when ready."
+            : "Message not sent. Reconnect with usable access before sending your draft. Nothing will be sent automatically."
+      : notice,
     busy,
     ready,
     retrySeconds,

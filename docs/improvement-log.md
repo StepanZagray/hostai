@@ -1,5 +1,24 @@
 # Autonomous improvement log
 
+## Explain guest actions that cannot run yet
+
+Two findings from the verified Claude Opus 5 High guest review remained: Enter
+while reconnecting silently returned, and re-entering the same key during a
+Retry-After cooldown erased the field without explaining why no check happened.
+The composer now records a blocked nonempty send attempt and derives its message
+from current access state. It explicitly says the message was not sent, preserves
+the draft, updates after success/failure/cooldown, and requires an explicit send.
+Successful replacement-key switching and Disconnect clear that attempt alongside
+their existing draft reset. An active generation keeps its live status and never
+queues another prompt.
+
+The same-key cooldown path now gives a fixed, credential-safe explanation before
+returning. It does not change the deadline or make another request; a different
+key remains eligible for a separate explicit check. Luna independently added
+browser regressions in an isolated worktree while the primary implemented the
+hook change. No authentication, transport, backend, discovery or persistence
+behavior is added.
+
 ## Preserve guest work through rejected replacement keys
 
 A browser reproduction confirmed that trying an invalid replacement key erased
@@ -27,8 +46,8 @@ Astra implemented the bounded hook change in an isolated worktree; the primary
 reviewed it and integrated the UI and browser checks. The first wider run caught
 an over-restrictive Keep current access condition for paused approved keys; that
 control remains available to close the editor without restoring permission.
-Opus's separate feedback suggestions for Enter during a pending check and entering
-the current key during a cooldown remain future improvements.
+Opus also identified missing feedback for Enter during a pending check and entering
+the current key during a cooldown; the follow-up is recorded above.
 
 ## Recover storage for private invitations
 
