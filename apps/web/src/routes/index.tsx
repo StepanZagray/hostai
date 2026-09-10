@@ -16,7 +16,6 @@ import { chatUnavailableReason } from "../lib/model-admission";
 import {
   Badge,
   Button,
-  CodeBlock,
   PageHeading,
   PanelHeading,
   button,
@@ -24,6 +23,7 @@ import {
   muted,
   panel,
 } from "../components/ui";
+import { RuntimeCommand } from "../components/runtime-command";
 import { Topology } from "../components/topology";
 import { RequestTable } from "../components/request-table";
 
@@ -221,7 +221,7 @@ function Overview() {
         })}
       >
         <Topology />
-        <section className={panel}>
+        <section className={panel} aria-label="From zero to first token">
           <PanelHeading
             title="From zero to first token"
             description="A small setup. A lot of possibilities."
@@ -238,12 +238,14 @@ function Overview() {
             {[
               {
                 title: "Start your Ollama runtime",
-                command: "ollama serve",
+                action: "serve" as const,
+                complete: "Ollama is already connected. No restart is needed.",
                 done: !!status?.ollamaConnected,
               },
               {
                 title: "Download a model that fits your hardware",
-                command: "ollama pull qwen3:0.6b",
+                action: "pull" as const,
+                complete: "Your library has a model available to try.",
                 done: eligibleModels.length > 0,
               },
             ].map((step, i) => (
@@ -274,7 +276,15 @@ function Overview() {
                   </span>
                   {step.title}
                 </div>
-                <CodeBlock code={step.command} />
+                {step.done ? (
+                  <p className={muted}>{step.complete}</p>
+                ) : (
+                  <RuntimeCommand
+                    endpoint={status?.ollamaUrl}
+                    loading={loading}
+                    action={step.action}
+                  />
+                )}
               </div>
             ))}
             <Link

@@ -1,5 +1,48 @@
 # Verification
 
+## Commands for the configured local runtime
+
+The custom-port browser regression fails against the previous production bundle:
+setup offered a bare `ollama serve` despite the gateway reporting port 11500.
+Overview, setup and the library now share validated, per-command `OLLAMA_HOST`
+assignments. The default address also gets an explicit assignment, so an inherited
+shell setting cannot silently select another runtime. `localhost` is pinned to
+127.0.0.1 like the gateway; IPv6 and effective HTTP/HTTPS ports are retained.
+Unknown or malformed endpoint metadata produces recovery text without a command.
+Connected overview steps show completion text, and installation has an actual link.
+
+The implementation follows the official [Ollama environment parser](https://raw.githubusercontent.com/ollama/ollama/main/envconfig/config.go)
+and [client configuration](https://raw.githubusercontent.com/ollama/ollama/main/api/client.go).
+Explicit HTTP and HTTPS use ports 80 and 443 when omitted; the scheme must not be
+discarded. [Server startup](https://raw.githubusercontent.com/ollama/ollama/main/server/routes.go)
+uses plain HTTP, so HTTPS setup explains checking the existing TLS endpoint instead
+of offering a misleading serve command. These are Linux/macOS shell instructions,
+not configuration changes to an already-running OS service.
+
+Opus 5 High reviewed the bounded design. Its suggestion to leave default commands
+bare was rejected because inherited `OLLAMA_HOST` could redirect them. Two claims
+in the advice were corrected against source: the client calls `envconfig.Host()`,
+and the gateway does not accept uppercase schemes. Seven generated commands were
+executed under Bash against a temporary fake Ollama executable, verifying destination
+and arguments with a conflicting inherited setting; no real Ollama process ran.
+
+The first browser run exposed narrow-screen overflow in the expanded library
+command and an incomplete new status fixture. All 79 browser scenarios passed after
+those corrections. Visual inspection then caught a clipped setup grid that page-wide
+overflow checks missed. A new assertion reproduces the clipping by checking copy
+button bounds; the setup grid now allows its columns to shrink around the command.
+The final 16 setup/command scenarios pass with that assertion. Changed panels were
+visually inspected at 320, 768, 1024 and 1440 px, plus loading, unavailable, HTTPS
+and completed states. `pnpm check`, all 333 frontend tests and the production build
+pass. Java was repackaged with the final guest assets using `-DskipTests package`;
+backend source is unchanged and its tests were not rerun. Browser checks use
+intercepted responses on the proved-private Sway/pixman display.
+
+Evidence, including the advisor output, baseline
+failure, shell probe, build/check logs and isolated browser captures, is retained
+under `test-results/runtime-commands/`. Real model download/inference, live TLS,
+public tunnels and deployment are outside this verification.
+
 ## Guest feedback while access is unavailable
 
 The three missing-feedback scenarios fail against the previous production bundle.

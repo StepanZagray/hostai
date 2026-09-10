@@ -1,21 +1,13 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
+import { RuntimeCommand } from "../components/runtime-command";
 import { ModelDownloads } from "../components/model-downloads";
 import { ArrowRight, Box, Search, RefreshCw, Terminal } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
 import { formatBytes } from "../lib/api";
 import { chatUnavailableReason } from "../lib/model-admission";
-import {
-  Badge,
-  Button,
-  CodeBlock,
-  EmptyState,
-  PageHeading,
-  button,
-  muted,
-  panel,
-} from "../components/ui";
+import { Badge, Button, EmptyState, PageHeading, button, muted, panel } from "../components/ui";
 
 export const Route = createFileRoute("/models")({ component: Models });
 function Models() {
@@ -200,6 +192,7 @@ function Models() {
         )}
       </section>
       <aside
+        aria-label="Add a model from your terminal"
         className={css({
           mt: "6",
           p: "5",
@@ -212,16 +205,11 @@ function Models() {
         })}
       >
         <Terminal size={21} className={css({ color: "accent" })} />
-        <div className={css({ flex: 1 })}>
+        <div className={css({ flex: 1, minW: "0", w: "full" })}>
           <h2 className={css({ fontSize: "sm", fontWeight: 700, mb: "1" })}>
             Add a model from your terminal
           </h2>
-          <p className={muted}>
-            You can also use Ollama directly. HostAI discovers installed models after refresh.
-          </p>
-        </div>
-        <div className={css({ maxW: "full" })}>
-          <CodeBlock code="ollama pull qwen3:0.6b" />
+          <RuntimeCommand endpoint={status?.ollamaUrl} loading={loading} action="pull" />
         </div>
       </aside>
     </>

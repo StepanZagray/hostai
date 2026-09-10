@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { Globe2, Laptop, RefreshCw, ShieldCheck } from "lucide-react";
 import { css } from "../../styled-system/css";
+import { RuntimeCommand } from "../components/runtime-command";
 import { Topology } from "../components/topology";
 import {
   Badge,
@@ -45,7 +46,7 @@ function Connection() {
             px: "5",
             pb: "6",
             display: "grid",
-            gridTemplateColumns: { base: "1fr", lg: "1fr 1fr" },
+            gridTemplateColumns: { base: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" },
             gap: "6",
           })}
         >
@@ -72,13 +73,7 @@ function Connection() {
             {status?.ollamaConnected ? (
               <p className={muted}>Ollama is already connected. No restart is needed.</p>
             ) : (
-              <>
-                <p className={`${muted} ${css({ mb: "3" })}`}>
-                  Install Ollama first using the setup guide below. If it is already running, check
-                  its connection instead of starting a second copy.
-                </p>
-                <CodeBlock code="ollama serve" />
-              </>
+              <RuntimeCommand endpoint={status?.ollamaUrl} loading={loading} action="serve" />
             )}
           </div>
           <div>
@@ -148,7 +143,7 @@ function Connection() {
             title="Host connection"
             action={
               <Badge tone={status ? "good" : "warning"}>
-                {status ? "Connected" : "Unavailable"}
+                {status ? "Gateway connected" : "Gateway unavailable"}
               </Badge>
             }
           />

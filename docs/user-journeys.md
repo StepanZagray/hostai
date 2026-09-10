@@ -66,8 +66,11 @@ model—not a generic metrics dashboard.
    A dated starter chooser now supplies explicit tags, listing sizes and source links
    before an explicit download; installed choices lead directly to Playground. Next, add
    live catalog discovery and hardware-fit guidance. A tag's file size is not a guarantee
-   of runtime memory fit. Keep custom Ollama endpoint commands consistent across
-   overview, setup and library; the current examples still assume Ollama defaults.
+   of runtime memory fit. Overview, setup and library now use the gateway’s configured
+   loopback endpoint in copyable Linux/macOS commands, including custom ports and IPv6.
+   Missing or malformed status withholds commands; HTTPS setup explains the existing TLS
+   endpoint rather than offering a plaintext server command. Ready overview steps show
+   completion text instead of redundant commands.
    Check existing runtime/service ownership before adding Start/Stop controls.
    Download cancellation must not imply all cached layers were deleted.
 2. **Make local chat recovery reliable.** Owner navigation and model switching now
