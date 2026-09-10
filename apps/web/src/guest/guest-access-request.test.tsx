@@ -17,7 +17,14 @@ const id = "51e6b724-f7f7-4dd1-a74a-7140f86eaf3b";
 let state: GuestRequestView;
 const onConnect = vi.fn();
 const render = () =>
-  renderToStaticMarkup(<GuestAccessRequest enabled connecting={false} onConnect={onConnect} />);
+  renderToStaticMarkup(
+    <GuestAccessRequest
+      {...useGuestAccessRequest(true)}
+      enabled
+      connecting={false}
+      onConnect={onConnect}
+    />,
+  );
 beforeEach(() => {
   vi.stubGlobal("window", { location: { protocol: "https:" } });
   const request = createGuestAccessRequest();
@@ -93,7 +100,7 @@ it.each(["unavailable", "error", "unsupported"] as const)(
     const html = renderToStaticMarkup(<GuestChat />);
     expect(html).toMatch(/<input[^>]*id="guest-key"[^>]*type="password"/);
     expect(html).not.toContain('id="request-access-name"');
-    expect(html).toContain("Keep this tab open");
-    expect(html).toContain("Approved permission lasts until expiry or revocation");
+    expect(html).toMatch(/<details[^>]*open=""/);
+    expect(html).not.toContain("Message composer");
   },
 );

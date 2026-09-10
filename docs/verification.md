@@ -392,3 +392,33 @@ also avoid selecting the network scenario when matching `integration.spec.ts`.
 Protocol details and operational limits are in [access requests](access-requests.md).
 No public registry deployment, verified human identity, stable public hosting or
 end-to-end encryption was added by this cycle.
+
+
+## Guest onboarding presentation cycle
+
+At this cycle, 279 frontend tests and 41 isolated browser scenarios passed, together
+with TypeScript, lint, formatting and production builds. The guest bundle was
+packaged into Java and served by a private gateway. Public guest origins and API
+responses were intercepted browser fixtures; only built static assets reached the
+private server. No public tunnel, real model download or inference was used.
+
+The changed entry states were exercised at 320, 768, 1024 and 1440 pixels, including
+keyboard expansion of the key alternative, initial focus, direct key fallback,
+intake changes during key entry, request retry/cancellation, approval, disconnection,
+expired access and retained drafts/transcripts. Existing guest tests cover actual
+frontend stream parsing with controlled fixture chunks, cancellation and no automatic
+resubmission. The disabled composer assertions for never-connected/disconnected
+states now assert absence; tests with retained sessions still assert disabled Send.
+
+A run exposed an existing test teardown race: a routed asset response was disposed
+before its handler finished following reload. The fixture now waits for outstanding
+route handlers before context disposal. The subsequent complete run passed all 41
+scenarios. This was a fixture lifecycle correction, not an ignored failure.
+
+Visual evidence includes `guest-onboarding-{320,768,1024,1440}.png`,
+`guest-onboarding-invite-only.png`, `guest-onboarding-pending.png`,
+`guest-onboarding-approved.png`, `access-requests-guest-uncertain.png` and
+`guest-connected.png` under `test-results/`. The private Sway 1.12/pixman/device
+isolation checks passed, and its exact compositor PID/runtime were absent afterward.
+Claude Opus 5 High provided the focused read-only UX advice. The test services used
+private storage and were stopped after verification.

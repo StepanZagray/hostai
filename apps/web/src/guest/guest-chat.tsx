@@ -3,6 +3,8 @@ import { css } from "../../styled-system/css";
 import { Button, muted, panel } from "../components/ui";
 import { GuestConversation } from "./guest-conversation";
 import { GuestAccessRequest } from "./guest-access-request";
+import { GuestKeyForm } from "./guest-key-form";
+import { useGuestAccessRequest } from "./use-guest-access-request";
 import { useGuestChat } from "./use-guest-chat";
 
 const controls = css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" });
@@ -19,12 +21,15 @@ const field = css({
 });
 
 export function GuestChat() {
+  const [epoch, setEpoch] = useState(0);
+  return <GuestChatSession key={epoch} onDisconnect={() => setEpoch((value) => value + 1)} />;
+}
+
+function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
   const chat = useGuestChat();
   const [enteredKey, setEnteredKey] = useState("");
   const [changeKey, setChangeKey] = useState(false);
-  const [requestEpoch, setRequestEpoch] = useState(0);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const keyInput = useRef<HTMLInputElement>(null);
   const showKey =
     !chat.hasKey ||
     chat.phase === "needs-key" ||
@@ -38,9 +43,14 @@ export function GuestChat() {
   useEffect(() => {
     if (chat.ready) composer.current?.focus({ preventScroll: true });
   }, [chat.ready]);
-  useEffect(() => {
-    if (showKey) keyInput.current?.focus({ preventScroll: true });
-  }, [showKey]);
+  const requestEnabled = showKey && potentiallyInternet && !changeKey;
+  const accessRequest = useGuestAccessRequest(requestEnabled && !checking);
+  const requestFirst =
+    potentiallyInternet &&
+    !chat.hasKey &&
+    !changeKey &&
+    !["unavailable", "unsupported", "error"].includes(accessRequest.state.details);
+  const showConversation = !!chat.session || chat.turns.length > 0 || !!chat.draft;
 
   return (
     <main
@@ -90,18 +100,21 @@ export function GuestChat() {
               : scope === "local-preview"
                 ? "Local preview"
                 : potentiallyInternet
-                  ? "Potential internet access"
+                  ? "Internet access not checked"
                   : "Access not checked"}
           </span>
         </div>
         <p id="guest-disclosure" className={`${muted} ${css({ mt: "3" })}`}>
           Messages go to the operator of this host.{" "}
           {scope === "temporary-internet"
-            ? "This connection uses a Cloudflare relay. Cloudflare terminates TLS and can see messages and access keys. This temporary address can change or go offline at any time."
+            ? "This connection uses a Cloudflare relay. Cloudflare terminates TLS and can see messages and access keys."
             : scope === "local-preview"
               ? "Local preview is local-only, with no internet sharing."
-              : "The transport may use a Cloudflare relay. Cloudflare can see messages and access keys when it relays the connection. Connect to check this key’s access scope before sending a message."}{" "}
-          Keep your access key private. The host’s name is self-asserted, not a verified identity.
+              : potentiallyInternet
+                ? "Cloudflare can see messages, access keys, your name and request credentials when it relays the connection."
+                : "The transport may use a Cloudflare relay. Cloudflare can see messages and access keys when it relays the connection."}{" "}
+          {scope && requestEnabled && "Cloudflare can also see your name and request credentials. "}
+          Keep your key private. The host’s name is self-asserted, not a verified identity.
         </p>
         {chat.session && (
           <div
@@ -137,13 +150,15 @@ export function GuestChat() {
             </p>
           </div>
         )}
-        <p role="status" className={`${muted} ${css({ my: "3" })}`}>
-          {checking
-            ? "Checking guest access…"
-            : chat.ready
-              ? "Guest access checked. You can send a message."
-              : "Connect with a valid key before sending a message."}
-        </p>
+        {(checking || chat.hasKey || !potentiallyInternet) && (
+          <p role="status" className={`${muted} ${css({ my: "3" })}`}>
+            {checking
+              ? "Checking guest access…"
+              : chat.ready
+                ? "Guest access checked. You can send a message."
+                : "Connect with a valid key before sending a message."}
+          </p>
+        )}
         {chat.error && (
           <p
             role="alert"
@@ -157,48 +172,30 @@ export function GuestChat() {
             Try reconnecting in {chat.retrySeconds} seconds. Nothing will be sent automatically.
           </p>
         )}
-        {showKey && (
-          <form
-            className={css({ my: "3" })}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void chat.connect(enteredKey);
-              setEnteredKey("");
-              setChangeKey(false);
-            }}
-          >
-            <label
-              htmlFor="guest-key"
-              className={css({ display: "block", fontWeight: 650, mb: "2" })}
-            >
-              Access key
-            </label>
-            <div className={controls}>
-              <input
-                id="guest-key"
-                ref={keyInput}
-                type="password"
-                autoComplete="off"
-                autoCapitalize="none"
-                spellCheck={false}
-                maxLength={256}
-                required
-                value={enteredKey}
-                onChange={(event) => setEnteredKey(event.target.value)}
-                disabled={checking}
-                aria-describedby="guest-disclosure guest-key-help"
-                className={`${field} ${css({ flex: "1 1 180px" })}`}
-              />
-              <Button type="submit" variant="primary" disabled={checking || !enteredKey}>
-                Connect
-              </Button>
-            </div>
-            <p id="guest-key-help" className={`${muted} ${css({ mt: "2" })}`}>
-              Use the key supplied by this host. Connecting with a different key clears this
-              conversation and draft.
-            </p>
-          </form>
-        )}
+        <GuestAccessRequest
+          state={accessRequest.state}
+          request={accessRequest.request}
+          enabled={requestEnabled}
+          connecting={checking}
+          onConnect={(key) => {
+            setEnteredKey("");
+            setChangeKey(false);
+            return chat.connect(key);
+          }}
+        />
+        <GuestKeyForm
+          shown={showKey}
+          secondary={requestFirst}
+          checking={checking}
+          value={enteredKey}
+          onChange={setEnteredKey}
+          focusOnShow={changeKey || !potentiallyInternet || chat.hasKey}
+          onConnect={() => {
+            void chat.connect(enteredKey);
+            setEnteredKey("");
+            setChangeKey(false);
+          }}
+        />
         {chat.hasKey && (
           <div className={controls}>
             <Button
@@ -215,7 +212,7 @@ export function GuestChat() {
             <Button
               onClick={() => {
                 chat.disconnect();
-                setRequestEpoch((value) => value + 1);
+                onDisconnect();
                 setEnteredKey("");
                 setChangeKey(false);
               }}
@@ -224,96 +221,95 @@ export function GuestChat() {
             </Button>
           </div>
         )}
-        <GuestAccessRequest
-          key={requestEpoch}
-          enabled={showKey && potentiallyInternet}
-          connecting={checking}
-          onConnect={(key) => {
-            setEnteredKey("");
-            setChangeKey(false);
-            return chat.connect(key);
-          }}
-        />
-        <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
-          Kept in this tab's memory only. Disconnecting or reloading clears the conversation and
-          draft.
-        </p>
+        {showConversation && (
+          <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
+            This tab keeps your key, conversation and draft in memory only. Disconnecting or
+            reloading clears them. Permission lasts until expiry or host revocation.
+            {scope === "temporary-internet" && " This temporary address can change or go offline."}
+          </p>
+        )}
       </section>
 
-      <section aria-labelledby="conversation-heading" className={panel}>
-        <div className={css({ px: "4", py: "3", borderBottom: "1px solid token(colors.line)" })}>
-          <h2 id="conversation-heading" className={css({ fontWeight: 750 })}>
-            Conversation
-          </h2>
-        </div>
-        <GuestConversation turns={chat.turns} />
-        <form
-          aria-label="Message composer"
-          className={css({ p: "4", borderTop: "1px solid token(colors.line)" })}
-          onSubmit={(event) => {
-            event.preventDefault();
-            void chat.send();
-          }}
-        >
-          <label
-            htmlFor="guest-message"
-            className={css({ display: "block", fontWeight: 650, mb: "2" })}
-          >
-            Message
-          </label>
-          <textarea
-            id="guest-message"
-            ref={composer}
-            value={chat.draft}
-            rows={3}
-            disabled={!chat.session}
-            onChange={(event) => chat.setDraft(event.target.value)}
-            aria-describedby="guest-disclosure guest-message-help"
-            className={`${field} ${css({ display: "block", resize: "vertical", minH: "96px", maxH: "240px", overflowY: "auto" })}`}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-                event.preventDefault();
-                void chat.send();
-              }
-            }}
-          />
-          <div
-            className={css({
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: "3",
-              flexWrap: "wrap",
-              mt: "3",
-            })}
-          >
-            <p id="guest-message-help" className={`${muted} ${css({ fontSize: "xs" })}`}>
-              Enter to send · Shift+Enter for a new line
-              <br />
-              512 output tokens · 1,024 token maximum · Temperature 0.7
-              <br />6 requests/minute · 1 guest request at a time
-            </p>
-            {chat.busy ? (
-              <Button
-                type="button"
-                onClick={(event) => {
-                  event.preventDefault();
-                  chat.stop();
-                }}
-              >
-                Stop
-              </Button>
-            ) : (
-              <Button type="submit" variant="primary" disabled={!chat.ready || !chat.draft.trim()}>
-                Send message
-              </Button>
-            )}
+      {showConversation && (
+        <section aria-labelledby="conversation-heading" className={panel}>
+          <div className={css({ px: "4", py: "3", borderBottom: "1px solid token(colors.line)" })}>
+            <h2 id="conversation-heading" className={css({ fontWeight: 750 })}>
+              Conversation
+            </h2>
           </div>
-          <p role="status" className={`${muted} ${css({ mt: "3" })}`}>
-            {chat.busy ? "Receiving a response…" : chat.notice}
-          </p>
-        </form>
-      </section>
+          <GuestConversation turns={chat.turns} />
+          <form
+            aria-label="Message composer"
+            className={css({ p: "4", borderTop: "1px solid token(colors.line)" })}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void chat.send();
+            }}
+          >
+            <label
+              htmlFor="guest-message"
+              className={css({ display: "block", fontWeight: 650, mb: "2" })}
+            >
+              Message
+            </label>
+            <textarea
+              id="guest-message"
+              ref={composer}
+              value={chat.draft}
+              rows={3}
+              disabled={!chat.session}
+              onChange={(event) => chat.setDraft(event.target.value)}
+              aria-describedby="guest-disclosure guest-message-help"
+              className={`${field} ${css({ display: "block", resize: "vertical", minH: "96px", maxH: "240px", overflowY: "auto" })}`}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  void chat.send();
+                }
+              }}
+            />
+            <div
+              className={css({
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: "3",
+                flexWrap: "wrap",
+                mt: "3",
+              })}
+            >
+              <p id="guest-message-help" className={`${muted} ${css({ fontSize: "xs" })}`}>
+                Enter to send · Shift+Enter for a new line
+                <br />
+                512 output tokens · 1,024 token maximum · Temperature 0.7
+                <br />6 requests/minute · 1 guest request at a time
+              </p>
+              {chat.busy ? (
+                <Button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    chat.stop();
+                  }}
+                >
+                  Stop
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={!chat.ready || !chat.draft.trim()}
+                >
+                  Send message
+                </Button>
+              )}
+            </div>
+            <p role="status" className={`${muted} ${css({ mt: "3" })}`}>
+              {chat.busy ? "Receiving a response…" : chat.notice}
+            </p>
+          </form>
+        </section>
+      )}
     </main>
   );
 }

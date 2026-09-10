@@ -12,7 +12,13 @@ can separately choose **Allow access requests**. Request intake starts off after
 every gateway restart and every new tunnel attempt. Publishing a directory
 listing never enables requests or grants access.
 
-The guest page discovers whether this host accepts requests. The guest enters a
+The guest page discovers whether this host accepts requests. On public pages without
+a key, requesting access is the primary path; **Have an access key?** opens the
+manual form. If requests are unavailable, unsupported or fail to load, the key form
+is shown directly. Discovery never steals keyboard focus or submits either form.
+Changing intake availability preserves a key already being entered.
+
+The guest enters a
 name, reviews the model and submits a request. The host sees that unverified name,
 the shared model and a matching code. The code helps distinguish requests; it does
 not verify a person. The host must choose a duration before approving. Approval
@@ -20,7 +26,8 @@ allows only the selected model over the internet, for 1–168 hours.
 
 Approval creates a durable permission immediately. The guest then explicitly
 chooses **Connect**; connecting reads metadata and does not generate a response.
-The browser keeps its credentials in memory only. Disconnecting, reloading or closing the tab
+The conversation area appears after a session exists; access failures retain an
+existing conversation and draft. The browser keeps its credentials in memory only. Disconnecting, reloading or closing the tab
 loses them. An approved permission still lasts until expiry or revocation even if
 the guest loses its credential, just like a manually created invitation that was
 never copied.

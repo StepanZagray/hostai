@@ -2,7 +2,7 @@ import { useState } from "react";
 import { css } from "../../styled-system/css";
 import { Button, muted } from "../components/ui";
 import { isRequestTerminal, type AccessRequest } from "./request-api";
-import { useGuestAccessRequest, type GuestRequestView } from "./use-guest-access-request";
+import { type useGuestAccessRequest, type GuestRequestView } from "./use-guest-access-request";
 
 const actions = css({ display: "flex", gap: "2", flexWrap: "wrap", mt: "3" });
 const text = css({ overflowWrap: "anywhere" });
@@ -17,23 +17,23 @@ const statuses: Record<AccessRequest["state"], string> = {
 };
 
 export function GuestAccessRequest({
+  state,
+  request,
   enabled,
   connecting,
   onConnect,
 }: {
+  state: GuestRequestView;
+  request: ReturnType<typeof useGuestAccessRequest>["request"];
   enabled: boolean;
   connecting: boolean;
   onConnect: (key: string) => void | Promise<void>;
 }) {
-  const { state, request } = useGuestAccessRequest(enabled && !connecting);
   if (!enabled) return null;
   const blocked = !!state.busy || connecting || state.retrySeconds > 0;
 
   return (
-    <section
-      aria-labelledby="request-access-heading"
-      className={css({ borderTop: "1px solid token(colors.line)", mt: "4", pt: "4" })}
-    >
+    <section aria-labelledby="request-access-heading" className={css({ my: "4" })}>
       <h3 id="request-access-heading" className={css({ fontWeight: 750, mb: "2" })}>
         Request access from this host
       </h3>
@@ -51,16 +51,13 @@ export function GuestAccessRequest({
           </div>
         </dl>
       )}
-      <p id="request-access-disclosure" className={muted}>
-        Temporary internet access uses a Cloudflare relay. Cloudflare terminates TLS and can see
-        your name, request credentials, access keys, and messages. The host sees your name and
-        selected model. Only request access from a host you trust.
-      </p>
-      <p id="request-access-memory" className={`${muted} ${css({ mt: "2" })}`}>
-        Keep this tab open. Request credentials stay in this tab’s memory; disconnecting, reloading
-        or closing it loses them. Approved permission lasts until expiry or revocation even if you
-        close the tab. Cancel here to ask the host to end it.
-      </p>
+      {(state.submission || state.hello?.requestsAccepted) && (
+        <p id="request-access-memory" className={`${muted} ${css({ mt: "2" })}`}>
+          Keep this tab open. Reloading or closing it loses your request and key; approved access
+          still lasts until expiry or revocation.
+          {state.submission && " Cancel here to ask the host to end it."}
+        </p>
+      )}
       <p role="status" className={`${muted} ${css({ mt: "3" })}`}>
         {state.busy === "details"
           ? "Checking whether this host accepts requests…"
@@ -79,7 +76,7 @@ export function GuestAccessRequest({
                       : state.details === "unavailable"
                         ? "This host is not accepting access requests. You can still use an existing key."
                         : state.details === "ready"
-                          ? "Choose the name the host will see. Nothing is submitted until you request access."
+                          ? "The host must approve before you can connect."
                           : "Use an existing key, or refresh the host details to check for access requests."}
       </p>
       {state.error && (
@@ -150,7 +147,7 @@ function RequestNameForm({
         required
         autoComplete="off"
         disabled={disabled}
-        aria-describedby="request-access-name-help request-access-disclosure request-access-memory"
+        aria-describedby="request-access-name-help guest-disclosure request-access-memory"
         className={css({
           w: "full",
           minW: 0,
@@ -163,7 +160,7 @@ function RequestNameForm({
         })}
       />
       <p id="request-access-name-help" className={muted}>
-        Up to 40 characters. This name is visible to the host.
+        Visible to the host with your requested model. Only request access from a host you trust.
       </p>
       <div className={actions}>
         <Button type="submit" variant="primary" disabled={disabled || !name.trim()}>

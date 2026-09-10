@@ -2,6 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { hostFixture } from "./support/host-fixture";
 
 test.skip(!process.env.HOSTAI_GUEST_TEST_URL, "Requires the isolated guest bundle server");
+test.afterEach(async ({ page }) => {
+  // A reload can still be fetching fonts after the last UI assertion. Finish the
+  // fixture's asset handlers before Playwright disposes their API responses.
+  await page.unrouteAll({ behavior: "wait" });
+});
 const id = "6317a5a4-563c-4e36-944c-ea57139051bf";
 const intakeId = "73264113-f496-4532-bbd9-944b05337189";
 const grantId = "07de6449-095f-42fd-b334-4236cb779d1c";
@@ -29,6 +34,8 @@ async function guestFixture(page: Page) {
     lostSubmit: false,
     submissions: [] as { auth: string; body: Record<string, string> }[],
     cancelCount: 0,
+    sessions: 0,
+    sessionStatus: 200,
   };
   await page.route(`${origin}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -64,8 +71,10 @@ async function guestFixture(page: Page) {
       state.row.state = "cancelled";
       return route.fulfill({ json: state.row });
     }
-    if (path === "/guest/v1/session")
+    if (path === "/guest/v1/session") {
+      state.sessions++;
       return route.fulfill({
+        status: state.sessionStatus,
         json: {
           hostLabel: "Fixture host",
           model,
@@ -78,6 +87,7 @@ async function guestFixture(page: Page) {
           requestsPerMinute: 6,
         },
       });
+    }
     return route.fulfill({ status: 404, body: "" });
   });
   return { state, origin };
@@ -133,6 +143,7 @@ test("approved guest can connect after intake closes without silently cancelling
   await expect(
     page.getByText("Waiting for the host to review your request.", { exact: true }),
   ).toBeVisible();
+  await page.screenshot({ path: "test-results/guest-onboarding-pending.png", fullPage: true });
   state.row = {
     ...state.row,
     state: "approved",
@@ -141,6 +152,7 @@ test("approved guest can connect after intake closes without silently cancelling
   };
   await page.getByRole("button", { name: "Check status", exact: true }).click();
   await expect(page.getByRole("button", { name: "Connect to model", exact: true })).toBeEnabled();
+  await page.screenshot({ path: "test-results/guest-onboarding-approved.png", fullPage: true });
   state.hello = false;
   await page.getByRole("button", { name: "Refresh host details", exact: true }).click();
   await expect(page.getByRole("button", { name: "Connect to model", exact: true })).toBeEnabled();
@@ -213,4 +225,104 @@ test("host sees explicit permission choice, full capacity and recoverable status
   state.requests.available = true;
   await inbox.getByRole("button", { name: "Refresh status", exact: true }).click();
   await expect(inbox.getByText(/No pending requests/)).toBeVisible();
+});
+
+for (const width of [320, 768, 1024, 1440]) {
+  test(`public onboarding at ${width}px prioritizes requests and supports keyboard key entry`, async ({
+    page,
+  }) => {
+    const { state, origin } = await guestFixture(page);
+    await page.setViewportSize({ width, height: 1100 });
+    await page.goto(origin);
+    const name = page.getByLabel("Your name", { exact: true });
+    const key = page.getByLabel("Access key", { exact: true });
+    await expect(name).toBeVisible();
+    await expect(key).toBeHidden();
+    await expect(
+      page.locator("summary").filter({ hasText: "Have an access key?" }),
+    ).toBeInViewport();
+    await expect(page.getByRole("region", { name: "Conversation", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("form", { name: "Message composer" })).toHaveCount(0);
+    expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
+    await expect(page.locator("#guest-disclosure")).toContainText("name and request credentials");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `test-results/guest-onboarding-${width}.png`, fullPage: true });
+    const alternate = page.locator("summary").filter({ hasText: "Have an access key?" });
+    await alternate.focus();
+    await alternate.press("Enter");
+    await page.keyboard.press("Tab");
+    await expect(key).toBeFocused();
+    await key.fill("fixture-manual-key");
+    await key.press("Enter");
+    await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
+    await expect(
+      page.getByText("Guest access checked. You can send a message.", { exact: true }),
+    ).toBeVisible();
+    expect(state.sessions).toBe(1);
+    expect(state.submissions).toHaveLength(0);
+    await page.getByRole("button", { name: "Use another key", exact: true }).click();
+    await expect(key).toBeVisible();
+    await expect(key).toBeFocused();
+    await expect(name).toHaveCount(0);
+  });
+}
+
+test("public host without request intake shows its key form directly", async ({ page }) => {
+  const { state, origin } = await guestFixture(page);
+  state.hello = false;
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto(origin);
+  await expect(page.getByText(/This host is not accepting access requests/)).toBeVisible();
+  const key = page.getByLabel("Access key", { exact: true });
+  await expect(key).toBeVisible();
+  await expect(page.getByLabel("Your name", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("form", { name: "Message composer" })).toHaveCount(0);
+  await key.fill("fixture-manual-key");
+  await page.screenshot({ path: "test-results/guest-onboarding-invite-only.png", fullPage: true });
+  await key.press("Enter");
+  await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
+  expect(state.submissions).toHaveLength(0);
+  expect(state.sessions).toBe(1);
+});
+
+test("host intake changes preserve a manually entered key without submitting it", async ({
+  page,
+}) => {
+  const { state, origin } = await guestFixture(page);
+  await page.goto(origin);
+  await expect(page.getByLabel("Your name", { exact: true })).toBeVisible();
+  await page.locator("summary").filter({ hasText: "Have an access key?" }).click();
+  const key = page.getByLabel("Access key", { exact: true });
+  await key.fill("fixture-key-in-progress");
+  state.hello = false;
+  await page.getByRole("button", { name: "Refresh host details", exact: true }).click();
+  await expect(page.getByText(/This host is not accepting access requests/)).toBeVisible();
+  await expect(key).toBeVisible();
+  await expect(key).toHaveValue("fixture-key-in-progress");
+  state.hello = true;
+  await page.getByRole("button", { name: "Refresh host details", exact: true }).click();
+  await expect(page.getByLabel("Your name", { exact: true })).toBeVisible();
+  await expect(key).toBeVisible();
+  await expect(key).toHaveValue("fixture-key-in-progress");
+  expect(state.sessions).toBe(0);
+  expect(state.submissions).toHaveLength(0);
+});
+
+test("rechecking an invalid public key keeps the request disclosure and recovery available", async ({
+  page,
+}) => {
+  const { state, origin } = await guestFixture(page);
+  await page.goto(origin + "#access=fixture-original-key");
+  await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
+  await page.getByLabel("Message", { exact: true }).fill("Keep my draft");
+  state.sessionStatus = 401;
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("A valid access key is required");
+  await expect(page.getByLabel("Your name", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Access key", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Keep my draft");
+  await expect(page.locator("#guest-disclosure")).toContainText("name and request credentials");
+  expect(state.submissions).toHaveLength(0);
 });

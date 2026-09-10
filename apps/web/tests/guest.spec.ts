@@ -257,7 +257,7 @@ test("invalid key has a uniform safe error and no automatic retries", async ({ p
   await input.press("Enter");
   await expect(page.getByRole("alert")).toContainText("A valid access key is required");
   await expect(input).toHaveValue("");
-  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
   expect(await page.content()).not.toContain(access);
   expect(state.sessionRequests).toHaveLength(1);
   expect(state.chatRequests).toHaveLength(0);
@@ -307,7 +307,7 @@ test("temporary internet metadata enables chat with Cloudflare and host identity
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(page.getByText("Temporary internet access", { exact: true })).toHaveCount(0);
   await expect(disclosure).toContainText("transport may use a Cloudflare relay");
-  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
 });
 
 test("internet Stop closes its socket, retains the draft and never resubmits automatically", async ({
@@ -380,7 +380,7 @@ test("an invite handshake never claims a local transport before metadata arrives
     await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
     expect(new URL(page.url()).hash).toBe("");
     expect(await page.content()).not.toContain(access);
-    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
     release();
     await expect(page.getByText("Temporary internet access", { exact: true })).toBeVisible();
     expect(state.chatRequests).toHaveLength(0);
@@ -404,7 +404,7 @@ for (const scope of [
     state.metadata.scope = scope;
     await openGuest(page, access);
     await expect(page.getByRole("alert")).toContainText("Could not check guest access");
-    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
     await expect(page.getByText("Temporary internet access", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Local preview", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
@@ -604,7 +604,7 @@ test("different key clears history even if handshake fails; disconnect aborts an
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("A valid access key is required");
   await expect(page.getByRole("article")).toHaveCount(0);
-  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Message", { exact: true })).toHaveCount(0);
   state.sessionStatus = 200;
   state.stream = true;
   await page.getByRole("button", { name: "Reconnect", exact: true }).click();
@@ -615,7 +615,7 @@ test("different key clears history even if handshake fails; disconnect aborts an
   await push(page, "New partial output");
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(page.getByRole("article")).toHaveCount(0);
-  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Message", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Access key", { exact: true })).toHaveValue("");
   expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.aborts)).toBe(1);
   expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0, 0]);
@@ -662,7 +662,7 @@ test("disconnect during a pending handshake cannot restore access or echo the ke
     release();
     await expect.poll(() => settled).toBe(true);
     await expect(page.getByLabel("Access key", { exact: true })).toHaveValue("");
-    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
     await expect(page.locator("time")).toHaveCount(0);
     expect(await page.content()).not.toContain(access);
   } finally {
@@ -795,7 +795,7 @@ test("320px and 1440px keep long answers and composer bounded with keyboard scro
   ).toBe(true);
   await page.reload();
   await expect(page.getByLabel("Access key", { exact: true })).toBeVisible();
-  await expect(composer).toHaveValue("");
+  await expect(composer).toHaveCount(0);
   await expect(page.getByRole("article")).toHaveCount(0);
   expect(state.sessionRequests).toHaveLength(1);
   expect(state.unexpected).toEqual([]);
@@ -818,7 +818,7 @@ test("a stalled access check times out and reconnect remains manual", async ({ p
     await page.clock.fastForward(12_001);
     await expect(page.getByRole("alert")).toContainText("Could not check guest access");
     await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeEnabled();
-    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
     expect(state.chatRequests).toEqual([]);
   } finally {
     release();

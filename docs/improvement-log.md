@@ -1,5 +1,29 @@
 # Autonomous improvement log
 
+## Guest onboarding without a key
+
+A guest arriving from discovery now sees the request path before manual key entry.
+The key form remains directly available when request intake is off, unsupported or
+fails to load, and a typed key survives intake changes. Opening the alternative is
+keyboard accessible; initial discovery does not focus a field or open the keyboard.
+The unused conversation/composer stays hidden until there is a session, while
+existing drafts and transcripts remain visible through access failures.
+
+Claude Opus 5 High reviewed the guest journey. Its findings informed conditional
+key-form priority, consolidating the relay disclosure, preserving history on access
+errors and explaining that Disconnect loses the key without revoking permission.
+Request recovery, host approval and explicit connection retain their existing rules.
+
+Validation: 279 frontend tests, 41 isolated browser scenarios, TypeScript, lint,
+formatting and the production builds passed. Browser coverage includes keyboard
+entry, 320/768/1024/1440px layouts, unavailable intake, typed-key preservation,
+request retry/cancellation, approval, expiry and connection-error history. A fixture
+teardown race on late asset fetches was fixed by awaiting route handlers before
+context disposal. Screenshots were visually inspected and retained under
+`test-results/guest-onboarding-*.png`; test services and private display were removed.
+No real model, GPU workload or public tunnel was used in this presentation cycle.
+
+
 ## Guest requests with explicit host approval
 
 Guests can now request access from a public guest page, wait for the host to choose
