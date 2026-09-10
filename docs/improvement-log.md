@@ -1,5 +1,27 @@
 # Autonomous improvement log
 
+## Owner retry guidance across models and navigation
+
+Playground now honors valid Retry-After headers on 429/503 responses. One elapsed-time
+deadline belongs to the owner tab, so changing models, Clear and navigation cannot
+bypass it. The store checks the deadline as well as disabling Send, covering Enter
+and direct submission. Drafts remain per-model and editable when the runtime is
+available. Expiry announces that the owner may try again, without claiming capacity
+is free or generating another request.
+
+The shared parser is the existing guest implementation extracted unchanged: numeric
+seconds or a response Date-relative HTTP date, bounded to five minutes. Missing or
+invalid values add no guessed delay. One store timer releases the wait; the visible
+countdown ticks only while Playground is mounted and waiting, with no per-second
+live announcement. Closing the store cancels the timer. Browser suspend may pause
+monotonic time, so a courtesy wait can resume after waking; the server owns admission.
+
+Claude Opus 5 High advised shared scope and a store-level guard. Its requested backend
+filename was absent; primary inspection found the real ApiErrors handler, which emits
+Retry-After: 1 for InferenceRegistry's shared capacity rejection. No invented body
+fallback or default five-second delay was added. The existing host-Date parser avoids
+the device-clock issue raised by the advisor. Verification is recorded below.
+
 ## Retain the sharing draft through a model test
 
 A host-name draft now belongs to the owner workspace tab, so Test model in

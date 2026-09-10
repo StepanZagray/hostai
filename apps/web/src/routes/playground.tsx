@@ -42,6 +42,13 @@ function Playground() {
   const { models, status, refresh } = useHost();
   const navigate = Route.useNavigate();
   const { conversations, snapshot } = useOwnerConversations();
+  const [, tickRetry] = useState(0);
+  const retrySeconds = Math.max(0, Math.ceil(((snapshot.retryAt ?? 0) - performance.now()) / 1000));
+  useEffect(() => {
+    if (!snapshot.retryAt) return;
+    const timer = setInterval(() => tickRetry((value) => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, [snapshot.retryAt]);
   const defaultModel = models.find((item) => chatUnavailableReason(item) === null) ?? models[0];
   const model = requestedModel || snapshot.selectedModel || (defaultModel?.name ?? "");
   const conversation = snapshot.conversations.get(model) ?? emptyOwnerConversation();
@@ -454,7 +461,7 @@ function Playground() {
                     key="send"
                     type="submit"
                     variant="primary"
-                    disabled={!ready || draft.error !== null}
+                    disabled={!ready || draft.error !== null || retrySeconds > 0}
                     aria-label="Send message"
                   >
                     <ArrowUp />
@@ -462,6 +469,21 @@ function Playground() {
                 )}
               </div>
             </form>
+            {snapshot.retryAt !== null && (
+              <div className={css({ mt: "3", fontSize: "xs", color: "muted" })}>
+                <p role="status">
+                  {retrySeconds > 0
+                    ? "The host asked you to wait before sending again. Your draft is retained."
+                    : "The wait is over. Send manually when you are ready; capacity may still be busy."}
+                </p>
+                {retrySeconds > 0 && (
+                  <p aria-live="off">
+                    Retry available in {retrySeconds} {retrySeconds === 1 ? "second" : "seconds"}.
+                  </p>
+                )}
+                <p>This wait applies to all models in this workspace tab.</p>
+              </div>
+            )}
             <p
               role="status"
               className={css({

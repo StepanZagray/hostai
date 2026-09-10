@@ -130,3 +130,85 @@ test("a completed test leads to the same model's client settings without enablin
   expect(chatCalls).toBe(1);
   expect(mutations).toBe(0);
 });
+
+for (const status of [429, 503]) {
+  test(`${status} retry waits survive model changes, navigation and clock corrections without resending`, async ({
+    page,
+  }) => {
+    const other = "other-model:small";
+    await hostFixture(page, true, [model, other]);
+    await page.clock.install();
+    await page.setViewportSize({ width: 320, height: 1000 });
+    const requests: RequestBody[] = [];
+    await page.route("**/api/chat", (route) => {
+      requests.push(route.request().postDataJSON());
+      return requests.length === 1
+        ? route.fulfill({
+            status,
+            headers: { "Retry-After": "8" },
+            json: { detail: "The host is temporarily busy." },
+          })
+        : route.fulfill({
+            contentType: "application/x-ndjson",
+            body: '{"content":"A manual retry answer","done":true}\n',
+          });
+    });
+    await page.goto(`/playground?model=${encodeURIComponent(model)}`);
+    const composer = page.getByRole("textbox", { name: "Message", exact: true });
+    const send = page.getByRole("button", { name: "Send message", exact: true });
+    await composer.fill("A rejected prompt");
+    await send.click();
+    await expect(composer).toHaveValue("A rejected prompt");
+    await expect(composer).toBeFocused();
+    await expect(send).toBeDisabled();
+    await expect(page.getByText(/The host asked you to wait/)).toBeVisible();
+    await composer.fill("Edited after rejection");
+    await composer.press("Enter");
+    expect(requests).toHaveLength(1);
+    await page.clock.setFixedTime(new Date(Date.now() + 48 * 3_600_000));
+    await page.clock.runFor(1000);
+    await expect(send).toBeDisabled();
+    await page.clock.setFixedTime(new Date(Date.now() - 48 * 3_600_000));
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await page.clock.runFor(50);
+    const description = page.getByRole("heading", { level: 1 }).locator("..").locator("p");
+    await expect
+      .poll(() =>
+        description.evaluate((element) => {
+          const text = document.createRange();
+          text.selectNodeContents(element);
+          return text.getBoundingClientRect().right <= document.documentElement.clientWidth;
+        }),
+      )
+      .toBe(true);
+    await page.screenshot({
+      path: `test-results/owner-retry-${status}-mobile.png`,
+      fullPage: false,
+      animations: "disabled",
+    });
+    await page.setViewportSize({ width: 1440, height: 1100 });
+    await page.getByRole("link", { name: "Models", exact: true }).click();
+    await page.clock.runFor(2000);
+    await page
+      .getByRole("article")
+      .filter({ has: page.getByRole("heading", { name: other, exact: true }) })
+      .getByRole("link", { name: "Try in playground", exact: true })
+      .click();
+    await composer.fill("Another model's draft");
+    await expect(send).toBeDisabled();
+    await composer.press("Enter");
+    await expect(page.getByText(/This wait applies to all models/)).toBeVisible();
+    expect(requests).toHaveLength(1);
+    await page.clock.runFor(10000);
+    await expect(send).toBeEnabled();
+    await expect(page.getByText(/The wait is over. Send manually/)).toBeVisible();
+    expect(requests).toHaveLength(1);
+    await page.getByRole("combobox", { name: "Model", exact: true }).selectOption(model);
+    await expect(composer).toHaveValue("Edited after rejection");
+    await send.click();
+    await expect(page.getByText("A manual retry answer", { exact: true })).toBeVisible();
+    expect(requests).toHaveLength(2);
+    expect(requests[1].messages).toEqual([{ role: "user", content: "Edited after rejection" }]);
+    await expect(page.getByText(/This wait applies to all models/)).toHaveCount(0);
+  });
+}

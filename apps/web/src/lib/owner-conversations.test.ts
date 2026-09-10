@@ -180,3 +180,76 @@ it("drops only untouched empty sessions when browsing many models", () => {
   for (let i = 0; i < 100; i++) store.select(`empty:${i}`);
   expect([...store.getSnapshot().conversations.keys()]).toEqual(["draft", "settings", "empty:99"]);
 });
+
+it("shares the host retry wait across models and Clear without trusting the device date", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let now = 1000;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const fetchChat = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      Response.json({ detail: "Busy" }, { status: 429, headers: { "Retry-After": "10" } }),
+    )
+    .mockResolvedValue(answer());
+  const store = createOwnerConversations(fetchChat);
+  try {
+    store.select("a:small");
+    store.edit("a:small", { prompt: "Original prompt" });
+    await store.send("a:small", true, settled);
+    expect(store.getSnapshot().retryAt).toBe(11000);
+    store.clear("a:small");
+    store.edit("a:small", { prompt: "Edited prompt" });
+    await store.send("a:small", true, settled);
+    store.select("b:small");
+    store.edit("b:small", { prompt: "B draft" });
+    vi.spyOn(Date, "now").mockReturnValue(9_000_000_000_000);
+    await store.send("b:small", true, settled);
+    vi.spyOn(Date, "now").mockReturnValue(0);
+    await store.send("b:small", true, settled);
+    expect(fetchChat).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().conversations.get("b:small")?.prompt).toBe("B draft");
+    now = 11000;
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(store.getSnapshot().retryAt).toBe(0);
+    expect(fetchChat).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+    await store.send("b:small", true, settled);
+    expect(fetchChat).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().retryAt).toBeNull();
+    expect(store.getSnapshot().conversations.get("a:small")?.prompt).toBe("Edited prompt");
+  } finally {
+    store.close();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});
+
+it("rechecks elapsed monotonic time and cancels the retry timer on close", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  vi.spyOn(performance, "now").mockReturnValue(0);
+  const fetchChat = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(
+      Response.json({ detail: "Busy" }, { status: 503, headers: { "Retry-After": "1" } }),
+    );
+  const store = createOwnerConversations(fetchChat);
+  try {
+    store.select("a:small");
+    store.edit("a:small", { prompt: "Retain this" });
+    await store.send("a:small", true, settled);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(store.getSnapshot().retryAt).toBe(1000);
+    expect(vi.getTimerCount()).toBe(1);
+    const listener = vi.fn();
+    store.subscribe(listener);
+    store.close();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(300000);
+    expect(listener).not.toHaveBeenCalled();
+    expect(fetchChat).toHaveBeenCalledTimes(1);
+  } finally {
+    store.close();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  }
+});

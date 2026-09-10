@@ -32,7 +32,7 @@ real model was downloaded or inference benchmark run.
 | Client: request access | Guest page discovers intake, generates credentials in memory and waits for approval | No accounts or identity verification. Reload loses credentials. Disconnect retains request credentials for cancellation/reconnect; request records have a shorter lifetime than approved keys, which still require expiry or revocation. | Retry lost responses without duplicate requests, cancel explicitly, then connect without sending a prompt automatically. |
 | Client: connect | [Shell](../apps/web/src/components/shell.tsx) exposes one local host workspace | The separate guest page checks model and channel permissions. An internet invite needs no client installation; the host name remains self-asserted. | See host identity, model and access requirements; connect without installing Java, Ollama or a model. |
 | Client: chat | Current Playground uses same-origin `/api/chat` | Guest chat has its own bundle/API and retains draft and partial output through reconnects. Temporary internet access requires a live verified tunnel and a separate internet key. | A client-only conversation surface, with authenticated access to allowed models and useful recovery states. |
-| Either: recover a send | Failed/stopped prompt stays in the transcript; partial answers are excluded from later context | Owner Playground and guest chat restore failed/stopped prompts and exclude the entire unfinished exchange. Guest chat additionally respects Retry-After; owner retry-delay feedback remains missing. | Edit/retry the failed turn without manually copying text or duplicating its context; preserve partial output. |
+| Either: recover a send | Failed/stopped prompt stays in the transcript; partial answers are excluded from later context | Owner Playground and guest chat restore failed/stopped prompts and exclude the entire unfinished exchange. Both owner and guest chat respect valid Retry-After delays. Owner waits span models in the same tab, retain editable drafts while the runtime is available, and never resend automatically. | Edit/retry the failed turn without manually copying text or duplicating its context; preserve partial output. |
 | Either: return to work | Owner conversations, drafts and settings are retained per model in workspace tab memory; guests retain work through same-key reconnects | Reload/closing the tab clears work. Owner Clear removes only the selected history, retaining its draft/settings; no undo or durable conversation storage. | Return to the same model without losing work or automatically sending; make deletion explicit and recoverable. |
 
 ## Initial changes implemented
@@ -75,7 +75,7 @@ model—not a generic metrics dashboard.
    storage, deletion recovery and Edit & retry while keeping model identity attached.
    Failed, stopped and empty responses now restore the prompt while both halves of
    that exchange stay out of outgoing context. Earlier completed exchanges remain
-   eligible. Expose owner capacity/retry delay without automatically generating extra work.
+   eligible. Owner capacity/retry delays now survive navigation and model changes without automatically generating extra work.
 3. **Build one private sharing journey end to end.** Separate operator-only runtime,
    request history and management APIs from guest model/chat APIs. Add durable
    access grants, revocation and per-client admission before internet exposure.

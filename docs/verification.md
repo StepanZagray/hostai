@@ -810,3 +810,49 @@ loopback server with intercepted API responses. No real download, GPU inference,
 public tunnel, Java integration run or Java packaging was performed in this frontend
 cycle. All owned advisor, server and private display processes and runtime directories
 were removed. No remote push or deployment was performed.
+
+
+## Owner capacity retry feedback — 10 September 2026
+
+The owner conversation store now reads Retry-After before the existing chat error
+parser consumes a 429/503 response. The deadline is shared by models in one owner
+tab; send() checks it before admitting a request. Model selection, Clear and route
+navigation do not reset it. One timeout releases the wait and only publishes state;
+it never invokes generation. It rechecks monotonic elapsed time if a timer fires
+early relative to that clock, and close() removes it. The route's countdown interval
+ends on unmount or completion. Static live announcements are separated from the
+non-live ticking number.
+
+The guest retry parser moved unchanged to lib/retry-after.ts and remains re-exported
+from guest/session.ts. Existing parser tests cover numeric/date values, invalid or
+absent Date headers, device-clock independence and the five-minute ceiling. Missing
+or invalid delay information leaves retries manual without inventing a wait. Browser
+suspend may pause monotonic clocks, and the server may still be busy after a wait.
+The owner wait is not persisted or shared with other browser tabs or guests.
+
+Claude Opus 5 High supplied advice. GlobalExceptionHandler.java in its prompt was
+absent, so that advisory did not verify the backend contract. Primary inspection
+confirmed ApiErrors.overload emits 429 with Retry-After: 1 and InferenceRegistry
+limits capacity across models. The additional 503-header path is compatible client
+handling; the current backend does not attach that header to ordinary 503 errors.
+No backend behavior changed.
+
+Validation passed 303 frontend tests, type/lint/format checks and all frontend
+production bundles. Two new store tests exercise shared waits, edits, Clear,
+forward/backward device-date changes, manual completion, early timer firing and
+close() cleanup. The isolated browser suite passed all 42 owner-recovery, owner-memory
+and sharing scenarios. The opt-in real owner/guest integration scenario was skipped.
+The new 429/503 scenarios preserve an edited prompt, block Enter across navigation
+and model changes, preserve another model's draft, wait through clock corrections,
+and send the edited retry once with the failed exchange excluded from context.
+
+The 320px retry screen was visually inspected using a viewport capture. A full-page
+capture painted the description clipped despite in-viewport text bounds and a
+wrapped, 44px-high description in the live layout. The viewport capture confirms
+correct wrapping. Tests now wait for fonts/layout, check text bounds and capture
+the actual viewport; no speculative layout change was retained. An attempt after
+rebuilding against a stale Node process was interrupted; the server was restarted
+to load its matching bundle. Evidence is retained under `test-results/owner-retry/`. The production Node owner app used intercepted model,
+chat and sharing responses; no real model, GPU work, public tunnel, backend test run
+or Java packaging was used. All owned advisor, Node and private display processes
+and runtime directories were removed. No remote push or deployment was performed.

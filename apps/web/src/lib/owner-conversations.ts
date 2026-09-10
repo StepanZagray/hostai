@@ -1,5 +1,6 @@
 import { readChatStream } from "./api";
 import { prepareChatRequest, type ConversationTurn } from "./conversation";
+import { retryAfter } from "./retry-after";
 
 export interface OwnerConversation {
   turns: ConversationTurn[];
@@ -25,8 +26,32 @@ export const emptyOwnerConversation = (): OwnerConversation => ({
 
 /** One owner workspace in one tab. Nothing is stored on disk or sent on selection. */
 export function createOwnerConversations(fetchChat: typeof fetch = (...args) => fetch(...args)) {
-  let snapshot = { selectedModel: "", conversations: new Map<string, OwnerConversation>() };
+  let snapshot = {
+    selectedModel: "",
+    conversations: new Map<string, OwnerConversation>(),
+    retryAt: null as number | null,
+  };
   const listeners = new Set<() => void>();
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  function setRetry(deadline: number | null) {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+    snapshot = { ...snapshot, retryAt: deadline };
+    for (const listener of listeners) listener();
+    if (deadline === null) return;
+    const release = () => {
+      const remaining = deadline - performance.now();
+      if (remaining > 0) {
+        retryTimer = setTimeout(release, remaining);
+        return;
+      }
+      retryTimer = null;
+      // Announce availability once; expiry never sends a request.
+      snapshot = { ...snapshot, retryAt: 0 };
+      for (const listener of listeners) listener();
+    };
+    retryTimer = setTimeout(release, Math.max(0, deadline - performance.now()));
+  }
   let active: { model: string; turn: ConversationTurn; controller: AbortController } | null = null;
   const publish = (model: string, update: Partial<OwnerConversation>) => {
     snapshot = {
@@ -98,6 +123,7 @@ export function createOwnerConversations(fetchChat: typeof fetch = (...args) => 
   }
   async function send(model: string, ready: boolean, onSettled: () => void) {
     if (!ready || active || snapshot.selectedModel !== model) return;
+    if (snapshot.retryAt !== null && performance.now() < snapshot.retryAt) return;
     const conversation = snapshot.conversations.get(model);
     if (!conversation) return;
     const draft = prepareChatRequest(
@@ -117,6 +143,7 @@ export function createOwnerConversations(fetchChat: typeof fetch = (...args) => 
     };
     const run = { model, turn, controller: new AbortController() };
     active = run;
+    if (snapshot.retryAt !== null) setRetry(null);
     publish(model, {
       turns: [...conversation.turns, turn],
       prompt: "",
@@ -143,6 +170,10 @@ export function createOwnerConversations(fetchChat: typeof fetch = (...args) => 
       if (active !== run) {
         await response.body?.cancel();
         return;
+      }
+      if (response.status === 429 || response.status === 503) {
+        const deadline = retryAfter(response);
+        if (deadline > 0) setRetry(deadline);
       }
       await readChatStream(response, (chunk) => {
         if (active !== run) return;
@@ -189,6 +220,8 @@ export function createOwnerConversations(fetchChat: typeof fetch = (...args) => 
     send,
     stop,
     close: () => {
+      if (retryTimer !== null) clearTimeout(retryTimer);
+      retryTimer = null;
       if (active) stop(active.model);
     },
   };
