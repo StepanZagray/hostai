@@ -18,6 +18,18 @@ manual form. If requests are unavailable, unsupported or fail to load, the key f
 is shown directly. Discovery never steals keyboard focus or submits either form.
 Changing intake availability preserves a key already being entered.
 
+An unsent name stays editable through failed host-detail refreshes or closed intake,
+and survives connecting with a manual key and disconnecting chat. It lives only in
+this tab's memory; reloading or closing the tab clears it. Refreshing details never
+submits it. Submission requires current accepting-host details and an explicit action.
+The form checks the inbox's name restrictions before generating credentials and
+explains unsupported characters inline; the server remains authoritative.
+
+A first submission rejected with HTTP 400 restores the name for correction and
+requires refreshing host details before submitting again. The inbox rejects those
+details before creating a request. A lost response remains uncertain: retries keep
+the original name, model and credentials, even if a retry then returns 400.
+
 The guest enters a
 name, reviews the model and submits a request. The host sees that unverified name,
 the shared model and a matching code. The code helps distinguish requests; it does
@@ -28,7 +40,7 @@ Approval creates a durable permission immediately. The guest then explicitly
 chooses **Connect**; connecting reads metadata and does not generate a response.
 The conversation area appears after a session exists; access failures retain an
 existing conversation and draft. Credentials stay in memory only. **Disconnect**
-clears the active conversation and draft, while retaining this tab's access request
+clears the active conversation and chat draft, while retaining this tab's access request
 and its credentials so the guest can cancel or explicitly connect again. Reloading
 or closing the tab loses all of them. An approved permission still lasts until expiry or revocation even if
 the guest loses its credential, just like a manually created invitation that was

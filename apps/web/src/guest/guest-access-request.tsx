@@ -1,3 +1,4 @@
+import { requestNameProblem } from "./request-name";
 import { useState } from "react";
 import { css } from "../../styled-system/css";
 import { Button, muted } from "../components/ui";
@@ -121,9 +122,20 @@ export function GuestAccessRequest({
       )}
       {enabled &&
         !state.submission &&
-        state.hello?.requestsAccepted &&
-        state.details === "ready" && (
-          <RequestNameForm disabled={blocked || state.intakeStopped} onSubmit={request.submit} />
+        ((state.hello?.requestsAccepted && state.details === "ready") ||
+          state.nameDraft !== null) && (
+          <RequestNameForm
+            name={state.nameDraft ?? ""}
+            onNameChange={request.editName}
+            editingDisabled={state.busy === "submit" || connecting}
+            disabled={
+              blocked ||
+              state.intakeStopped ||
+              state.details !== "ready" ||
+              !state.hello?.requestsAccepted
+            }
+            onSubmit={request.submit}
+          />
         )}
       {state.submission && (
         <RequestProgress
@@ -170,19 +182,25 @@ export function GuestAccessRequest({
 }
 
 function RequestNameForm({
+  name,
+  onNameChange,
+  editingDisabled,
   disabled,
   onSubmit,
 }: {
+  name: string;
+  onNameChange: (name: string) => void;
+  editingDisabled: boolean;
   disabled: boolean;
   onSubmit: (name: string) => Promise<void>;
 }) {
-  const [name, setName] = useState("");
+  const problem = name.length ? requestNameProblem(name) : null;
   return (
     <form
       className={css({ mt: "3" })}
       onSubmit={(event) => {
         event.preventDefault();
-        void onSubmit(name);
+        if (!disabled && !problem) void onSubmit(name);
       }}
     >
       <label
@@ -194,12 +212,13 @@ function RequestNameForm({
       <input
         id="request-access-name"
         value={name}
-        onChange={(event) => setName(event.target.value)}
+        onChange={(event) => onNameChange(event.target.value)}
         maxLength={40}
         required
         autoComplete="off"
-        disabled={disabled}
-        aria-describedby="request-access-name-help guest-disclosure request-access-memory"
+        disabled={editingDisabled}
+        aria-invalid={!!problem}
+        aria-describedby={`request-access-name-help guest-disclosure${problem ? " request-access-name-error" : ""}`}
         className={css({
           w: "full",
           minW: 0,
@@ -212,10 +231,21 @@ function RequestNameForm({
         })}
       />
       <p id="request-access-name-help" className={muted}>
-        Visible to the host with your requested model. Only request access from a host you trust.
+        Your name draft stays in this tab through refreshes and chat connection changes. It is sent
+        only when you request access, and reloading clears it. Only request access from a host you
+        trust.
       </p>
+      {problem && (
+        <p
+          id="request-access-name-error"
+          role="alert"
+          className={css({ color: "danger", fontSize: "sm", mt: "2" })}
+        >
+          {problem}
+        </p>
+      )}
       <div className={actions}>
-        <Button type="submit" variant="primary" disabled={disabled || !name.trim()}>
+        <Button type="submit" variant="primary" disabled={disabled || !!problem || !name.trim()}>
           Request access
         </Button>
       </div>

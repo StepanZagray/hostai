@@ -524,3 +524,110 @@ describe("intake changes, cancellation and stale async work", () => {
     expect(onConnect).not.toHaveBeenCalled();
   });
 });
+
+describe("request name drafts", () => {
+  it("retains editable drafts through failed/closed details, disabling discovery and a changed model", async () => {
+    const controller = await start();
+    controller.editName("Before refresh");
+    fetch.mockRejectedValueOnce(new Error("offline"));
+    await controller.refresh();
+    expect(controller.getSnapshot()).toMatchObject({
+      nameDraft: "Before refresh",
+      details: "error",
+      hello: null,
+    });
+    controller.editName("");
+    expect(controller.getSnapshot().nameDraft).toBe("");
+    controller.editName("Retained name");
+    await controller.submit("Retained name");
+    expect(posts()).toHaveLength(0);
+    fetch.mockResolvedValueOnce(
+      Response.json({
+        ...hello,
+        requestsAccepted: false,
+        intakeId: null,
+        model: null,
+        hostLabel: null,
+      }),
+    );
+    await controller.refresh();
+    expect(controller.getSnapshot().nameDraft).toBe("Retained name");
+    controller.setEnabled(false);
+    controller.setEnabled(true);
+    fetch.mockResolvedValueOnce(
+      Response.json({ ...hello, model: "another:small", intakeId: otherId }),
+    );
+    await controller.refresh();
+    expect(controller.getSnapshot()).toMatchObject({
+      nameDraft: "Retained name",
+      hello: { model: "another:small" },
+    });
+    expect(posts()).toHaveLength(0);
+    expect(credentials.createRequestCredential).not.toHaveBeenCalled();
+    expect(make().getSnapshot().nameDraft).toBeNull();
+  });
+  it("freezes a submitted name for retries, clears the editable draft and starts empty after discard", async () => {
+    const controller = await start();
+    controller.editName("  Guest  ");
+    fetch.mockRejectedValueOnce(new Error("lost reply"));
+    await controller.submit(controller.getSnapshot().nameDraft!);
+    expect(controller.getSnapshot()).toMatchObject({
+      nameDraft: null,
+      submission: { name: "Guest", model: hello.model },
+    });
+    controller.editName("Changed after submit");
+    await controller.retrySubmit();
+    expect(posts()).toHaveLength(2);
+    expect(posts()[1][1].body).toBe(posts()[0][1].body);
+    expect(JSON.parse(posts()[1][1].body).name).toBe("Guest");
+    expect(credentials.createRequestCredential).toHaveBeenCalledTimes(1);
+    controller.discard(true);
+    await flush();
+    expect(controller.getSnapshot().nameDraft).toBeNull();
+    controller.editName("x".repeat(41));
+    expect(controller.getSnapshot().nameDraft).toBeNull();
+  });
+});
+
+it("rejects unsupported names before creating credentials while allowing supported names", async () => {
+  const controller = await start();
+  for (const name of ["Anna 🌸", "Guest\u200bName", "Guest\nName", "Guest\u0378Name", "\ud800"]) {
+    controller.editName(name);
+    await controller.submit(name);
+    expect(controller.getSnapshot().nameDraft).toBe(name);
+  }
+  expect(credentials.createRequestCredential).not.toHaveBeenCalled();
+  expect(posts()).toHaveLength(0);
+  fetch.mockResolvedValueOnce(Response.json({ ...pending, name: "Ána 李" }));
+  controller.editName("Ána 李");
+  await controller.submit("Ána 李");
+  expect(posts()).toHaveLength(1);
+  expect(controller.getSnapshot().submission?.name).toBe("Ána 李");
+});
+
+it("restores the first 400 rejection for editing but preserves credentials when a retry gets 400", async () => {
+  const controller = await start();
+  controller.editName("Guest");
+  fetch.mockResolvedValueOnce(Response.json({}, { status: 400 }));
+  await controller.submit("Guest");
+  expect(controller.getSnapshot()).toMatchObject({
+    nameDraft: "Guest",
+    submission: null,
+    recovery: null,
+    hello: null,
+    details: "error",
+  });
+  await controller.submit("Guest");
+  expect(posts()).toHaveLength(1);
+  await controller.refresh();
+  fetch.mockRejectedValueOnce(new Error("lost response"));
+  await controller.submit("Guest");
+  fetch.mockResolvedValueOnce(Response.json({}, { status: 400 }));
+  await controller.retrySubmit();
+  expect(controller.getSnapshot()).toMatchObject({
+    nameDraft: null,
+    submission: { name: "Guest" },
+    recovery: "submit",
+  });
+  expect(posts()[2][1].body).toBe(posts()[1][1].body);
+});

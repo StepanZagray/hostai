@@ -1,5 +1,25 @@
 # Autonomous improvement log
 
+## Preserve guest request names through recovery
+
+The unsent request name now belongs to the guest tab controller. Failed details
+refreshes, closed intake and connecting/disconnecting with a manual key preserve
+the editable draft, including an intentionally emptied field. Fresh accepting-host
+details and an explicit submission are still required; reload clears the draft.
+Submitted names and credentials stay fixed for uncertain retries.
+
+Claude Opus 5 High reviewed the lifecycle and identified invalid-name rejection
+as another recovery trap. The form now checks the inbox's UTF-16 restrictions
+before creating credentials and shows an accessible inline error. A first HTTP
+400 restores editing and requires refreshed details. Primary inspection confirmed
+that the inbox rejects these details before creating a row; a 400 on a retry
+cannot establish that an earlier attempt failed, so retry credentials are retained.
+
+Controller tests and isolated browser scenarios cover recovery, no accidental
+submission, connection remounts, changed models and unsupported characters. The
+saved-host model-review dependency on bookmark storage remains follow-up work.
+See verification.md for evidence and test boundaries.
+
 ## Report request availability before opening a host
 
 Claude Opus 5 High identified the inability to distinguish hosts accepting requests

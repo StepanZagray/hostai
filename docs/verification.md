@@ -1,5 +1,30 @@
 # Verification
 
+## Guest request-name recovery
+
+The request-name recovery change passes `pnpm check`, all 308 frontend tests,
+and the owner, guest and directory production builds. The isolated
+`access-requests.spec.ts guest.spec.ts` browser run passes 57 scenarios. New cases
+exercise editable names through failed/closed discovery, changed models, manual-key
+connection/disconnection, reload clearing, unsupported characters, explicit
+submission and first-400 recovery. Controller coverage distinguishes an initial
+400 from a 400 following an uncertain submission, preserving retry credentials.
+
+The browser uses the built guest bundle served by a private loopback Python server
+and intercepted guest API responses at a synthetic HTTPS origin. This verifies UI
+behavior, not Java CSP delivery, a real model, Cloudflare transport or internet abuse
+resistance. The private Sway/pixman display was proved isolated before launch;
+320px recovery and desktop validation screenshots were visually inspected.
+Evidence and process cleanup are retained in `test-results/request-name-draft/`.
+
+The focused Java `AccessRequestInboxTest,AccessRequestFlowTest` run passes 43 tests
+on rerun, including invalid-body rejection before request creation. Its initial run
+had a `PrematureCloseException` in the existing cross-origin POST rejection test
+before response status was read; no backend code was changed to address that
+intermittent failure. Both logs are retained. These use local fixtures, not Ollama.
+
+## Existing verification coverage
+
 Backend tests run against an ephemeral loopback HTTP stub. They cover discovery, input validation, oversized bodies, health exposure, overload, streaming errors, timeouts, socket closure, and cancellation. Core checks include 200 competing terminal-state transitions. These results do not measure model quality or GPU performance.
 
 `pnpm test` verifies fragmented NDJSON/UTF-8 decoding, immediate completion at the terminal record, invalid records, truncated streams, midstream failures, and HTTP errors. Proxy tests cover the method/path allowlist, origin and media-type checks, bounded byte-counted uploads, cancellation, overload headers, streaming, and cleanup. Fake timers verify upload and chat deadlines without waiting for a long generation. These tests stub fetch and do not exercise real network cancellation; the Java and full integration suites cover that separately.

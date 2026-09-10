@@ -1,3 +1,4 @@
+import { requestNameProblem } from "./request-name";
 import { useEffect, useRef, useSyncExternalStore } from "react";
 import {
   approvedAccessKey,
@@ -35,6 +36,8 @@ export function secondsRemaining(value: RelativeDeadline): number {
 }
 
 export interface GuestRequestView {
+  // Null means no editing draft; an empty string keeps an intentionally cleared form open.
+  nameDraft: string | null;
   details: "idle" | "ready" | "unavailable" | "error" | "unsupported";
   hello: RequestHello | null;
   submission: { name: string; model: string } | null;
@@ -48,6 +51,7 @@ export interface GuestRequestView {
 }
 
 const initialView = (): GuestRequestView => ({
+  nameDraft: null,
   details: "idle",
   hello: null,
   submission: null,
@@ -232,8 +236,7 @@ export function createGuestAccessRequest() {
       !hello?.requestsAccepted ||
       view.details !== "ready" ||
       view.intakeStopped ||
-      !name.trim() ||
-      name.trim().length > 40
+      requestNameProblem(name) !== null
     )
       return;
     const operation = begin("submit");
@@ -249,7 +252,11 @@ export function createGuestAccessRequest() {
         accessCommitment: credential.accessCommitment,
       });
       current = { credential, body, ttl: null };
-      publish({ submission: { name: body.name, model: body.model }, recovery: "submit" });
+      publish({
+        nameDraft: null,
+        submission: { name: body.name, model: body.model },
+        recovery: "submit",
+      });
       const result = await requestJson(
         "/guest/v1/requests",
         operation.controller.signal,
@@ -259,7 +266,13 @@ export function createGuestAccessRequest() {
       if (live(operation)) accept(result);
     } catch (error) {
       if (live(operation)) {
-        if (current) fail(error, "submit");
+        if (current && error instanceof RequestApiError && error.status === 400) {
+          // On the first POST, the inbox rejects invalid details before creating a row.
+          // Retry failures cannot establish that: an earlier POST may have succeeded.
+          current = null;
+          fail(error, null);
+          publish({ nameDraft: name, submission: null, details: "error", hello: null });
+        } else if (current) fail(error, "submit");
         else
           publish({
             details: "unsupported",
@@ -426,6 +439,10 @@ export function createGuestAccessRequest() {
     setEnabled,
     refresh,
     submit,
+    editName: (name: string) => {
+      if (current || active?.kind === "submit" || name.length > 40) return;
+      publish({ nameDraft: name });
+    },
     retrySubmit,
     check,
     cancel,

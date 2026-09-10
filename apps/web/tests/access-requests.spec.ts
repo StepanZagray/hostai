@@ -30,8 +30,11 @@ async function guestFixture(page: Page) {
   const source = new URL(process.env.HOSTAI_GUEST_TEST_URL!).origin;
   const state = {
     hello: true,
+    helloStatus: 200,
+    helloModel: model,
     row: row(),
     lostSubmit: false,
+    submitStatus: 200,
     lostCancel: false,
     cancelStatus: 200,
     cancelState: "cancelled",
@@ -53,12 +56,13 @@ async function guestFixture(page: Page) {
     }
     if (path === "/guest/v1/hello")
       return route.fulfill({
+        status: state.helloStatus,
         json: {
           version: 1,
           scope: "temporary-internet",
           requestsAccepted: state.hello,
           intakeId: state.hello ? intakeId : null,
-          model: state.hello ? model : null,
+          model: state.hello ? state.helloModel : null,
           hostLabel: state.hello ? "Fixture host" : null,
         },
       });
@@ -67,6 +71,8 @@ async function guestFixture(page: Page) {
         auth: route.request().headers().authorization,
         body: route.request().postDataJSON(),
       });
+      if (state.submitStatus !== 200)
+        return route.fulfill({ status: state.submitStatus, json: {} });
       if (state.lostSubmit) {
         state.lostSubmit = false;
         return route.abort("failed");
@@ -600,4 +606,113 @@ test("rechecking an invalid public key keeps the request disclosure and recovery
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Keep my draft");
   await expect(page.locator("#guest-disclosure")).toContainText("name and request credentials");
   expect(state.submissions).toHaveLength(0);
+});
+
+test("request-name draft survives failed and closed details, remains editable and submits only to reviewed current details", async ({
+  page,
+}) => {
+  const { state, origin } = await guestFixture(page);
+  await page.setViewportSize({ width: 320, height: 1100 });
+  await page.goto(origin);
+  const name = page.getByLabel("Your name", { exact: true });
+  const submit = page.getByRole("button", { name: "Request access", exact: true });
+  const refresh = page.getByRole("button", { name: "Refresh host details", exact: true });
+  await name.fill("Initial name");
+  state.helloStatus = 503;
+  await refresh.click();
+  await expect(submit).toBeDisabled();
+  await expect(name).toHaveValue("Initial name");
+  await name.fill("");
+  await expect(name).toBeVisible();
+  await name.fill("Retained guest");
+  await name.press("Enter");
+  expect(state.submissions).toHaveLength(0);
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await name.scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: "test-results/request-name-draft-error-mobile.png",
+    animations: "disabled",
+  });
+  state.helloStatus = 200;
+  state.hello = false;
+  await refresh.click();
+  await expect(page.getByText(/This host is not accepting access requests/)).toBeVisible();
+  await expect(name).toHaveValue("Retained guest");
+  await name.press("Enter");
+  expect(state.submissions).toHaveLength(0);
+  state.hello = true;
+  state.helloModel = "changed-model:small";
+  state.row.model = state.helloModel;
+  state.row.name = "Retained guest";
+  await refresh.click();
+  await expect(page.getByText("changed-model:small", { exact: true })).toBeVisible();
+  await expect(submit).toBeEnabled();
+  expect(state.submissions).toHaveLength(0);
+  await submit.click();
+  await expect(page.getByText(/Waiting for the host to review/)).toBeVisible();
+  expect(state.submissions).toHaveLength(1);
+  expect(state.submissions[0].body).toMatchObject({
+    name: "Retained guest",
+    model: "changed-model:small",
+  });
+  await page.reload();
+  await expect(name).toHaveValue("");
+  expect(state.submissions).toHaveLength(1);
+});
+
+test("an unsent request-name draft survives connecting with a key and disconnecting chat", async ({
+  page,
+}) => {
+  const { state, origin } = await guestFixture(page);
+  await page.goto(origin);
+  const name = page.getByLabel("Your name", { exact: true });
+  await name.fill("Still my draft");
+  await page.getByText("Have an access key?", { exact: true }).click();
+  await page.getByLabel("Access key", { exact: true }).fill("fixture-invitation-key");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Disconnect", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(name).toHaveValue("Still my draft");
+  expect(state.submissions).toHaveLength(0);
+  expect(state.sessions).toBe(1);
+  await page.reload();
+  await expect(name).toHaveValue("");
+});
+
+test("unsupported names stay editable and a first rejected submission can be corrected without replaying it", async ({
+  page,
+}) => {
+  const { state, origin } = await guestFixture(page);
+  await page.goto(origin);
+  const name = page.getByLabel("Your name", { exact: true });
+  const submit = page.getByRole("button", { name: "Request access", exact: true });
+  await name.fill("Anna 🌸");
+  await expect(page.getByText(/This name contains unsupported characters/)).toBeVisible();
+  await expect(name).toHaveAttribute("aria-invalid", "true");
+  await expect(submit).toBeDisabled();
+  await name.press("Enter");
+  expect(state.submissions).toHaveLength(0);
+  await page.screenshot({
+    path: "test-results/request-name-invalid-desktop.png",
+    animations: "disabled",
+  });
+  await name.fill("Accepted name");
+  state.submitStatus = 400;
+  await submit.click();
+  await expect(name).toHaveValue("Accepted name");
+  await expect(submit).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Retry same request", exact: true })).toHaveCount(
+    0,
+  );
+  await name.fill("Corrected guest");
+  state.row.name = "Corrected guest";
+  state.submitStatus = 200;
+  await page.getByRole("button", { name: "Refresh host details", exact: true }).click();
+  await expect(submit).toBeEnabled();
+  expect(state.submissions).toHaveLength(1);
+  await submit.click();
+  await expect(page.getByText(/Waiting for the host to review/)).toBeVisible();
+  expect(state.submissions).toHaveLength(2);
+  expect(state.submissions[1].body.name).toBe("Corrected guest");
+  expect(state.submissions[1].auth !== state.submissions[0].auth).toBe(true);
 });
