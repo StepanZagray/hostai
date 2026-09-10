@@ -253,6 +253,7 @@ test("invalid key has a uniform safe error and no automatic retries", async ({ p
   await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
   const input = page.getByLabel("Access key", { exact: true });
   await expect(input).toHaveAttribute("type", "password");
+  await expect(input).toBeFocused();
   await input.fill(access);
   await input.press("Enter");
   await expect(page.getByRole("alert")).toContainText("A valid access key is required");
@@ -474,6 +475,7 @@ test("Stop aborts, preserves partial output, and manual retry does not duplicate
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(page.getByText(/Incomplete exchange ·/)).toBeVisible();
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Try this question");
+  await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
   expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.aborts)).toBe(1);
   expect(state.chatRequests).toHaveLength(1);
   await page.getByRole("button", { name: "Copy partial response", exact: true }).click();
@@ -504,6 +506,13 @@ test("terminal access error keeps partial transcript and next draft; reconnect n
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
     "An independently typed draft",
   );
+  await page.getByRole("button", { name: "Copy question", exact: true }).click();
+  expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.copied)).toBe(
+    "Failed question",
+  );
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+    "An independently typed draft",
+  );
   expect(await page.content()).not.toContain(access);
   await page.getByRole("button", { name: "Reconnect", exact: true }).click();
   await expect.poll(() => state.sessionRequests.length).toBe(2);
@@ -517,6 +526,70 @@ test("terminal access error keeps partial transcript and next draft; reconnect n
     { role: "user", content: "Failed question" },
   ]);
   await page.screenshot({ path: "test-results/guest-reconnected.png", fullPage: true });
+});
+
+for (const scope of ["local-preview", "temporary-internet"]) {
+  test(`${scope} empty replies restore the question without claiming completion or replaying it`, async ({
+    page,
+  }) => {
+    const state = await fixture(page);
+    state.metadata.scope = scope;
+    await connected(page);
+    await send(page, "Earlier question");
+    await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+    state.chunks = [{ content: " \n\t", done: true }];
+    await send(page, "Unanswered question");
+    await expect(page.getByText("The host returned no answer.", { exact: false })).toBeVisible();
+    await expect(page.getByText("Response complete.", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Unanswered question");
+    await expect(page.getByText(/Incomplete exchange ·/)).toBeVisible();
+    await expect(page.getByText("No response received.", { exact: true })).toBeVisible();
+    expect(state.chatRequests).toHaveLength(2);
+    expect(state.sessionRequests).toHaveLength(1);
+    await page.screenshot({
+      path: `test-results/guest-empty-${scope}.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
+    state.chunks = [{ content: "Recovered answer.", done: true }];
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect(page.getByText("Recovered answer.", { exact: true })).toBeVisible();
+    expect(state.chatRequests[2].messages).toEqual([
+      { role: "user", content: "Earlier question" },
+      { role: "assistant", content: "A fixture answer." },
+      { role: "user", content: "Unanswered question" },
+    ]);
+    expect(state.unexpected).toEqual([]);
+  });
+}
+
+test("an empty streamed reply preserves a newer draft and exposes its original question", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.stream = true;
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await connected(page);
+  await send(page, "Original unanswered question");
+  await page.getByLabel("Message", { exact: true }).fill("Keep my next question");
+  await push(page, "", true);
+  await expect(page.getByText("The host returned no answer.", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Copy question", exact: true }).click();
+  expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.copied)).toBe(
+    "Original unanswered question",
+  );
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Keep my next question");
+  await expect(
+    page.getByRole("button", { name: "Copy partial response", exact: true }),
+  ).toHaveCount(0);
+  expect(state.chatRequests).toHaveLength(1);
+  expect(state.unexpected).toEqual([]);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.screenshot({
+    path: "test-results/guest-empty-new-draft-320.png",
+    fullPage: true,
+    animations: "disabled",
+  });
 });
 
 test("a truncated transport is incomplete and restores the draft", async ({ page }) => {
@@ -599,6 +672,7 @@ test("different key clears history even if handshake fails; disconnect aborts an
   await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("Old key's draft");
   await page.getByRole("button", { name: "Use another key", exact: true }).click();
+  await expect(page.getByLabel("Access key", { exact: true })).toBeFocused();
   state.sessionStatus = 401;
   await page.getByLabel("Access key", { exact: true }).fill("different-fixture-key");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -694,12 +768,23 @@ test("expiry aborts an active answer and keeps its partial transcript", async ({
   await connected(page);
   await send(page, "A question near expiry");
   await push(page, "Output before expiry");
+  await page.getByLabel("Message", { exact: true }).fill("Keep typing here");
   await expect(page.getByRole("alert")).toContainText("A valid access key is required", {
     timeout: 8000,
   });
   await expect(page.getByText("Output before expiry", { exact: true })).toBeVisible();
   await expect(page.getByText(/Incomplete exchange ·/)).toBeVisible();
-  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("A question near expiry");
+  await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
+  await page.keyboard.type(" after expiry");
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+    "Keep typing here after expiry",
+  );
+  await expect(page.getByLabel("Access key", { exact: true })).toHaveValue("");
+  await page.screenshot({
+    path: "test-results/guest-expired-draft-focus.png",
+    fullPage: true,
+    animations: "disabled",
+  });
   expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.aborts)).toBe(1);
   expect(state.chatRequests).toHaveLength(1);
 });

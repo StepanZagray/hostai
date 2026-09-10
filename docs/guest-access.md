@@ -42,7 +42,13 @@ not production hosting. A key is a bearer permission, not a verified identity.
    WebSocket subprotocols or browser storage. Connecting does not automatically generate a response.
 6. Chat, Stop, or reconnect. Same-key reconnect retains the draft and transcript;
    a different key, Disconnect, or reload clears them. Unfinished exchanges remain
-   visible but are excluded from subsequent model context. Retry is manual.
+   visible but are excluded from subsequent model context. An empty or whitespace-only
+   answer is incomplete too: the question returns to an empty composer, while an
+   independently typed draft is preserved. **Copy question** on incomplete exchanges
+   recovers an earlier prompt without replacing the draft. Stop returns keyboard
+   focus to the composer; involuntary expiry leaves draft focus in place instead
+   of moving typing into the key field. Retry is manual; an empty answer does not require a new
+   access check when the existing session is still usable.
 7. Revoke a key to end permission and its active requests. Stop client access to
    end all guest requests and the tunnel. Stop internet sharing ends only public
    access. Unrevoked keys retain permission when the same model and their channel

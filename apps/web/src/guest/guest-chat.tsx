@@ -189,7 +189,7 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
           checking={checking}
           value={enteredKey}
           onChange={setEnteredKey}
-          focusOnShow={changeKey || !potentiallyInternet || chat.hasKey}
+          focusOnShow={changeKey || (!potentiallyInternet && !chat.hasKey)}
           onConnect={() => {
             void chat.connect(enteredKey);
             setEnteredKey("");
@@ -290,6 +290,7 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
                   onClick={(event) => {
                     event.preventDefault();
                     chat.stop();
+                    composer.current?.focus({ preventScroll: true });
                   }}
                 >
                   Stop

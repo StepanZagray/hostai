@@ -586,3 +586,46 @@ retained under `test-results/saved-hosts/`. The verified Sway 1.12/pixman compos
 runs with private sockets and devices; its PID and runtime were confirmed absent
 after testing. Test-owned gateway, web and registry services are stopped at the end
 of the cycle. No remote push or deployment is part of this change.
+
+
+## Guest recovery for empty replies
+
+Two new browser regressions first failed against the previous packaged guest
+bundle: local HTTP and internet WebSocket fixtures both returned whitespace-only
+terminal answers, but the UI claimed completion and left an empty composer.
+After the fix, the full guest suite passed 34 scenarios, including three new
+empty-answer cases. They verify restored questions, preservation of independently
+typed drafts, explicit Copy question, no redundant access check or automatic
+retry, and exactly one retried question alongside earlier completed context.
+The existing partial-error test now checks copying the original question without
+overwriting the new draft; Stop checks keyboard focus returns to the composer.
+
+All 295 frontend unit tests, TypeScript/lint/format checks and production builds
+passed. The guest bundle was packaged into Java 26 with backend tests skipped;
+this frontend cycle does not claim a new Java test run. The package command was
+initially invoked from the repository root, where no Maven wrapper exists, and
+succeeded after using the backend directory.
+
+The built guest assets were served by the actual isolated Java guest listener.
+A synthetic Ollama fixture supplied the installed-model metadata needed to enable
+that listener. Browser interception supplies guest session/chat responses, including
+WebSocket responses: no real model, GPU work or public Cloudflare connection was
+used. Tests run on the proved private Sway 1.12/pixman display. Visually inspected
+mobile and desktop screenshots, logs and isolation records are retained under
+`test-results/guest-recovery/`. Conversation and key storage remain tab-memory-only.
+
+Claude Opus 5 High returned a successful bounded guest audit. The confirmed focus
+finding was fixed: expiry revealing the key form must not autofocus it while the
+guest types a draft. The expiry regression verifies continued typing stays in the
+composer and the password field remains empty. Initial local key entry and explicit
+Use another key still receive focus. Device-clock expiry and connected-request
+cancellation remain separate follow-up work, not claims established by this fix.
+The advisor's relative-deadline suggestion does not eliminate forward-clock-jump
+expiry: taking the maximum elapsed delta prevents extension, but can shorten time.
+Server-relative session deadlines need their own protocol design and verification.
+
+The final combined guest and access-request suite passed 44 browser scenarios
+after the focus correction, including public onboarding at 320/768/1024/1440px.
+The expiry screen was visually inspected with an empty password field and the
+continued draft intact. All test-owned gateway, web, synthetic Ollama and advisor
+processes were stopped; private service and display runtimes were removed.

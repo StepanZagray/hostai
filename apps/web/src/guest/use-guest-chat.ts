@@ -204,7 +204,16 @@ export function useGuestChat() {
         answer += chunk.content;
         update(chunk.done ? "completed" : "streaming");
       });
-      if (active.current === current) setNotice("Response complete.");
+      if (active.current === current) {
+        if (answer.trim()) setNotice("Response complete.");
+        else {
+          update("failed");
+          setDraft((value) => value || turn.prompt);
+          setNotice(
+            "The host returned no answer. The unfinished exchange is excluded from later context. Edit the draft and send manually to try again, or copy the question above.",
+          );
+        }
+      }
     } catch {
       if (active.current !== current || current.controller.signal.aborted) return;
       update("failed");

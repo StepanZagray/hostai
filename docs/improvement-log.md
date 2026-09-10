@@ -1,5 +1,26 @@
 # Autonomous improvement log
 
+## Guest recovery after an unanswered prompt
+
+Guest chat no longer claims completion when a successful stream returns no visible
+answer. Empty and whitespace-only replies are marked incomplete, restoring the
+question only if the composer is empty. Earlier completed context remains eligible;
+retry sends the unanswered question once and never starts automatically. A healthy
+session does not need a redundant reconnect just because its model answered empty.
+
+Incomplete exchanges now offer Copy question, preserving a newer independently
+typed draft while making the earlier question recoverable on mobile. Stop returns
+keyboard focus to the composer and retains its existing non-submit behavior.
+Expiry no longer steals focus from a draft into the password field; initial local
+key entry and an explicit Use another key action still focus that field.
+
+Claude Opus 5 High audited guest recovery. Its confirmed involuntary-focus finding
+was fixed in this cycle. Device-clock expiry, request cancellation after connecting,
+model-change context disclosure and backoff/key-entry behavior remain candidates
+for separate lifecycle improvements. The advisor read access-request test titles
+beyond the requested scope; those observations were verified against local sources.
+Frontend and isolated browser evidence are recorded in [verification](verification.md).
+
 ## Saved hosts and returning clients
 
 Clients can explicitly save a host in the directory website or owner workspace,

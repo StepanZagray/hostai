@@ -86,7 +86,7 @@ export function GuestConversation({ turns }: { turns: ConversationTurn[] }) {
                   {turn.omittedTurns} older exchanges were omitted to fit request limits.
                 </p>
               ) : null}
-              {turn.response ? (
+              {turn.response.trim() ? (
                 <Answer text={turn.response} />
               ) : (
                 <p className={muted}>
@@ -94,11 +94,16 @@ export function GuestConversation({ turns }: { turns: ConversationTurn[] }) {
                 </p>
               )}
               {(turn.state === "failed" || turn.state === "cancelled") && (
-                <p className={css({ color: "warning", fontSize: "xs", lineHeight: 1.7, mt: "3" })}>
-                  Incomplete exchange · This prompt and response are excluded from later context.
-                </p>
+                <>
+                  <p
+                    className={css({ color: "warning", fontSize: "xs", lineHeight: 1.7, mt: "3" })}
+                  >
+                    Incomplete exchange · This prompt and response are excluded from later context.
+                  </p>
+                  <CopyButton text={turn.prompt} label="Copy question" />
+                </>
               )}
-              {turn.state !== "streaming" && turn.response && (
+              {turn.state !== "streaming" && turn.response.trim() && (
                 <CopyButton
                   text={turn.response}
                   label={turn.state === "completed" ? "Copy response" : "Copy partial response"}
