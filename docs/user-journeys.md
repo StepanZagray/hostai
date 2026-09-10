@@ -22,7 +22,7 @@ real model was downloaded or inference benchmark run.
 | --- | --- | --- | --- |
 | Host: open HostAI | [Source launcher](../scripts/workspace.mjs) starts Java, UI, then Electron | Requires source checkout, Node/pnpm and Java; no distributable installer. Window appears only after services start. | Launch one app, see startup progress and recoverable errors before setup. |
 | Host: prepare inference | [Setup](../apps/web/src/routes/connection.tsx) shows Ollama commands | Ollama installation/startup are external; a failed status check is not proof that a process is stopped. | Detect existing runtime, explain the missing part, show only the action needed. |
-| Host: choose/download a model | [Library](../apps/web/src/routes/models.tsx) lists installed models and manages explicit tagged downloads | No catalog search, fit estimate or automatic recovery after a gateway restart. | Review model size/requirements, explicitly start download, see progress, recover, then test that same model. |
+| Host: choose/download a model | [Library](../apps/web/src/routes/models.tsx) lists installed models and manages explicit tagged downloads | A dated [starter shortlist](starter-models.md) supplies exact tags and approximate listed sizes; no live catalog search, hardware-fit estimate or automatic recovery after a gateway restart. | Review model size/requirements, explicitly start download, see progress, recover, then test that same model. |
 | Host: refresh discovery | [HostProvider](../apps/web/src/lib/host-context.tsx) polls every 15 seconds while visible; manual refresh also exists | Download completion refreshes the library and offers an explicit Try action when the model is admitted. | Confirm the actual installed model before enabling Try; download status polls separately from host metadata. |
 | Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Playground distinguishes available-to-try from a completed, nonempty reply in the current conversation. This is not a durable readiness or memory-fit assessment. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
 | Host: start serving | [Client access](../apps/web/src/routes/sharing.tsx) publishes one selected model on a separate local guest listener | Starting checks library presence, not memory fit or successful inference. Access restarts stopped. | Choose which model clients may use, test it, then enable serving deliberately. |
@@ -62,7 +62,9 @@ model—not a generic metrics dashboard.
 1. **Complete local onboarding and model lifecycle.** The explicit download job lifecycle now covers starting, downloading, verifying,
    finalizing, completed, failed and cancelled, with one active request and no queue.
    Current-layer counts are shown when known and progress is indeterminate otherwise.
-   Next, add catalog discovery and requirements/fit guidance before resource use. A tag's file size is not a guarantee
+   A dated starter chooser now supplies explicit tags, listing sizes and source links
+   before an explicit download; installed choices lead directly to Playground. Next, add
+   live catalog discovery and hardware-fit guidance. A tag's file size is not a guarantee
    of runtime memory fit. Keep custom Ollama endpoint commands consistent across
    overview, setup and library; the current examples still assume Ollama defaults.
    Check existing runtime/service ownership before adding Start/Stop controls.
@@ -129,8 +131,8 @@ verification is recorded in [verification.md](verification.md).
 
 ## Local download cycle implemented
 
-Setup now opens the in-app download form. A host explicitly supplies a tagged
-Ollama library reference, starts one job, follows its current-layer progress,
+Setup now opens the in-app download form. A host chooses a dated starter or supplies
+a custom tagged Ollama library reference, starts one job, follows its current-layer progress,
 cancels or retries, and chooses **Try downloaded model** after library confirmation.
 Navigating away does not cancel the backend-owned job. A lost start response
 retains its request ID for retry within the backend's retained history. Neither

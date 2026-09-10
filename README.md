@@ -56,7 +56,7 @@ For a machine without a usable GPU, launch with `HOSTAI_SOFTWARE_RENDERING=1 pnp
 
 ## Connect a model
 
-Start Ollama, then open **Models → Download a model**. Enter an explicit library tag such as `qwen3:0.6b`, check its requirements using the library link, and explicitly start the download. HostAI shows current-layer progress, cancellation and retry; completion refreshes the library and offers **Try downloaded model**. Terminal downloads with Ollama also appear after refresh. Default Ollama origin: `http://127.0.0.1:11434`.
+Start Ollama, then open **Models → Download a model**. Choose one of the [starter models](docs/starter-models.md) with a published approximate size, or enter a custom explicit library tag. Review the model details, then explicitly start the download. Choosing a starter only fills the form; sizes are not a RAM/VRAM fit estimate. An already installed model can go straight to Playground. HostAI shows current-layer progress, cancellation and retry; completion refreshes the library and offers **Try downloaded model**. Terminal downloads with Ollama also appear after refresh. Default Ollama origin: `http://127.0.0.1:11434`.
 
 ```sh
 HOSTAI_OLLAMA_URL=http://127.0.0.1:11435 pnpm desktop:dev

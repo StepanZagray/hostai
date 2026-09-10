@@ -1,5 +1,36 @@
 # Autonomous improvement log
 
+## Starter models before an explicit download
+
+The download form now offers three dated, source-linked text-chat starters with
+approximate published sizes. Selecting one only fills the explicit tag field;
+custom local tags remain available. Installed choices lead with Try installed model,
+while Download again remains a secondary explicit action. Actual runtime admission
+still gates Try. A connected empty library now points into the chooser rather than
+sending the host back to setup.
+
+The chooser remains readable offline and locks together with the tag field during
+pending/uncertain starts. Existing retry request IDs, cancellation and completion
+handoffs remain intact. Published file size is explicitly separated from RAM/VRAM
+requirements, available capacity and the amount transferred after cache reuse.
+The shortlist and source dates are documented in [starter models](starter-models.md).
+
+Claude Opus 5 High supplied focused read-only advice about explicit selection,
+uncertain-start locking, installed-model shortcuts and the empty-library detour.
+The implementation uses a native select to keep the download panel compact; source
+links sit outside the control. It keeps an explicit Download again action instead
+of removing update access for installed tags. Published sizes and tag pages were
+checked directly; they are not inferred hardware-fit or quality measurements.
+
+Validation: 287 frontend tests, type/lint/format checks, production builds and 36
+isolated browser scenarios passed. Tests cover source/size changes, custom tags,
+no automatic download/chat, same-model handoff, installed and blocked starters,
+offline information, uncertainty locking, keyboard navigation and 320/768/1440px
+layouts. The first run's sole failure expected the wrong offline setup-link label;
+the existing Open setup action was present. The corrected final run passed.
+Screenshots were visually inspected. No real model download, GPU inference, Java
+integration run or public tunnel was performed in this frontend cycle.
+
 ## Owner conversations retained per model
 
 Owner Playground now keeps each model's conversation, draft and run settings in

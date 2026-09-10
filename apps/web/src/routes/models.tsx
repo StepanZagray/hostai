@@ -19,7 +19,7 @@ import {
 
 export const Route = createFileRoute("/models")({ component: Models });
 function Models() {
-  const { models, loading, refreshing, refresh, errors } = useHost();
+  const { models, loading, refreshing, refresh, errors, status } = useHost();
   const [search, setSearch] = useState("");
   const filtered = models.filter((m) => m.name.toLowerCase().includes(search.toLowerCase()));
   return (
@@ -95,10 +95,17 @@ function Models() {
             title="No installed models yet"
             description="Installed models appear here after Ollama finishes. You can start and track a download above."
             action={
-              <Link to="/connection" className={button({ variant: "primary" })}>
-                View setup
-                <ArrowRight size={15} />
-              </Link>
+              status?.ollamaConnected ? (
+                <a href="#starter-model" className={button({ variant: "primary" })}>
+                  Choose a starter
+                  <ArrowRight size={15} />
+                </a>
+              ) : (
+                <Link to="/connection" className={button({ variant: "primary" })}>
+                  View setup
+                  <ArrowRight size={15} />
+                </Link>
+              )
             }
           />
         ) : !filtered.length ? (

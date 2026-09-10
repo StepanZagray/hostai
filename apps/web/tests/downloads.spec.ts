@@ -148,6 +148,7 @@ test("lost start response reuses its ID while uncertain and recovers the existin
   await page.getByLabel("Model and tag", { exact: true }).fill("fixture-model:small");
   await button.click();
   await expect(page.getByRole("alert")).toContainText("start could not be confirmed");
+  await expect(page.getByLabel("Choose a starter model", { exact: true })).toBeDisabled();
   state.loseStartResponse = false;
   await page.getByRole("button", { name: "Retry start request", exact: true }).click();
   expect(state.starts).toHaveLength(2);
@@ -249,4 +250,144 @@ test("malformed status stays actionable without exposing a raw parser exception"
     page.getByRole("button", { name: "Check download status", exact: true }),
   ).toBeEnabled();
   await expect(page.getByRole("button", { name: "Download model", exact: true })).toBeDisabled();
+});
+
+test("starter selection reviews size and source before an explicit download and same-model handoff", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  let chats = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/chat")) chats++;
+  });
+  await page.goto("/models");
+  const chooser = page.getByLabel("Choose a starter model", { exact: true });
+  const input = page.getByLabel("Model and tag", { exact: true });
+  await page.getByRole("link", { name: "Choose a starter", exact: true }).click();
+  await expect(chooser).toBeFocused();
+  await chooser.selectOption("gemma3:1b");
+  await expect(input).toHaveValue("gemma3:1b");
+  await expect(page.getByText(/Listed model size: approximately 815 MB/)).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Model details and terms on Ollama" }),
+  ).toHaveAttribute("href", "https://ollama.com/library/gemma3:1b");
+  expect(state.starts).toHaveLength(0);
+  await input.fill("custom-model:small");
+  await expect(chooser).toHaveValue("");
+  await expect(page.getByText(/Download size is unknown for custom tags/)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Model details and terms on Ollama" })).toHaveCount(
+    0,
+  );
+  await chooser.selectOption("qwen2.5:0.5b");
+  await expect(input).toHaveValue("qwen2.5:0.5b");
+  expect(state.starts).toHaveLength(0);
+  await page.getByRole("button", { name: "Download model", exact: true }).click();
+  await expect(page.getByRole("progressbar")).toBeVisible();
+  expect(state.starts).toHaveLength(1);
+  expect(state.starts[0].model).toBe("qwen2.5:0.5b");
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        connected: true,
+        models: [{ name: "qwen2.5:0.5b", sizeBytes: 398000000, chatUnavailableReason: null }],
+      },
+    }),
+  );
+  state.jobs[0] = { ...state.jobs[0], state: "completed", message: "Download completed." };
+  await page.getByRole("link", { name: "Try downloaded model", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue(
+    "qwen2.5:0.5b",
+  );
+  expect(chats).toBe(0);
+  expect(state.starts).toHaveLength(1);
+});
+
+test("an installed starter goes straight to Playground without downloading again", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        connected: true,
+        models: [{ name: "gemma3:1b", sizeBytes: 815000000, chatUnavailableReason: null }],
+      },
+    }),
+  );
+  await page.goto("/models");
+  await page.getByLabel("Choose a starter model", { exact: true }).selectOption("gemma3:1b");
+  await expect(page.getByRole("button", { name: "Download again", exact: true })).toBeVisible();
+  await page.screenshot({ path: "test-results/model-choice-installed.png", fullPage: true });
+  await page.getByRole("link", { name: "Try installed model", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Model", exact: true })).toHaveValue("gemma3:1b");
+  expect(state.starts).toHaveLength(0);
+});
+
+for (const width of [320, 768, 1440]) {
+  test(`starter details remain readable and keyboard accessible at ${width}px`, async ({
+    page,
+  }) => {
+    const state = await fixture(page);
+    await page.setViewportSize({ width, height: 1000 });
+    await page.goto("/models");
+    const chooser = page.getByLabel("Choose a starter model", { exact: true });
+    await chooser.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(chooser).toHaveValue("qwen2.5:0.5b");
+    await expect(chooser).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByLabel("Model and tag", { exact: true })).toBeFocused();
+    await expect(page.getByText(/File size is not RAM or VRAM/)).toBeVisible();
+    expect(state.starts).toHaveLength(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `test-results/model-choice-${width}.png`, fullPage: true });
+  });
+}
+
+test("starter information remains available while the runtime is offline", async ({ page }) => {
+  await hostFixture(page, false);
+  let starts = 0;
+  page.on("request", (request) => {
+    if (request.method() === "POST") starts++;
+  });
+  await page.goto("/models");
+  const chooser = page.getByLabel("Choose a starter model", { exact: true });
+  await expect(chooser).toBeEnabled();
+  await chooser.selectOption("gemma3:1b");
+  await expect(page.getByLabel("Model and tag", { exact: true })).toHaveValue("gemma3:1b");
+  const start = page.getByRole("button", { name: "Download model", exact: true });
+  await expect(start).toBeDisabled();
+  await expect(start).toHaveAttribute("aria-describedby", /download-offline/);
+  await expect(page.getByRole("link", { name: "Open setup", exact: true })).toBeVisible();
+  expect(starts).toBe(0);
+});
+
+test("an installed starter requires actual chat admission before offering Try", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  await page.route("**/api/models", (route) =>
+    route.fulfill({
+      json: {
+        connected: true,
+        models: [
+          {
+            name: "gemma3:1b",
+            sizeBytes: 815000000,
+            chatUnavailableReason: "This installed tag cannot chat.",
+          },
+        ],
+      },
+    }),
+  );
+  await page.goto("/models");
+  await page.getByLabel("Choose a starter model", { exact: true }).selectOption("gemma3:1b");
+  const panel = page.getByRole("region", { name: "Model downloads", exact: true });
+  await expect(panel.getByText("This installed tag cannot chat.", { exact: true })).toBeVisible();
+  await expect(panel.getByRole("link", { name: "Try installed model", exact: true })).toHaveCount(
+    0,
+  );
+  expect(state.starts).toHaveLength(0);
 });

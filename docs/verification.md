@@ -508,3 +508,33 @@ and mobile conversations, missing-model recovery, return after cancellation, log
 and the private Sway 1.12/pixman isolation record. All test-owned Java, Node, Ollama-stub and advisor processes were stopped; the exact
 compositor PID and private runtime were confirmed absent. Conversation persistence
 across reloads and deletion undo remain unimplemented.
+
+
+## Starter model acquisition
+
+The final cycle passed 287 frontend tests in 15 files, TypeScript, lint, formatting,
+production builds and 36 isolated browser scenarios (`downloads.spec.ts` and
+`workspace.spec.ts`). The new data invariant validates distinct local tags and their
+exact official listing URLs against the existing download validation rules.
+
+Browser checks prove selecting a starter sends no POST; its exact tag reaches the
+explicit start, completion refreshes discovered models, and the matching Playground
+opens without a chat request. They also cover custom-tag metadata clearing, installed
+model shortcuts, blocked admission, offline source/size information, uncertain-start
+locking, unchanged retry credentials, keyboard focus and 320/768/1440px layouts.
+Existing cancellation, stale status, failed-start and workspace regressions passed.
+The first run had 34 passes and one test failure: it expected View setup where the
+offline download form already offered Open setup. Correcting that locator, plus
+adding the blocked-starter case, produced the final 36 passes.
+
+The browser ran on the proved private Sway 1.12/pixman display against the built
+Node app with intercepted API fixtures. These results do not establish real model
+compatibility, quality, memory fit or download speed. The exact public model tag
+pages and listed sizes were checked separately; see [source record](starter-models.md).
+No model files, GPU work, Java integration or public tunnel were used this cycle.
+
+Claude Opus 5 High supplied the bounded read-only advice. Visually inspected
+screenshots include `model-choice-{320,768,1440}.png` and
+`model-choice-installed.png`, retained with logs and isolation evidence under
+`test-results/model-choice/`. All test-owned services, advisor processes, compositor
+PIDs and private runtime directories were removed after verification.

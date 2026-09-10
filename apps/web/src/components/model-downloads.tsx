@@ -5,6 +5,7 @@ import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
 import { useModelDownloads } from "../lib/use-model-downloads";
 import { downloadModelError } from "../lib/model-downloads";
+import { starterModels } from "../lib/starter-models";
 import { chatUnavailableReason } from "../lib/model-admission";
 import { Badge, Button, ExternalLink, PanelHeading, button, muted, panel } from "./ui";
 
@@ -18,6 +19,14 @@ export function ModelDownloads() {
   const [model, setModel] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const selected = jobs.uncertain?.model ?? model.trim();
+  const starter = starterModels.find((item) => item.tag === selected);
+  const installedSelection = models.find((item) => item.name === selected);
+  const canTry =
+    !!status?.ollamaConnected &&
+    installedSelection &&
+    chatUnavailableReason(installedSelection) === null &&
+    !jobs.pending &&
+    !jobs.uncertain;
   const validation = downloadModelError(selected);
   const active = jobs.downloads.find((job) => job.state === "running");
   const canStart =
@@ -36,6 +45,46 @@ export function ModelDownloads() {
             if (canStart && !validation) void jobs.start(selected);
           }}
         >
+          <label
+            htmlFor="starter-model"
+            className={css({ display: "block", fontSize: "xs", fontWeight: 700, mb: "2" })}
+          >
+            Choose a starter model
+          </label>
+          <select
+            id="starter-model"
+            value={starter?.tag ?? ""}
+            disabled={jobs.pending || !!jobs.uncertain}
+            aria-describedby="starter-help download-help"
+            onChange={(event) => {
+              setModel(event.target.value);
+              setSubmitted(false);
+            }}
+            className={css({
+              w: "full",
+              minW: 0,
+              minH: "44px",
+              border: "1px solid token(colors.line)",
+              bg: "canvas",
+              borderRadius: "7px",
+              px: "3",
+              fontSize: "sm",
+            })}
+          >
+            <option value="" disabled>
+              Choose a starter, or enter a tag below
+            </option>
+            {starterModels.map((item) => (
+              <option key={item.tag} value={item.tag}>
+                {item.tag} · ≈{item.size}
+                {models.some((model) => model.name === item.tag) ? " · Installed" : ""}
+              </option>
+            ))}
+          </select>
+          <p id="starter-help" className={`${muted} ${css({ fontSize: "xs", mt: "2", mb: "4" })}`}>
+            Three text-chat options to get started. Choosing one fills the tag below; it does not
+            start a download.
+          </p>
           <label
             htmlFor="download-model"
             className={css({ display: "block", fontSize: "xs", fontWeight: 700, mb: "2" })}
@@ -69,20 +118,67 @@ export function ModelDownloads() {
                 fontSize: "sm",
               })}
             />
-            <Button variant="primary" type="submit" disabled={!canStart}>
+            {canTry && (
+              <Link
+                to="/playground"
+                search={{ model: selected }}
+                className={button({ variant: "primary" })}
+              >
+                Try installed model
+              </Link>
+            )}
+            <Button
+              variant={canTry ? "secondary" : "primary"}
+              type="submit"
+              disabled={!canStart}
+              aria-describedby={[
+                "download-help",
+                !status?.ollamaConnected && "download-offline",
+                jobs.loading && "download-loading",
+                jobs.statusError && "download-status-error",
+                active && "download-active",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
               <Download size={16} />
               {jobs.pending
                 ? "Working…"
                 : jobs.uncertain
                   ? "Retry start request"
-                  : "Download model"}
+                  : installedSelection
+                    ? "Download again"
+                    : "Download model"}
             </Button>
           </div>
           <p id="download-help" className={`${muted} ${css({ fontSize: "xs", mt: "3" })}`}>
-            Choose an explicit tag, such as qwen3:0.6b. Downloading uses this host’s disk and
-            internet connection. Check the model’s requirements first; HostAI does not estimate
-            available memory or download size in advance.
+            {starter
+              ? `Listed model size: approximately ${starter.size}. ${starter.description} `
+              : "Enter an explicit local model:tag. Download size is unknown for custom tags. "}
+            Downloading uses this host’s disk and internet connection; cached layers may reduce the
+            transfer. File size is not RAM or VRAM needed to run the model. HostAI has not checked
+            available disk or memory.
           </p>
+          {starter && (
+            <div className={css({ mt: "2", mb: "3" })}>
+              <p className={`${muted} ${css({ fontSize: "xs", mb: "1" })}`}>
+                {starter.label} · Listing checked 10 Sep 2026; size and requirements can change.
+              </p>
+              <ExternalLink href={starter.source}>Model details and terms on Ollama</ExternalLink>
+            </div>
+          )}
+          {installedSelection && (
+            <div role="status" className={css({ mt: "3", mb: "3" })}>
+              <p className={`${muted} ${css({ fontSize: "xs", mb: "2" })}`}>
+                This exact tag is already installed. Download again checks for updated files.
+              </p>
+              {chatUnavailableReason(installedSelection) !== null && (
+                <p className={css({ color: "warning", fontSize: "xs", mb: "2" })}>
+                  {chatUnavailableReason(installedSelection)}
+                </p>
+              )}
+            </div>
+          )}
           <ExternalLink href="https://ollama.com/library">
             Browse model names and requirements
           </ExternalLink>
@@ -97,7 +193,7 @@ export function ModelDownloads() {
           )}
         </form>
         {!status?.ollamaConnected && (
-          <p className={`${muted} ${css({ mt: "3" })}`}>
+          <p id="download-offline" className={`${muted} ${css({ mt: "3" })}`}>
             Connect Ollama on this host before downloading.{" "}
             <Link
               to="/connection"
@@ -108,13 +204,17 @@ export function ModelDownloads() {
           </p>
         )}
         {jobs.loading && (
-          <p role="status" className={`${muted} ${css({ mt: "3" })}`}>
+          <p id="download-loading" role="status" className={`${muted} ${css({ mt: "3" })}`}>
             Checking downloads…
           </p>
         )}
         {jobs.statusError && (
           <div className={css({ mt: "3" })}>
-            <p role="alert" className={css({ color: "warning", fontSize: "sm" })}>
+            <p
+              id="download-status-error"
+              role="alert"
+              className={css({ color: "warning", fontSize: "sm" })}
+            >
               {jobs.statusError} Saved progress may be out of date.
             </p>
             <Button disabled={jobs.refreshing} onClick={() => void jobs.refresh()}>
@@ -145,7 +245,7 @@ export function ModelDownloads() {
           </div>
         )}
         {active && (
-          <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
+          <p id="download-active" className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
             One download at a time. It continues when you leave this page; keep the gateway running.
           </p>
         )}
