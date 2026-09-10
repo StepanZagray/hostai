@@ -2,7 +2,7 @@
 
 A local inference workspace with one frontend for **Electron and your browser**, backed by Java. Connect an existing Ollama runtime, download a local model, stream conversations, and inspect request activity.
 
-HostAI has a separate guest chat page with expiring, revocable, model-specific keys. Optional Cloudflare Quick Tunnel sharing adds temporary internet access after a secure WebSocket reachability check; local keys and internet keys have separate permissions. Cloudflare can see relayed messages and access keys. An optional self-hostable directory adds host search, reported request-availability filtering and explicit listing publication; no public registry is deployed or configured by default. **Stable public hosting, verified host identities, conversations saved across reloads, signed installers, and bundled Java runtimes are not implemented.** Clients can save host IDs in their browser and return through current directory listings; keys and guest URLs are not saved. See [host directory](docs/directory.md). Hosts can separately enable [guest access requests](docs/access-requests.md), choose an expiry, and approve or reject each guest in the app. Owner controls stay on loopback. See [guest access](docs/guest-access.md) for setup, limits and the current verification boundary. Owner conversations, drafts and run settings stay separate per model and survive navigation within the tab; reload or closing the tab clears them. Runtime and request metrics come from the backend, never sample data.
+HostAI has a separate guest chat page with expiring, revocable, model-specific keys. Optional Cloudflare Quick Tunnel sharing adds temporary internet access after a secure WebSocket reachability check; local keys and internet keys have separate permissions. Cloudflare can see relayed messages and access keys. Connections are invite-only: hosts privately send a guest link and access key, or send their guest link and approve the invited visitor in the app. There is no host search, public listing, or shared directory. **Stable public hosting, verified host identities, conversations saved across reloads, signed installers, and bundled Java runtimes are not implemented.** Hosts can separately enable [guest access requests](docs/access-requests.md), choose an expiry, and approve or reject each guest in the app. Owner controls stay on loopback. See [guest access](docs/guest-access.md) for setup, limits and the current verification boundary. Owner conversations, drafts and run settings stay separate per model and survive navigation within the tab; reload or closing the tab clears them. Runtime and request metrics come from the backend, never sample data.
 
 ## Stack
 
@@ -159,7 +159,6 @@ pnpm check          # TypeScript, Vite+ lint and formatting
 pnpm test           # Stream protocol and server proxy tests
 pnpm build && pnpm test:http # Built server, real sockets, isolated backend stub
 pnpm backend:test   # Java tests; isolated HTTP runtime stub
-pnpm directory:test # Registry protocol, storage and real loopback HTTP
 pnpm test:ui        # Requires a running frontend and the Linux tools below
 ```
 
@@ -174,6 +173,5 @@ The `vite` peer-version warning is caused by the Vite+ alias exposing version `0
 
 The [host and client journey audit](docs/user-journeys.md) records current UX gaps
 and the path from local downloads to temporary internet sharing and guest chat.
-Optional host discovery now has a self-hostable registry and standalone client
-page. No public registry is deployed by default, and verified identities remain
-unimplemented; the audit is not a production deployment guide.
+Connections are invite-only; host discovery is outside the product scope.
+Verified identities remain unimplemented; the audit is not a production deployment guide.

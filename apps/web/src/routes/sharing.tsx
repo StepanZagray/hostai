@@ -1,5 +1,4 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { DirectorySharing } from "../components/directory-sharing";
 import { AccessRequests } from "../components/access-requests";
 import {
   canRequestAction,
@@ -475,7 +474,7 @@ function Sharing() {
           {internetLive && !error
             ? "Internet keys let clients use this model from their own browsers. Local keys still work only on this machine."
             : "Local preview links work in a browser on this machine. Internet links require a verified public connection and a separate internet key."}{" "}
-          Public discovery requires an optional directory listing below.
+          Connections are by invitation only. Share a client link directly with someone you trust.
         </p>
         <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
           The client page is separate from your host controls. Access keys permit one model; clients
@@ -714,10 +713,10 @@ function Sharing() {
                   : internetLabels[internet.state]}
           </p>
           <p id="internet-disclosure" className={`${muted} ${css({ mb: "3" })}`}>
-            Starting publishes the guest page through Cloudflare. Anyone can open the page in a
-            browser; an internet access key is required for chat. Cloudflare terminates TLS and can
-            see messages and access keys. This is a temporary connection: the URL changes on every
-            start, there is no uptime guarantee, and it is not production hosting.
+            Starting makes the guest page reachable through Cloudflare. Anyone with its address can
+            open the page; an internet access key is required for chat. Cloudflare terminates TLS
+            and can see messages and access keys. This is a temporary connection: the URL changes on
+            every start, there is no uptime guarantee, and it is not production hosting.
           </p>
           {publicOrigin && !error && (
             <div className={css({ mb: "4" })}>
@@ -727,7 +726,8 @@ function Sharing() {
               </p>
               <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
                 This address contains no access key. Create an internet client link below to give
-                someone permission to chat, or allow guest access requests and approve them below.
+                someone permission to chat, or send this page directly and approve their access
+                request below.
               </p>
             </div>
           )}
@@ -802,7 +802,6 @@ function Sharing() {
           </p>
         </div>
       </section>
-      <DirectorySharing requestsEnabled={status?.requests?.enabled === true} />
       <AccessRequests
         status={status}
         ready={ready && !refreshing && (internet?.state !== "live" || internetLive)}

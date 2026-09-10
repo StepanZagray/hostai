@@ -28,7 +28,8 @@ import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-        properties = {"hostai.guest-port=0", "hostai.stream-idle-timeout=3s", "hostai.generation-timeout=10s"})
+        properties = {"hostai.guest-port=0", "hostai.stream-idle-timeout=3s", "hostai.generation-timeout=10s",
+                "hostai.directory-url=https://unused-directory.invalid", "hostai.directory-allow-loopback=true"})
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class SharingHttpTest {
@@ -93,8 +94,21 @@ class SharingHttpTest {
         assertThat(html.statusCode()).isEqualTo(200);
         assertThat(html.headers().firstValue("Content-Security-Policy").orElseThrow()).contains("frame-ancestors 'none'");
         assertThat(html.headers().firstValue("Referrer-Policy")).contains("no-referrer");
+        assertThat(html.headers().firstValue("X-Robots-Tag")).contains("noindex, nofollow, noarchive");
         assertThat(html.body()).doesNotContain("HostProvider", "Request activity");
         assertThat(Files.readString(directory.resolve("access/grants.json"))).doesNotContain(token);
+    }
+
+    @Test void discoveryRoutesAreAbsentEvenWithLegacyConfigurationAndInvitesStillWork() throws Exception {
+        for (String path : List.of("/api/directory", "/api/directory/listings")) {
+            assertThat(get(owner(path), null).statusCode()).as(path).isEqualTo(404);
+            assertThat(get(guest + path, null).statusCode()).as("guest " + path).isEqualTo(404);
+        }
+        for (String path : List.of("/api/directory/start", "/api/directory/stop"))
+            assertThat(post(owner(path), Map.of(), null).statusCode()).as(path).isEqualTo(404);
+        assertThat(get(guest + "/guest/v1/session", null).statusCode()).isEqualTo(401);
+        assertThat(get(guest + "/guest/v1/session", token).statusCode()).isEqualTo(200);
+        assertThat(STUB.chats.get()).isZero();
     }
 
     @Test void tokenIsRequiredAndRevokedUnknownAndMissingKeysAreIndistinguishable() throws Exception {

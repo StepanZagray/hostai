@@ -111,7 +111,7 @@ try:
     (evidence / 'isolation.json').write_text(json.dumps({'version': version, 'pid': actual, 'environment': observed, 'fds': descriptors, 'outputs': outputs}, indent=2))
     wayland = next(p.name for p in (runtime / 'run').glob('wayland-*') if not p.name.endswith('.lock'))
     test_env = {**env, 'WAYLAND_DISPLAY': wayland, 'HOSTAI_TEST_DISPLAY_PROVED': '1'}
-    for key in ['HOSTAI_TEST_URL', 'HOSTAI_INTEGRATION', 'HOSTAI_PUBLIC_INTEGRATION', 'HOSTAI_GUEST_TEST_URL', 'HOSTAI_DIRECTORY_TEST_URL', 'HOSTAI_RENDER_BENCH', 'DEBUG']:
+    for key in ['HOSTAI_TEST_URL', 'HOSTAI_INTEGRATION', 'HOSTAI_PUBLIC_INTEGRATION', 'HOSTAI_GUEST_TEST_URL', 'HOSTAI_RENDER_BENCH', 'DEBUG']:
         if key in os.environ:
             test_env[key] = os.environ[key]
     node = '/usr/bin/node'

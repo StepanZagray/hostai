@@ -211,9 +211,8 @@ function Connection() {
           <p className={muted}>
             Create expiring keys for a separate guest chat page. Client access offers local preview
             and optional temporary internet sharing through Cloudflare, with separate keys and a
-            connection check. An optional configured directory helps clients find hosts; chatting
-            still requires an invitation key. Copying this owner workspace address does not give
-            clients access.
+            connection check. Connections are by invitation only: send a client link directly to
+            someone you trust. Copying this owner workspace address does not give clients access.
           </p>
           <Link
             to="/sharing"

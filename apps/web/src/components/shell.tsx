@@ -10,7 +10,6 @@ import {
   Network,
   Radio,
   Share2,
-  Search,
   Terminal,
   X,
 } from "lucide-react";
@@ -26,7 +25,6 @@ const navigation = [
   { to: "/activity", label: "Request activity", icon: Activity },
   { to: "/connection", label: "Connection", icon: Network },
   { to: "/sharing", label: "Client access", icon: Share2 },
-  { to: "/hosts", label: "Find a host", icon: Search },
 ] as const;
 
 export function Shell() {

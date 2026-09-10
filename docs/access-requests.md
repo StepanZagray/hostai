@@ -9,8 +9,8 @@ accounts, verified identities, end-to-end encryption or production hosting.
 A host first starts client access for an installed model, then explicitly starts
 Cloudflare internet sharing. After the public connection is verified, the host
 can separately choose **Allow access requests**. Request intake starts off after
-every gateway restart and every new tunnel attempt. Publishing a directory
-listing never enables requests or grants access.
+every gateway restart and every new tunnel attempt. Send the guest link privately
+to the intended visitor. A link alone never grants chat permission.
 
 The guest page discovers whether this host accepts requests. On public pages without
 a key, requesting access is the primary path; **Have an access key?** opens the
@@ -83,7 +83,7 @@ for requesting/polling/cancelling, and one for the eventual access key. It sends
 only SHA-256 of the access secret for approval. The host stores the request bearer
 hash in a bounded in-memory inbox and commits the access-secret hash to the existing
 private grant store when the owner approves. Neither secret appears in a URL,
-cookie, browser storage, directory listing or owner response.
+cookie, browser storage or owner response.
 
 The server assigns the grant UUID. An approved guest recovers that UUID through
 its authenticated request status and assembles the usual `hga1` bearer locally.

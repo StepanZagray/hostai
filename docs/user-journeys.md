@@ -1,15 +1,15 @@
 # Host and client journeys
 
-The intended product supports two people: a host owner making a local model
-available, and a client finding a host and chatting without managing inference
-software. The current product implements explicit local model downloads, discovery,
-chat, local guest access, and optional temporary Cloudflare Quick Tunnel sharing
-with separate channel permissions and HTTPS streaming checks. An optional
-self-hostable registry and standalone directory page now support opt-in host
-search. **No public directory is deployed or configured by default; stable public
-hosting and verified identities remain unimplemented.**
-Guests can use a private invitation or request access in the guest page when the
-host explicitly enables its [approval inbox](access-requests.md).
+The product supports a host running a local model and an invited client chatting
+without managing inference software. Hosts download and select a local model,
+test it, start client access, then privately send an invitation. Optional Cloudflare
+Quick Tunnel sharing provides remote guest access with separate channel permissions
+and HTTPS streaming checks. **Connections are invite-only: no host search, public
+listings, registry service, or discovery roadmap.** Stable public hosting and
+verified identities remain unimplemented.
+
+Guests use an invitation key or follow a privately shared guest link and request
+approval when the host enables its [approval inbox](access-requests.md).
 
 Reviewed with Claude Opus 5 High on 9–10 September 2026. Code and isolated UI fixtures
 are the evidence. Disposable Quick Tunnels have been exercised with synthetic
@@ -27,7 +27,7 @@ real model was downloaded or inference benchmark run.
 | Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Playground and the Client access start form distinguish available-to-try from a completed, nonempty reply in the retained conversation for that model name. Clear/reload remove this evidence; it is not a durable readiness or memory-fit assessment. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
 | Host: start serving | [Client access](../apps/web/src/routes/sharing.tsx) publishes one selected model on a separate local guest listener | Explicit model links and the gateway’s last configuration survive the start/stop handoff; host-name drafts survive the Playground round trip in tab memory, and missing choices explain recovery. Starting checks library presence, not memory fit or successful inference. Access restarts stopped. | Choose which model clients may use, test it, then enable serving deliberately. |
 | Host: share over internet | [Java config](../backend/src/main/resources/application.properties) and [web server](../apps/web/server.mjs) bind loopback | Temporary Cloudflare Quick Tunnel sharing checks HTTPS streaming before issuing internet keys. Cloudflare sees traffic; there is no production uptime guarantee or verified identity. | Share a verified endpoint with selected clients; expose status and Stop sharing in the same place. |
-| Client: find a host | [Optional directory](directory.md) provides model/host search, signed updates and a standalone browser page | Hosts report request availability and clients can filter for requests reported open; current access still needs a guest-page check and approval. Requires an operator-provided registry; saves now persist per directory/browser origin, but there is no public deployment, verified URL ownership or moderation. Updated does not mean online. | Browse explicitly listed models, understand freshness and access requirements, then open guest chat. |
+| Client: open an invitation | The separate guest page accepts an expiring, model-specific key, or requests explicit host approval after the host privately shares its link | No verified identities; temporary tunnel addresses can change. A guest URL alone grants no chat permission. | Open the host’s invite, check the model and privacy disclosure, connect, then chat. |
 | Host: approve a guest | [Request inbox](access-requests.md) shows an unverified name, matching code and model; duration must be chosen explicitly | Intake is internet-only and starts off. Approved permissions survive closing intake; 20 active request keys and 100 total stored keys are the limits. | Review a specific guest, approve a scoped permission, and revoke it from Access keys. |
 | Client: request access | Guest page discovers intake, retains the unsent name through details failures and chat connection changes, validates names, and waits for approval | No accounts or identity verification. Reload loses drafts and credentials. Disconnect retains request credentials for cancellation/reconnect; request records have a shorter lifetime than approved keys, which still require expiry or revocation. | Correct an initial rejected submission, retry uncertain responses without duplicate requests, cancel explicitly, then connect without sending a prompt automatically. |
 | Client: connect | [Shell](../apps/web/src/components/shell.tsx) exposes one local host workspace | The separate guest page checks model and channel permissions. An internet invite needs no client installation; the host name remains self-asserted. | See host identity, model and access requirements; connect without installing Java, Ollama or a model. |
@@ -93,22 +93,11 @@ model—not a generic metrics dashboard.
    Keep the draft/transcript through reconnects; never silently switch host/model.
    Explain who operates the host and receives the submitted messages before the
    first send. Guest access must not reveal owner telemetry or other clients' data.
-5. **Complete discoverability on top of working connections.** The optional
-   registry now supports signed installation continuity, explicit publication,
-   model/host search, heartbeats and expiring listings. It is passive and does
-   not verify guest URL ownership or availability. Next, establish an operated
-   shared directory and registration/moderation policy. Explicit saved hosts now retain
-   installation IDs and remembered labels, resolving current listings without retaining URLs
-   or keys; changed models require acknowledgement before opening. Reviewing a
-   current model works even if saving fails, and the storage error stays visible.
-   A later model change requires a new review; opening still checks listing freshness.
-   The opt-in guest access-request path is now implemented. Signed directory v2 reports
-   request availability without probing hosts; open/closed/unknown labels and filtering
-   help clients choose a host before contacting it. Private invites work without a listing. Removing
-   a listing leaves the tunnel and keys usable; Stop and Revoke remain separate.
+5. **Keep access invite-only.** Do not add host search, public listings or a registry.
+   Improve the private invitation, approval, expiry and revocation journey instead.
+   Explain that recipients can forward bearer keys and that a changed tunnel URL
+   requires the host to send a new address.
 
-These priorities preserve the requested public host-discovery destination. Private
-invites are a useful first complete sharing path, not a replacement for discovery.
 Do not expose the current owner workspace by changing bind addresses alone.
 
 ## Evidence and corrections to advice
@@ -170,7 +159,7 @@ verified temporary Cloudflare endpoint and explicitly separate internet keys.
 Guests see the relay privacy disclosure and self-asserted host identity before
 sending. Public chat uses WebSockets, with the same expiry, revocation, Stop and
 admission behavior as local chat. [Guest access](guest-access.md) documents its
-limits. Public discovery remains a separate required product capability.
+limits. Public host discovery is explicitly outside the product scope.
 
 
 ## Testing a local model and recovering a prompt

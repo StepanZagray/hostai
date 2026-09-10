@@ -603,6 +603,54 @@ function publishInternet(fixture: Awaited<ReturnType<typeof accessFixture>>) {
   });
 }
 
+for (const width of [320, 768, 1024, 1440]) {
+  test(`invite-only sharing at ${width}px has no host discovery and still creates direct links`, async ({
+    page,
+  }) => {
+    const fixture = await accessFixture(page);
+    publishInternet(fixture);
+    const discoveryRequests: string[] = [];
+    await page.route(/\/(?:api\/directory|registry)(?:\/|$)/, (route) => {
+      discoveryRequests.push(route.request().url());
+      return route.abort();
+    });
+    await page.setViewportSize({ width, height: 1100 });
+    await page.goto("/sharing");
+    await expect(page.getByRole("region", { name: "Sharing scope", exact: true })).toContainText(
+      "Connections are by invitation only.",
+    );
+    await expect(page.getByRole("link", { name: "Find a host", exact: true })).toHaveCount(0);
+    await expect(page.locator('a[href="/hosts"]')).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Public directory listing" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Publish listing", exact: true })).toHaveCount(0);
+    await page.getByLabel("Key channel").selectOption("internet");
+    await page.getByLabel("Key label", { exact: true }).fill("Invited visitor");
+    await page.getByRole("button", { name: "Create client link", exact: true }).click();
+    await expect(page.getByRole("region", { name: "New client link", exact: true })).toContainText(
+      "Your internet link is ready",
+    );
+    await page.getByRole("button", { name: "Copy client link", exact: true }).click();
+    await expect
+      .poll(() => page.evaluate(() => (window as SharingTestWindow).sharingCopies))
+      .toEqual([`${publicOrigin}/#access=fixture-secret`]);
+    await refreshAccess(page);
+    expect(fixture.calls).toEqual(["/api/sharing/grants"]);
+    expect(fixture.bodies).toEqual([
+      { label: "Invited visitor", expiresInHours: 24, channel: "internet" },
+    ]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: `test-results/invite-only-sharing-${width}.png`,
+      fullPage: true,
+    });
+    await page.goto("/hosts");
+    await expect(page.getByText("Page not found.", { exact: false })).toBeVisible();
+    expect(discoveryRequests).toEqual([]);
+  });
+}
+
 test("explicit internet start verifies before issuing a key, then interruption hides it and stop keeps local access", async ({
   page,
 }) => {
@@ -612,8 +660,10 @@ test("explicit internet start verifies before issuing a key, then interruption h
   const internet = page.getByRole("region", { name: "Temporary internet sharing", exact: true });
   const start = page.getByRole("button", { name: "Start internet sharing", exact: true });
   await expect(start).toBeDisabled();
-  await expect(internet).toContainText("Starting publishes the guest page through Cloudflare");
-  await expect(internet).toContainText("Anyone can open the page in a browser");
+  await expect(internet).toContainText(
+    "Starting makes the guest page reachable through Cloudflare",
+  );
+  await expect(internet).toContainText("Anyone with its address can open the page");
   await expect(internet).toContainText("an internet access key is required for chat");
   await expect(internet).toContainText(
     "Cloudflare terminates TLS and can see messages and access keys",
@@ -641,9 +691,12 @@ test("explicit internet start verifies before issuing a key, then interruption h
   await expect(page.getByText(publicOrigin, { exact: true })).toBeVisible();
   await expect(page.getByText("Local preview only", { exact: true })).toHaveCount(0);
   await expect(
-    page.getByText("Public discovery requires an optional directory listing below.", {
-      exact: false,
-    }),
+    page.getByText(
+      "Connections are by invitation only. Share a client link directly with someone you trust.",
+      {
+        exact: false,
+      },
+    ),
   ).toBeVisible();
   await page.getByLabel("Key channel").selectOption("internet");
   await page.getByLabel("Key label", { exact: true }).fill("Internet visitor");

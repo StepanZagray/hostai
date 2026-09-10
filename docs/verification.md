@@ -1,5 +1,35 @@
 # Verification
 
+## Invite-only scope (current)
+
+Host search, public listings, directory publication and the standalone registry
+have been removed. Earlier directory sections below are historical verification
+of removed features, not current capabilities or deployment guidance.
+
+The backend suite passes 434 tests after removal. A real HTTP regression supplies
+legacy directory settings and verifies that directory read/publish/withdraw routes
+are absent, missing invitation credentials are rejected and a valid invitation
+still authenticates without starting inference. Guest responses also send an
+`X-Robots-Tag` directive against indexing; this does not replace authentication.
+
+After adding that header, all 14 sharing HTTP tests pass again. The production
+Java package contains no removed directory classes, and there is no directory
+frontend artifact. `pnpm check`, 293 remaining frontend unit tests, five real HTTP
+proxy tests and owner/guest builds pass. The lower unit-test count reflects removal
+of directory feature tests, with new proxy rejection coverage replacing its API tests.
+
+The isolated browser run passes 81 cases; one opt-in real backend sharing case is
+skipped. Four widths (320, 768, 1024, 1440px) exercise invite creation/copying, no
+listing controls or directory requests, and a not-found response at `/hosts`.
+Desktop and narrow captures were visually inspected. Guest direct-invite connection,
+chat recovery and owner download sessions also pass. Owner APIs and guest sessions
+are intercepted fixtures; the guest production bundle is served by a private Python
+HTTP server with the guest CSP. These browser results do not prove real tunnel
+availability or model behavior. Java tests separately use isolated runtime stubs;
+no real model download, GPU inference or public tunnel is started in this cycle.
+Logs, screenshots, Opus advice and cleanup are in `test-results/invite-only/`.
+
+
 ## Download sessions through owner navigation
 
 `pnpm check`, all 318 frontend tests and the owner, guest and directory production

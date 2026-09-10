@@ -1,5 +1,14 @@
 # Autonomous improvement log
 
+## Invite-only product scope
+
+The user explicitly removed host discoverability from the product scope. The
+Find a host page, saved-host directory UI, publication controls, backend registry
+client/worker/APIs and standalone registry/build are removed. Private invitations,
+model-specific keys, host approval and Cloudflare guest transport remain. Old
+directory configuration no longer activates any component. Earlier directory
+entries below are historical and do not describe current capabilities or goals.
+
 ## Keep downloads intact through workspace navigation
 
 Claude Opus 5 High advised moving the download session into the owner workspace:

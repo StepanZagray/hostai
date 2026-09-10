@@ -1,21 +1,6 @@
 import type { Page } from "@playwright/test";
 
 export async function hostFixture(page: Page, connected = true, names = ["fixture-model:small"]) {
-  await page.route("**/api/directory", (route) =>
-    route.fulfill({
-      json: {
-        state: "off",
-        configured: false,
-        registryUrl: null,
-        enabled: false,
-        canPublish: false,
-        identityId: null,
-        updatedAt: null,
-        expiresAt: null,
-        error: null,
-      },
-    }),
-  );
   await page.route("**/api/status", (route) =>
     route.fulfill({
       json: {

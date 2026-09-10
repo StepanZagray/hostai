@@ -9,8 +9,9 @@ Local preview works on the same machine. Optional **Cloudflare Quick Tunnel**
 sharing uses a fourth, ephemeral loopback listener with the same restricted guest
 routes. It never forwards to the owner workspace, owner API, Ollama, or the local
 preview listener. Tailscale, stable public hosting, accounts and verified host identities are not
-integrated. An [optional self-hostable directory](directory.md) adds opt-in host
-search; no public registry is deployed by default. A loopback bind and Host/origin
+integrated. Connections are invite-only; host search and public directory
+publication have been removed. Guest responses ask search engines not to index
+or follow the page; this is a crawler directive, not an access control. A loopback bind and Host/origin
 checks do not authenticate other local processes; owner controls remain
 unauthenticated.
 
@@ -34,7 +35,8 @@ not production hosting. A key is a bearer permission, not a verified identity.
    Copy the link once; it cannot be recovered later. Anyone possessing it has its
    permission. Existing local keys never become internet keys. Alternatively, separately
    enable [access requests](access-requests.md) and choose an expiry when approving
-   each guest in the app. Intake, directory publication and tunnel access are independent.
+   each guest in the app. Request intake and tunnel access are separate controls. Send the guest link privately
+   to the people you intend to invite.
 5. Open a local link on this machine, or an internet link on the client's device. The guest page removes
    its `#access=` fragment before requesting metadata and keeps the key in memory.
    HTTP metadata uses `Authorization: Bearer …`; internet chat sends the key in
@@ -209,9 +211,8 @@ probe paths or raw connector logs. A passed reachability check does not prove mo
 memory fit, latency, host identity, or comprehensive internet abuse protection.
 
 [Cloudflare Quick Tunnel documentation](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/do-more-with-tunnels/trycloudflare/)
-describes its temporary hosting limits. The [optional directory](directory.md) supplies a reference registry, signed
-installation identity and listing freshness. It requires explicit configuration
-and deployment for clients on other machines.
+describes its temporary hosting limits. Hosts send invitations privately; there
+is no shared host directory or public listing.
 
 ## API summary
 

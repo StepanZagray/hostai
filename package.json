@@ -9,8 +9,6 @@
     "check": "pnpm --filter @hostai/web check",
     "test": "pnpm --filter @hostai/web test",
     "test:http": "node --test apps/web/tests/server-http.test.mjs",
-    "directory:start": "pnpm --filter @hostai/directory start",
-    "directory:test": "pnpm --filter @hostai/directory test",
     "test:ui": "python3 scripts/test-ui.py",
     "desktop:dev": "node scripts/workspace.mjs desktop --dev",
     "desktop:start": "node scripts/workspace.mjs desktop",

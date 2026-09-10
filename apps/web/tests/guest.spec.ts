@@ -194,7 +194,7 @@ async function push(page: Page, content: string, done = false, error?: string) {
   });
 }
 
-test("invite is removed before requests; guest assets work under self-only CSP without owner APIs", async ({
+test("direct invite connects without discovery and is removed before requests under self-only CSP", async ({
   page,
 }) => {
   const state = await fixture(page);
@@ -203,6 +203,7 @@ test("invite is removed before requests; guest assets work under self-only CSP w
   await connected(page);
   expect(new URL(page.url()).hash).toBe("");
   expect(state.sessionRequests).toEqual([`Bearer ${access}`]);
+  await expect(page.getByRole("link", { name: "Find a host", exact: true })).toHaveCount(0);
   expect(state.chatRequests).toHaveLength(0);
   expect(await page.evaluate(() => (window as GuestTestWindow).guestTest.hashes)).toEqual([""]);
   expect(await page.content()).not.toContain(access);

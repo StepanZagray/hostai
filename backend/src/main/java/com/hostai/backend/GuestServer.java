@@ -117,6 +117,7 @@ final class GuestServer implements AutoCloseable {
                     headers.setCacheControl("no-store");
                     headers.set("X-Content-Type-Options", "nosniff");
                     headers.set("Referrer-Policy", "no-referrer");
+                    headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
                     headers.set("X-Frame-Options", "DENY");
                     headers.set("Cross-Origin-Resource-Policy", "same-origin");
                     headers.set("X-Accel-Buffering", "no");

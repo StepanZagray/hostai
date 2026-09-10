@@ -41,7 +41,7 @@ export function AccessRequests({
     >
       <PanelHeading
         title="Guest access requests"
-        description="Let guests ask for permission from your public guest page."
+        description="Send your guest page directly to someone you want to invite, then approve their request."
       />
       <div className={css({ px: "5", pb: "5", minW: 0 })}>
         <p className={muted}>

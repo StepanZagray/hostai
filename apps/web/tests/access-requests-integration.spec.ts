@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 // Explicit disposable backend/model fixture only. The public tunnel is real;
-// no models are downloaded and no directory entry is published.
+// No models are downloaded; guest access uses a directly shared link and host approval.
 test.skip(
   process.env.HOSTAI_INTEGRATION !== "1" || process.env.HOSTAI_PUBLIC_INTEGRATION !== "1",
   "Requires the isolated runtime and explicit opt-in to a real public tunnel",

@@ -58,9 +58,7 @@ export async function proxy({ request }: { request: Request }) {
     /^\/api\/model-downloads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cancel$/i.test(
       url.pathname,
     );
-  const isSharingRead = ["/api/sharing", "/api/directory", "/api/directory/listings"].includes(
-    url.pathname,
-  );
+  const isSharingRead = url.pathname === "/api/sharing";
   const isAccessRequestMutation =
     ["/api/sharing/requests/start", "/api/sharing/requests/stop"].includes(url.pathname) ||
     /^\/api\/sharing\/requests\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\/(?:approve|reject)$/.test(
@@ -73,8 +71,6 @@ export async function proxy({ request }: { request: Request }) {
       "/api/sharing/grants",
       "/api/sharing/internet/start",
       "/api/sharing/internet/stop",
-      "/api/directory/start",
-      "/api/directory/stop",
     ].includes(url.pathname) ||
     /^\/api\/sharing\/grants\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/revoke$/i.test(
       url.pathname,
@@ -87,14 +83,12 @@ export async function proxy({ request }: { request: Request }) {
       : request.method === "POST" &&
         (isChat || isDownload || isCancel || isSharingMutation || isAccessRequestMutation);
   if (!allowed) return Response.json({ detail: "Endpoint not found." }, { status: 404 });
-  const isDirectory =
-    url.pathname === "/api/directory" || url.pathname.startsWith("/api/directory/");
-  if (request.method === "POST" || isDirectory) {
+  if (request.method === "POST") {
     const origin = request.headers.get("origin");
     const site = request.headers.get("sec-fetch-site");
     if (
       (origin && origin !== url.origin) ||
-      (isDirectory || isAccessRequestMutation
+      (isAccessRequestMutation
         ? site !== null && !["same-origin", "none"].includes(site)
         : site === "cross-site")
     )
