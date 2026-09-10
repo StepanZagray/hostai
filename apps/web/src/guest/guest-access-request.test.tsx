@@ -104,3 +104,24 @@ it.each(["unavailable", "error", "unsupported"] as const)(
     expect(html).not.toContain("Message composer");
   },
 );
+
+it("unconfirmed cancellation of a pending request does not assert that a key was issued", () => {
+  state.submission = { name: "Guest", model: "model:small" };
+  state.request = {
+    version: 1,
+    id,
+    state: "pending",
+    code: "ABC123",
+    ...state.submission,
+    channel: "internet",
+    expiresInSeconds: 0,
+    grantId: null,
+    grantExpiresAt: null,
+  };
+  state.recovery = "cancel";
+  state.intakeStopped = true;
+  state.remainingSeconds = 0;
+  const html = render();
+  expect(html).toContain("revoke any key it issued");
+  expect(html).not.toContain("revoke this key");
+});

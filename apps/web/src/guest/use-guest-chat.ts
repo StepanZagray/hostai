@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { readChatStream } from "../lib/api";
 import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
 import { guestSocket } from "./socket";
@@ -44,20 +44,32 @@ export function useGuestChat() {
     setBusy(false);
   }
 
-  function stop(
-    message = "Generation stopped. The unfinished exchange is excluded from later context.",
-  ) {
-    const current = active.current;
-    if (!current) return;
-    active.current = null;
-    current.controller.abort();
-    setBusy(false);
-    setTurns((items) =>
-      items.map((item) => (item.id === current.turn.id ? { ...item, state: "cancelled" } : item)),
-    );
-    setDraft((value) => value || current.turn.prompt);
-    setNotice(`${message} Edit the draft and send manually to try again.`);
-  }
+  const stop = useCallback(
+    (message = "Generation stopped. The unfinished exchange is excluded from later context.") => {
+      const current = active.current;
+      if (!current) return;
+      active.current = null;
+      current.controller.abort();
+      setBusy(false);
+      setTurns((items) =>
+        items.map((item) => (item.id === current.turn.id ? { ...item, state: "cancelled" } : item)),
+      );
+      setDraft((value) => value || current.turn.prompt);
+      setNotice(`${message} Edit the draft and send manually to try again.`);
+    },
+    [],
+  );
+
+  const pauseAccess = useCallback(
+    (message: string) => {
+      metadata.current?.abort();
+      metadata.current = null;
+      stop("Guest access is paused. The unfinished exchange is excluded from later context.");
+      setPhase("blocked");
+      setError(message);
+    },
+    [stop],
+  );
 
   function disconnect() {
     abortAll();
@@ -79,6 +91,7 @@ export function useGuestChat() {
   }
 
   async function connect(candidate: string) {
+    candidate = candidate.trim();
     // Validate length only; the listener owns token syntax and validity.
     if (!validKeyLength(candidate)) {
       setError("Enter an access key of 1–256 characters.");
@@ -276,6 +289,7 @@ export function useGuestChat() {
     connect,
     disconnect,
     stop,
+    pauseAccess,
     send,
     reconnect: () => {
       if (key.current !== null) void connect(key.current);

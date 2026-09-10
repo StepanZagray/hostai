@@ -132,7 +132,12 @@ export function createGuestAccessRequest() {
     const problem = error instanceof RequestApiError ? error : new RequestApiError();
     if (problem.retrySeconds) backoff = deadline(problem.retrySeconds);
     publish({
-      error: problem.message,
+      error:
+        recovery === "cancel" && [404, 409, 410].includes(problem.status)
+          ? view.request?.grantId
+            ? "This request cannot currently be cancelled on this connection. Its key may still be valid. Ask the host to revoke it in Access keys."
+            : "Cancellation could not be confirmed. Ask the host to check this request and revoke any key it issued."
+          : problem.message,
       recovery,
       intakeStopped: view.intakeStopped || (!!current && [404, 409, 410].includes(problem.status)),
       ...([404, 409, 410].includes(problem.status) ? { hello: null } : {}),
@@ -376,8 +381,11 @@ export function createGuestAccessRequest() {
   }
 
   const visibilityChanged = () => {
-    if (!visible()) stop();
-    else {
+    if (!visible()) {
+      clearPoll();
+      // Let bounded explicit mutations finish when a mobile tab is backgrounded.
+      if (active?.kind === "poll" || active?.kind === "details") stop();
+    } else {
       tick();
       if (view.details === "idle" && !view.hello && !current) void refresh();
       else schedule();
@@ -423,6 +431,17 @@ export function createGuestAccessRequest() {
     cancel,
     discard,
     connect,
+    matchesKey: (key: string) => {
+      try {
+        return (
+          !!current &&
+          !!view.request?.grantId &&
+          key.trim() === approvedAccessKey(view.request.grantId, current.credential.accessSecret)
+        );
+      } catch {
+        return false;
+      }
+    },
   };
 }
 
@@ -431,9 +450,10 @@ export function useGuestAccessRequest(enabled: boolean) {
   if (!controller.current) controller.current = createGuestAccessRequest();
   const request = controller.current;
   const state = useSyncExternalStore(request.subscribe, request.getSnapshot, request.getSnapshot);
+  const active = enabled || !!state.submission;
   useEffect(() => {
-    request.setEnabled(enabled);
+    request.setEnabled(active);
     return () => request.setEnabled(false);
-  }, [enabled, request]);
+  }, [active, request]);
   return { state, request };
 }

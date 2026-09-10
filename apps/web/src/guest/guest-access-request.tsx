@@ -21,23 +21,33 @@ export function GuestAccessRequest({
   request,
   enabled,
   connecting,
+  connected = false,
+  anotherKey = false,
   onConnect,
 }: {
   state: GuestRequestView;
   request: ReturnType<typeof useGuestAccessRequest>["request"];
   enabled: boolean;
   connecting: boolean;
+  connected?: boolean;
+  anotherKey?: boolean;
   onConnect: (key: string) => void | Promise<void>;
 }) {
-  if (!enabled) return null;
+  if (!enabled && !state.submission) return null;
   const blocked = !!state.busy || connecting || state.retrySeconds > 0;
 
-  return (
+  const content = (
     <section aria-labelledby="request-access-heading" className={css({ my: "4" })}>
       <h3 id="request-access-heading" className={css({ fontWeight: 750, mb: "2" })}>
-        Request access from this host
+        {enabled ? "Request access from this host" : "Your access request"}
       </h3>
-      {state.hello?.requestsAccepted && (
+      {anotherKey && state.submission && (
+        <p className={muted}>
+          This request is separate from the key currently used by chat. Cancelling it does not
+          revoke that other key.
+        </p>
+      )}
+      {enabled && state.hello?.requestsAccepted && (
         <dl className={css({ display: "grid", gap: "2", mb: "3" })}>
           <div>
             <dt className={muted}>Host-provided name · not a verified identity</dt>
@@ -55,7 +65,8 @@ export function GuestAccessRequest({
         <p id="request-access-memory" className={`${muted} ${css({ mt: "2" })}`}>
           Keep this tab open. Reloading or closing it loses your request and key; approved access
           still lasts until expiry or revocation.
-          {state.submission && " Cancel here to ask the host to end it."}
+          {state.submission &&
+            " Disconnecting chat keeps this request available here. Cancellation requires the host to still have its request record."}
         </p>
       )}
       <p role="status" className={`${muted} ${css({ mt: "3" })}`}>
@@ -66,9 +77,15 @@ export function GuestAccessRequest({
             : state.busy === "cancel"
               ? "Asking the host to cancel or revoke access…"
               : state.recovery === "cancel"
-                ? "Cancellation is not confirmed. Retry cancellation before connecting."
+                ? state.intakeStopped
+                  ? state.request?.grantId
+                    ? "Cancellation could not be confirmed on this connection. Ask the host to revoke this key in Access keys."
+                    : "Cancellation is not confirmed. Ask the host to check this request and revoke any key it issued."
+                  : "Cancellation is not confirmed. Retry cancellation before connecting."
                 : state.request
-                  ? statuses[state.request.state]
+                  ? connected && state.request.state === "approved"
+                    ? "This chat uses your approved request. You can ask the host to end its access here."
+                    : statuses[state.request.state]
                   : state.submission
                     ? "The submission is unconfirmed. Retry the same request to recover the response."
                     : state.details === "unsupported"
@@ -87,6 +104,12 @@ export function GuestAccessRequest({
           {state.error}
         </p>
       )}
+      {state.request?.state === "failed" && state.request.grantId && (
+        <p className={muted}>
+          This failure does not confirm that the approved key was revoked. Ask the host to revoke it
+          in Access keys.
+        </p>
+      )}
       {state.retrySeconds > 0 && (
         <p className={muted}>You can retry in {state.retrySeconds} seconds.</p>
       )}
@@ -96,24 +119,53 @@ export function GuestAccessRequest({
           the current one.
         </p>
       )}
-      {!state.submission && state.hello?.requestsAccepted && state.details === "ready" && (
-        <RequestNameForm disabled={blocked || state.intakeStopped} onSubmit={request.submit} />
-      )}
+      {enabled &&
+        !state.submission &&
+        state.hello?.requestsAccepted &&
+        state.details === "ready" && (
+          <RequestNameForm disabled={blocked || state.intakeStopped} onSubmit={request.submit} />
+        )}
       {state.submission && (
         <RequestProgress
           state={state}
           request={request}
           blocked={blocked}
           connecting={connecting}
+          connected={connected}
+          discovery={enabled}
           onConnect={onConnect}
         />
       )}
-      <div className={actions}>
-        <Button disabled={blocked} onClick={() => void request.refresh()}>
-          Refresh host details
-        </Button>
-      </div>
+      {enabled && (
+        <div className={actions}>
+          <Button disabled={blocked} onClick={() => void request.refresh()}>
+            Refresh host details
+          </Button>
+        </div>
+      )}
     </section>
+  );
+  return enabled ? (
+    content
+  ) : (
+    <>
+      <p role="status" className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
+        {state.busy === "cancel"
+          ? "Cancelling request…"
+          : state.recovery === "cancel"
+            ? "Cancellation unconfirmed"
+            : state.request
+              ? `Last request status: ${state.request.state}`
+              : "Submission unconfirmed"}
+        {anotherKey && " · separate from the current chat key"}
+      </p>
+      <details className={css({ my: "3" })}>
+        <summary className={css({ cursor: "pointer", fontWeight: 650, minH: "44px", py: "2" })}>
+          Manage access request
+        </summary>
+        {content}
+      </details>
+    </>
   );
 }
 
@@ -176,16 +228,22 @@ function RequestProgress({
   request,
   blocked,
   connecting,
+  connected,
+  discovery,
   onConnect,
 }: {
   state: GuestRequestView;
   request: ReturnType<typeof useGuestAccessRequest>["request"];
   blocked: boolean;
   connecting: boolean;
+  connected: boolean;
+  discovery: boolean;
   onConnect: (key: string) => void | Promise<void>;
 }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const terminal = !!state.request && isRequestTerminal(state.request.state);
+  const permissionUncertain = state.request?.state === "failed" && !!state.request.grantId;
+  const safeToForget = terminal && !permissionUncertain;
   const expired = state.remainingSeconds === 0 && !terminal;
   const discard = () => {
     request.discard(true);
@@ -209,7 +267,7 @@ function RequestProgress({
       {!terminal && state.remainingSeconds !== null && (
         <p className={muted}>
           {expired
-            ? "The request recovery timer has ended. An approved key can still be checked with Connect; its expiry is shown separately."
+            ? `This browser’s request recovery timer has ended. You can still try cancellation, but the host may no longer have the record. ${state.request?.grantId ? "Ask the host to revoke the key in Access keys if cancellation cannot be confirmed. Key expiry is separate." : "Ask the host to check this request and revoke any key it issued if cancellation cannot be confirmed."}`
             : `${state.remainingSeconds} seconds remaining to recover or cancel this request. Approved key expiry is shown separately.`}
         </p>
       )}
@@ -229,7 +287,7 @@ function RequestProgress({
         <p className={muted}>Status checks run every five seconds while this tab is visible.</p>
       )}
       <div className={actions}>
-        {state.request?.state === "approved" && (
+        {state.request?.state === "approved" && !connected && (
           <Button
             variant="primary"
             disabled={!!state.busy || connecting || state.recovery === "cancel"}
@@ -253,16 +311,30 @@ function RequestProgress({
         )}
         {!terminal && (
           <Button disabled={blocked} onClick={() => void request.cancel()}>
-            {state.recovery === "cancel" ? "Retry cancellation" : "Cancel request / access"}
+            {state.recovery === "cancel"
+              ? "Retry cancellation"
+              : expired
+                ? "Try cancellation"
+                : "Cancel request / access"}
           </Button>
         )}
-        <Button disabled={blocked} onClick={() => (terminal ? discard() : setConfirmDiscard(true))}>
-          {terminal ? "Start another request" : "Discard this request…"}
+        <Button
+          disabled={blocked}
+          onClick={() => (safeToForget ? discard() : setConfirmDiscard(true))}
+        >
+          {safeToForget
+            ? discovery
+              ? "Start another request"
+              : "Forget request record"
+            : "Discard this request…"}
         </Button>
       </div>
-      {confirmDiscard && !terminal && (
+      {confirmDiscard && !safeToForget && (
         <div className={css({ mt: "3", p: "3", bg: "warningSoft", borderRadius: "7px" })}>
           <p id="request-discard-warning">
+            {state.recovery === "cancel" && "Cancellation is still unconfirmed. "}
+            {permissionUncertain &&
+              "The host has not confirmed that this request’s key was revoked. "}
             Discarding loses this tab’s ability to recover or cancel the request. It does not cancel
             it: the host may still approve it, and approved permission remains until expiry or
             revocation. Cancel first if possible.

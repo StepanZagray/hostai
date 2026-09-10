@@ -41,7 +41,9 @@ not production hosting. A key is a bearer permission, not a verified identity.
    its first encrypted WebSocket message. Keys never go in cookies, queries,
    WebSocket subprotocols or browser storage. Connecting does not automatically generate a response.
 6. Chat, Stop, or reconnect. Same-key reconnect retains the draft and transcript;
-   a different key, Disconnect, or reload clears them. Unfinished exchanges remain
+   a different key, Disconnect, or reload clears them. A request made in this tab
+   survives Disconnect, retaining its credentials for cancellation or an explicit
+   reconnect; reload and closing the tab clear everything. Unfinished exchanges remain
    visible but are excluded from subsequent model context. An empty or whitespace-only
    answer is incomplete too: the question returns to an empty composer, while an
    independently typed draft is preserved. **Copy question** on incomplete exchanges

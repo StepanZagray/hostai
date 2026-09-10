@@ -164,6 +164,9 @@ describe("explicit access requests and memory", () => {
     // Host-reported wall clock dates cannot gate connection: the session API authenticates the key.
     await controller.connect(onConnect);
     expect(onConnect).toHaveBeenCalledExactlyOnceWith(`hga1.${otherId}.${credential.accessSecret}`);
+    expect(controller.matchesKey(`hga1.${otherId}.${credential.accessSecret}`)).toBe(true);
+    expect(controller.matchesKey(` hga1.${otherId}.${credential.accessSecret} `)).toBe(true);
+    expect(controller.matchesKey("another-key")).toBe(false);
     controller.setEnabled(false);
     expect(paths()).not.toContain("/guest/v1/requests/self/cancel");
     expect(paths().some((path) => path.includes("chat") || path.includes("session"))).toBe(false);
@@ -434,7 +437,7 @@ describe("intake changes, cancellation and stale async work", () => {
     expect(paths()).not.toContain("/guest/v1/requests/self/cancel");
   });
 
-  it("retains a hidden in-flight submission as uncertain and never automatically retries it", async () => {
+  it("lets a bounded submission finish while hidden without resubmitting", async () => {
     const controller = await start();
     let resolve!: (response: Response) => void;
     fetch.mockImplementationOnce(
@@ -446,18 +449,54 @@ describe("intake changes, cancellation and stale async work", () => {
     const attempt = controller.submit("Guest");
     await flush();
     hidden(true);
-    await attempt;
-    expect(posts()[0][1].signal.aborted).toBe(true);
-    hidden(false);
+    expect(posts()[0][1].signal.aborted).toBe(false);
     resolve(Response.json(approved));
-    await flush();
+    await attempt;
     await vi.advanceTimersByTimeAsync(20_000);
-    expect(controller.getSnapshot().request).toBeNull();
-    expect(controller.getSnapshot().recovery).toBe("submit");
+    expect(controller.getSnapshot().request?.state).toBe("approved");
+    expect(controller.getSnapshot().recovery).toBeNull();
+    hidden(false);
+    await flush();
     expect(posts()).toHaveLength(1);
-    await controller.retrySubmit();
-    expect(posts()).toHaveLength(2);
     expect(credentials.createRequestCredential).toHaveBeenCalledOnce();
+  });
+
+  it("lets cancellation finish while hidden and preserves the confirmed outcome", async () => {
+    const controller = await start();
+    await controller.submit("Guest");
+    let resolve!: (response: Response) => void;
+    fetch.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done;
+        }),
+    );
+    const attempt = controller.cancel();
+    await flush();
+    hidden(true);
+    const call = fetch.mock.calls.at(-1)!;
+    expect(call[1].signal.aborted).toBe(false);
+    resolve(Response.json({ ...pending, state: "cancelled" }));
+    await attempt;
+    hidden(false);
+    expect(controller.getSnapshot().request?.state).toBe("cancelled");
+    expect(controller.getSnapshot().recovery).toBeNull();
+    expect(paths().filter((path) => path.endsWith("/cancel"))).toHaveLength(1);
+  });
+
+  it("a hidden stalled cancellation still times out and requires explicit retry", async () => {
+    const controller = await start();
+    await controller.submit("Guest");
+    fetch.mockImplementationOnce(() => new Promise(() => {}));
+    const attempt = controller.cancel();
+    hidden(true);
+    await vi.advanceTimersByTimeAsync(10_001);
+    await attempt;
+    expect(controller.getSnapshot().busy).toBeNull();
+    expect(controller.getSnapshot().recovery).toBe("cancel");
+    hidden(false);
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(paths().filter((path) => path.endsWith("/cancel"))).toHaveLength(1);
   });
 
   it("ignores a stale approval after a later cancellation has been confirmed", async () => {

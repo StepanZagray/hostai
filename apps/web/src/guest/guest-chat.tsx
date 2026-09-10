@@ -6,6 +6,7 @@ import { GuestAccessRequest } from "./guest-access-request";
 import { GuestKeyForm } from "./guest-key-form";
 import { useGuestAccessRequest } from "./use-guest-access-request";
 import { useGuestChat } from "./use-guest-chat";
+import { isRequestTerminal } from "./request-api";
 
 const controls = css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" });
 const field = css({
@@ -22,13 +23,38 @@ const field = css({
 
 export function GuestChat() {
   const [epoch, setEpoch] = useState(0);
-  return <GuestChatSession key={epoch} onDisconnect={() => setEpoch((value) => value + 1)} />;
+  const [discoverRequests, setDiscoverRequests] = useState(false);
+  const accessRequest = useGuestAccessRequest(discoverRequests);
+  return (
+    <GuestChatSession
+      key={epoch}
+      accessRequest={accessRequest}
+      onDiscoverRequests={setDiscoverRequests}
+      onDisconnect={() => setEpoch((value) => value + 1)}
+    />
+  );
 }
 
-function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
+function GuestChatSession({
+  onDisconnect,
+  accessRequest,
+  onDiscoverRequests,
+}: {
+  onDisconnect: () => void;
+  accessRequest: ReturnType<typeof useGuestAccessRequest>;
+  onDiscoverRequests: (enabled: boolean) => void;
+}) {
   const chat = useGuestChat();
   const [enteredKey, setEnteredKey] = useState("");
   const [changeKey, setChangeKey] = useState(false);
+  const [chatRequest, setChatRequest] = useState<{ id: string; grantId: string } | null>(null);
+  const currentRequest = accessRequest.state.request;
+  const usingRequestedAccess =
+    !!chatRequest &&
+    currentRequest?.id === chatRequest.id &&
+    currentRequest.grantId === chatRequest.grantId;
+  const requestIdentity = () =>
+    currentRequest?.grantId ? { id: currentRequest.id, grantId: currentRequest.grantId } : null;
   const composer = useRef<HTMLTextAreaElement>(null);
   const showKey =
     !chat.hasKey ||
@@ -44,7 +70,26 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
     if (chat.ready) composer.current?.focus({ preventScroll: true });
   }, [chat.ready]);
   const requestEnabled = showKey && potentiallyInternet && !changeKey;
-  const accessRequest = useGuestAccessRequest(requestEnabled && !checking);
+  useEffect(
+    () => onDiscoverRequests(requestEnabled && !checking),
+    [onDiscoverRequests, requestEnabled, checking],
+  );
+  const requestEnded =
+    !!accessRequest.state.request && isRequestTerminal(accessRequest.state.request.state);
+  const requestCancellationPending =
+    accessRequest.state.busy === "cancel" || accessRequest.state.recovery === "cancel";
+  const requestKeyBlocked = requestEnded || requestCancellationPending;
+  const requestPaused = usingRequestedAccess && requestKeyBlocked;
+  const pauseMessage = requestPaused
+    ? requestEnded
+      ? accessRequest.state.request?.state === "failed"
+        ? "The host could not confirm this request’s access. Ask the host to revoke its key. Your conversation and draft are retained."
+        : "The host ended this request’s access. Your conversation and draft are retained."
+      : "Cancellation is not confirmed. This request’s key is paused until the outcome is known. Your conversation and draft are retained."
+    : "";
+  useEffect(() => {
+    if (pauseMessage) chat.pauseAccess(pauseMessage);
+  }, [pauseMessage, chat.pauseAccess]);
   const requestFirst =
     potentiallyInternet &&
     !chat.hasKey &&
@@ -113,7 +158,9 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
               : potentiallyInternet
                 ? "Cloudflare can see messages, access keys, your name and request credentials when it relays the connection."
                 : "The transport may use a Cloudflare relay. Cloudflare can see messages and access keys when it relays the connection."}{" "}
-          {scope && requestEnabled && "Cloudflare can also see your name and request credentials. "}
+          {scope &&
+            (requestEnabled || accessRequest.state.submission) &&
+            "Cloudflare can also see your name and request credentials. "}
           Keep your key private. The host’s name is self-asserted, not a verified identity.
         </p>
         {chat.session && (
@@ -154,9 +201,11 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
           <p role="status" className={`${muted} ${css({ my: "3" })}`}>
             {checking
               ? "Checking guest access…"
-              : chat.ready
-                ? "Guest access checked. You can send a message."
-                : "Connect with a valid key before sending a message."}
+              : requestPaused
+                ? "This request’s access is paused. Manage the request below."
+                : chat.ready
+                  ? "Guest access checked. You can send a message."
+                  : "Connect with a valid key before sending a message."}
           </p>
         )}
         {chat.error && (
@@ -177,7 +226,10 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
           request={accessRequest.request}
           enabled={requestEnabled}
           connecting={checking}
+          connected={usingRequestedAccess && chat.hasKey}
+          anotherKey={chat.hasKey && !usingRequestedAccess}
           onConnect={(key) => {
+            setChatRequest(requestIdentity());
             setEnteredKey("");
             setChangeKey(false);
             return chat.connect(key);
@@ -187,10 +239,14 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
           shown={showKey}
           secondary={requestFirst}
           checking={checking}
+          blocked={requestKeyBlocked && accessRequest.request.matchesKey(enteredKey)}
           value={enteredKey}
           onChange={setEnteredKey}
           focusOnShow={changeKey || (!potentiallyInternet && !chat.hasKey)}
           onConnect={() => {
+            const requested = accessRequest.request.matchesKey(enteredKey);
+            if (requested && requestKeyBlocked) return;
+            setChatRequest(requested ? requestIdentity() : null);
             void chat.connect(enteredKey);
             setEnteredKey("");
             setChangeKey(false);
@@ -199,14 +255,26 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
         {chat.hasKey && (
           <div className={controls}>
             <Button
-              onClick={chat.reconnect}
-              disabled={checking || chat.busy || chat.retrySeconds > 0}
+              onClick={() => {
+                if (!requestPaused) chat.reconnect();
+              }}
+              disabled={checking || chat.busy || chat.retrySeconds > 0 || requestPaused}
             >
               Reconnect
             </Button>
             {!showKey && (
               <Button onClick={() => setChangeKey(true)} disabled={checking || chat.busy}>
                 Use another key
+              </Button>
+            )}
+            {changeKey && (
+              <Button
+                onClick={() => {
+                  setEnteredKey("");
+                  setChangeKey(false);
+                }}
+              >
+                Keep current access
               </Button>
             )}
             <Button
@@ -223,8 +291,9 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
         )}
         {showConversation && (
           <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
-            This tab keeps your key, conversation and draft in memory only. Disconnecting or
-            reloading clears them. Permission lasts until expiry or host revocation.
+            {accessRequest.state.submission
+              ? "Disconnect clears this conversation and draft. Your access request stays in this tab so you can cancel it or connect again. Reloading or closing the tab loses all its credentials. Neither action revokes permission."
+              : "This tab keeps your key, conversation and draft in memory only. Disconnecting or reloading clears them. Permission lasts until expiry or host revocation."}
             {scope === "temporary-internet" && " This temporary address can change or go offline."}
           </p>
         )}
@@ -243,7 +312,7 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
             className={css({ p: "4", borderTop: "1px solid token(colors.line)" })}
             onSubmit={(event) => {
               event.preventDefault();
-              void chat.send();
+              if (!requestPaused) void chat.send();
             }}
           >
             <label
@@ -264,7 +333,7 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                   event.preventDefault();
-                  void chat.send();
+                  if (!requestPaused) void chat.send();
                 }
               }}
             />
@@ -299,7 +368,7 @@ function GuestChatSession({ onDisconnect }: { onDisconnect: () => void }) {
                 <Button
                   type="submit"
                   variant="primary"
-                  disabled={!chat.ready || !chat.draft.trim()}
+                  disabled={!chat.ready || requestPaused || !chat.draft.trim()}
                 >
                   Send message
                 </Button>

@@ -629,3 +629,54 @@ after the focus correction, including public onboarding at 320/768/1024/1440px.
 The expiry screen was visually inspected with an empty password field and the
 continued draft intact. All test-owned gateway, web, synthetic Ollama and advisor
 processes were stopped; private service and display runtimes were removed.
+
+
+## Managing requested guest access after connecting
+
+The request controller now survives the chat session reset. The initial combined
+browser run passed 50 scenarios, including cancellation during a stream, uncertain
+cancellation retained across Disconnect, Disconnect while a cancellation response
+is pending, a missing request record, unrelated-key isolation, and a failed
+revocation outcome. Responsive cases exercise the Manage access request disclosure
+at 320px and 1440px; existing onboarding checks cover 768px and 1024px as well.
+
+The controller suite now checks completion of submit/cancel while hidden and the
+unchanged ten-second mutation deadline. The previous hidden-submit test expected
+abortion and hung after the intentional policy change; it was replaced with a
+successful bounded completion assertion, plus a separate stalled-cancel test.
+No hidden mutation automatically retries. The existing approval test now also
+checks request-key association without exposing its secret to observable state.
+
+Visually inspected screenshots are retained under `test-results/guest-cancel/`.
+The missing-record error was made specific to cancellation instead of suggesting
+reconnect with a paused key. Failed revocation retains uncertainty after Disconnect
+and requires the discard warning before forgetting that record. Pasted keys are
+trimmed consistently for connection and request-key matching, so whitespace cannot
+misclassify the same request key as unrelated.
+
+The test setup serves the actual built guest bundle from a disposable Java gateway;
+a synthetic Ollama process supplies only the installed-model metadata required to
+enable its guest listener. Public-origin request responses and chat WebSockets are
+intercepted fixtures. No actual internet tunnel, model inference or GPU work is
+claimed, and Java packaging uses skipped backend tests. The shorter host request
+record lifetime still limits guest cancellation; durable guest self-revocation
+after that record expires remains unimplemented.
+
+Claude Opus 5 High supplied initial advice and a successful integrated review. The
+review's confirmed stale-boolean finding was fixed by associating chat with both
+request ID and grant ID. A replacement request's rejection cannot pause an earlier
+key, and its approval must still offer its own Connect action. Review also led to
+conditional wording for unapproved requests, the request-credential Cloudflare
+disclosure in compact mode, a visible live status outside collapsed details, and
+a guarded reconnect callback. Key matching catches invariant errors rather than
+throwing during render. The reviewer also read the backend inbox outside its named
+scope; primary inspection confirmed the referenced expiry/revocation semantics.
+
+The final run passed 298 frontend tests in 16 files, type/lint/format checks, all
+production bundles, Java packaging with tests skipped, and 51 isolated browser
+scenarios. The final checks include same-key paste with surrounding whitespace,
+paused-key blocking after Disconnect, replacement-request identity, and the failed
+revocation discard warning. Mobile/desktop cancellation, missing-record and failed
+revocation states were visually inspected. All test-owned services, both advisor
+processes, the exact compositor PID and private runtime directories were removed
+after verification. No remote push or deployment was performed.

@@ -27,8 +27,10 @@ allows only the selected model over the internet, for 1–168 hours.
 Approval creates a durable permission immediately. The guest then explicitly
 chooses **Connect**; connecting reads metadata and does not generate a response.
 The conversation area appears after a session exists; access failures retain an
-existing conversation and draft. The browser keeps its credentials in memory only. Disconnecting, reloading or closing the tab
-loses them. An approved permission still lasts until expiry or revocation even if
+existing conversation and draft. Credentials stay in memory only. **Disconnect**
+clears the active conversation and draft, while retaining this tab's access request
+and its credentials so the guest can cancel or explicitly connect again. Reloading
+or closing the tab loses all of them. An approved permission still lasts until expiry or revocation even if
 the guest loses its credential, just like a manually created invitation that was
 never copied.
 
@@ -37,6 +39,30 @@ never copied.
 key's permission and active generation. An explicit guest cancellation racing with
 approval either prevents issuance or durably revokes the newly approved key before
 reporting cancellation. Closing a tab does not automatically cancel a request.
+
+After connecting, **Manage access request** keeps request status and cancellation
+reachable without filling the conversation page with the full onboarding form.
+It remains available when using another key; the page distinguishes that separate
+request from the current chat permission. **Keep current access** backs out of key
+entry without changing the key or the draft.
+
+Cancelling the request used by this chat pauses sends and reconnects with that key,
+closes its active stream, and retains the transcript and draft. A lost cancellation
+response remains unconfirmed; the same cancellation can be retried after Disconnect,
+without a new submission or credential. Disconnect during an in-flight cancellation
+lets that operation finish. Confirmed terminal outcomes stay visible. A failed
+revocation does not claim that the key was revoked: the guest is directed to the
+host. Cancelling a different retained request does not revoke or pause a manually
+entered, unrelated key.
+
+The recovery record expires independently of the durable grant. When the local
+recovery timer ends, the UI offers **Try cancellation** and explains that the host
+may no longer have its record. It does not prevent an explicit attempt based only
+on this browser's timer. If cancellation cannot be confirmed, the host must revoke
+the key in Access keys. An expired or missing request record never proves key
+revocation. **Discard this request…** still requires the existing explicit warning;
+it forgets the request credentials without revoking permission or disconnecting
+an independently retained active chat key.
 
 ## Credential and lifecycle boundary
 
@@ -60,6 +86,11 @@ Such a client can choose a guessable 32-byte access secret or disclose its own
 bearer permission. Owner-approved scope, duration and revocation still apply.
 Grant IDs and commitments are not published. Cloudflare terminates TLS and can
 see relayed messages and credentials; this feature does not change that boundary.
+
+Backgrounding the tab pauses status polling, but an already-started submit or
+cancellation keeps its bounded ten-second request deadline. A stalled mutation
+still becomes uncertain and requires manual retry. Closing the page aborts local
+work without sending cancellation.
 
 The inbox is bound to a tunnel attempt, public origin, model and host name. A
 reachability interruption pauses requests and approvals while retaining the inbox

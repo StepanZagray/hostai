@@ -6,6 +6,7 @@ export function GuestKeyForm({
   shown,
   secondary,
   checking,
+  blocked = false,
   value,
   focusOnShow,
   onChange,
@@ -14,6 +15,7 @@ export function GuestKeyForm({
   shown: boolean;
   secondary: boolean;
   checking: boolean;
+  blocked?: boolean;
   value: string;
   focusOnShow: boolean;
   onChange: (value: string) => void;
@@ -30,7 +32,7 @@ export function GuestKeyForm({
       className={css({ my: "3" })}
       onSubmit={(event) => {
         event.preventDefault();
-        onConnect();
+        if (!checking && !blocked) onConnect();
       }}
     >
       <label htmlFor="guest-key" className={css({ display: "block", fontWeight: 650, mb: "2" })}>
@@ -64,13 +66,13 @@ export function GuestKeyForm({
             _disabled: { opacity: 0.65, cursor: "not-allowed" },
           })}
         />
-        <Button type="submit" variant="primary" disabled={checking || !value}>
+        <Button type="submit" variant="primary" disabled={checking || blocked || !value}>
           Connect
         </Button>
       </div>
       <p id="guest-key-help" className={`${muted} ${css({ mt: "2" })}`}>
         Use the key supplied by this host. A different key clears your conversation and draft. Your
-        key stays in this tab only; disconnecting or reloading loses it.
+        key stays in this tab only; reloading loses it.
       </p>
     </form>
   );

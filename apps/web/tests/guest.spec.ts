@@ -274,7 +274,7 @@ test("temporary internet metadata enables chat with Cloudflare and host identity
   await openGuest(page);
   await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
   await expect(page.getByText("Local preview", { exact: true })).toHaveCount(0);
-  await page.getByLabel("Access key", { exact: true }).fill(access);
+  await page.getByLabel("Access key", { exact: true }).fill(` ${access} `);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(
     page.getByText("Guest access checked. You can send a message.", { exact: true }),

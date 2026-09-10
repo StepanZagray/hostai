@@ -32,10 +32,18 @@ async function guestFixture(page: Page) {
     hello: true,
     row: row(),
     lostSubmit: false,
+    lostCancel: false,
+    cancelStatus: 200,
+    cancelState: "cancelled",
+    holdCancel: false,
+    releaseCancel: null as (() => void) | null,
     submissions: [] as { auth: string; body: Record<string, string> }[],
     cancelCount: 0,
     sessions: 0,
+    sessionKeys: [] as string[],
     sessionStatus: 200,
+    chatKeys: [] as string[],
+    socketClosed: 0,
   };
   await page.route(`${origin}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -68,11 +76,22 @@ async function guestFixture(page: Page) {
     if (path === "/guest/v1/requests/self") return route.fulfill({ json: state.row });
     if (path === "/guest/v1/requests/self/cancel") {
       state.cancelCount++;
-      state.row.state = "cancelled";
+      if (state.holdCancel)
+        await new Promise<void>((resolve) => {
+          state.releaseCancel = resolve;
+        });
+      if (state.lostCancel) {
+        state.lostCancel = false;
+        return route.abort("failed");
+      }
+      if (state.cancelStatus !== 200)
+        return route.fulfill({ status: state.cancelStatus, json: {} });
+      state.row.state = state.cancelState;
       return route.fulfill({ json: state.row });
     }
     if (path === "/guest/v1/session") {
       state.sessions++;
+      state.sessionKeys.push(route.request().headers().authorization.slice(7));
       return route.fulfill({
         status: state.sessionStatus,
         json: {
@@ -90,6 +109,18 @@ async function guestFixture(page: Page) {
     }
     return route.fulfill({ status: 404, body: "" });
   });
+  await page.routeWebSocket(
+    `${origin.replace("https:", "wss:")}/guest/v1/chat-stream`,
+    (socket) => {
+      socket.onMessage((message) => {
+        state.chatKeys.push(JSON.parse(String(message)).key);
+        socket.send(JSON.stringify({ content: "An answer in progress", done: false }));
+      });
+      socket.onClose(() => {
+        state.socketClosed++;
+      });
+    },
+  );
   return { state, origin };
 }
 
@@ -161,8 +192,252 @@ test("approved guest can connect after intake closes without silently cancelling
   expect(state.cancelCount).toBe(0);
   expect(state.submissions).toHaveLength(1);
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Connect to model", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Connect to model", exact: true })).toBeEnabled();
   expect(state.cancelCount).toBe(0);
+  await page.getByRole("button", { name: "Cancel request / access", exact: true }).click();
+  await expect(
+    page.getByText("The host confirmed cancellation. This request no longer permits access.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(state.cancelCount).toBe(1);
+  expect(state.submissions).toHaveLength(1);
+});
+
+async function requestedConnection(page: Page, seconds = 590) {
+  const fixture = await guestFixture(page);
+  fixture.state.row = {
+    ...fixture.state.row,
+    state: "approved",
+    grantId,
+    grantExpiresAt: new Date(Date.now() + 3600000).toISOString(),
+    expiresInSeconds: seconds,
+  };
+  await page.goto(fixture.origin);
+  await page.getByLabel("Your name", { exact: true }).fill("Fixture guest");
+  await page.getByRole("button", { name: "Request access", exact: true }).click();
+  await page.getByRole("button", { name: "Connect to model", exact: true }).click();
+  await expect(page.getByLabel("Message", { exact: true })).toBeEnabled();
+  return fixture;
+}
+
+for (const width of [320, 1440])
+  test(`connected cancellation preserves drafts and survives disconnect at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const { state } = await requestedConnection(page);
+    await expect(page.locator("#guest-disclosure")).toContainText("name and request credentials");
+    await page.getByLabel("Message", { exact: true }).fill("Draft before same-key check");
+    await page.getByRole("button", { name: "Use another key", exact: true }).click();
+    await page.getByLabel("Access key", { exact: true }).fill(` ${state.sessionKeys[0]} `);
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+      "Draft before same-key check",
+    );
+    await page.getByLabel("Message", { exact: true }).fill("Question before cancellation");
+    await page.getByRole("button", { name: "Send message", exact: true }).click();
+    await expect(page.getByText("An answer in progress", { exact: true })).toBeVisible();
+    await page.getByLabel("Message", { exact: true }).fill("Keep my next draft");
+    await page.getByText("Manage access request", { exact: true }).focus();
+    await page.keyboard.press("Enter");
+    state.lostCancel = true;
+    await page.getByRole("button", { name: "Cancel request / access", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Retry cancellation", exact: true }),
+    ).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+    await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Keep my next draft");
+    await expect(page.getByText("An answer in progress", { exact: true })).toBeVisible();
+    await expect.poll(() => state.socketClosed).toBe(1);
+    await page.getByRole("button", { name: "Use another key", exact: true }).click();
+    await page.getByLabel("Access key", { exact: true }).fill(` ${state.chatKeys[0]} `);
+    await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Keep current access", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: "Retry cancellation", exact: true }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({
+      path: `test-results/guest-cancel-connected-${width}.png`,
+      fullPage: true,
+      animations: "disabled",
+    });
+    await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+    await expect(page.getByLabel("Message", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "Retry cancellation", exact: true }),
+    ).toBeEnabled();
+    expect(state.cancelCount).toBe(1);
+    await page.getByText("Have an access key?", { exact: true }).click();
+    await page.getByLabel("Access key", { exact: true }).fill(` ${state.sessionKeys[0]} `);
+    await expect(page.getByRole("button", { name: "Connect", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Retry cancellation", exact: true }).click();
+    await expect(
+      page.getByText("The host confirmed cancellation. This request no longer permits access.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(state.cancelCount).toBe(2);
+    expect(state.chatKeys).toHaveLength(1);
+    expect(state.submissions).toHaveLength(1);
+    expect(await page.evaluate(() => localStorage.length + sessionStorage.length)).toBe(0);
+  });
+
+test("disconnect keeps an in-flight cancellation alive until its response arrives", async ({
+  page,
+}) => {
+  const { state } = await requestedConnection(page);
+  state.holdCancel = true;
+  await page.getByText("Manage access request", { exact: true }).click();
+  try {
+    await page.getByRole("button", { name: "Cancel request / access", exact: true }).click();
+    await expect.poll(() => !!state.releaseCancel).toBe(true);
+    await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+    await expect(
+      page.getByText("Asking the host to cancel or revoke access…", { exact: true }),
+    ).toBeVisible();
+    state.releaseCancel!();
+    await expect(
+      page.getByText("The host confirmed cancellation. This request no longer permits access.", {
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(state.cancelCount).toBe(1);
+    expect(state.sessions).toBe(1);
+  } finally {
+    state.releaseCancel?.();
+  }
+});
+
+test("a missing recovery record never claims revocation or discards the request", async ({
+  page,
+}) => {
+  const { state } = await requestedConnection(page, 1);
+  await page.getByText("Manage access request", { exact: true }).click();
+  await expect(page.getByText(/This browser’s request recovery timer has ended/)).toBeVisible();
+  state.cancelStatus = 404;
+  await page.getByRole("button", { name: "Try cancellation", exact: true }).click();
+  await expect(
+    page.getByText(/Cancellation could not be confirmed on this connection/),
+  ).toBeVisible();
+  await expect(page.getByText(/Ask the host to revoke this key in Access keys/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  await page.screenshot({
+    path: "test-results/guest-cancel-record-missing.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Retry cancellation", exact: true })).toBeVisible();
+  expect(state.cancelCount).toBe(1);
+  expect(state.submissions).toHaveLength(1);
+});
+
+test("cancelling an earlier request does not pause chat using a different key", async ({
+  page,
+}) => {
+  const { state } = await requestedConnection(page);
+  await page.getByRole("button", { name: "Use another key", exact: true }).click();
+  await page.getByLabel("Access key", { exact: true }).fill("another-fixture-key");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.getByLabel("Message", { exact: true }).fill("Question using another key");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(page.getByText("An answer in progress", { exact: true })).toBeVisible();
+  await page.getByText("Manage access request", { exact: true }).click();
+  await expect(page.getByText(/Cancelling it does not revoke that other key/)).toBeVisible();
+  await page.getByRole("button", { name: "Cancel request / access", exact: true }).click();
+  await expect(
+    page.getByText("The host confirmed cancellation. This request no longer permits access.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeVisible();
+  expect(state.socketClosed).toBe(0);
+  expect(state.chatKeys).toEqual(["another-fixture-key"]);
+  await page.getByText("Manage access request", { exact: true }).click();
+  await expect(
+    page.getByRole("status").filter({ hasText: "Last request status: cancelled" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Stop", exact: true }).click();
+});
+
+test("a failed cancellation outcome never claims the key was revoked", async ({ page }) => {
+  const { state } = await requestedConnection(page);
+  state.cancelState = "failed";
+  await page.getByText("Manage access request", { exact: true }).click();
+  await page.getByRole("button", { name: "Cancel request / access", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "The host could not confirm this request’s access",
+  );
+  await expect(page.getByText(/The host ended this request’s access/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Discard this request…", exact: true }).click();
+  await expect(
+    page.getByText(/The host has not confirmed that this request’s key was revoked/),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/guest-cancel-failed-discard.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.getByRole("button", { name: "Keep this request", exact: true }).click();
+  await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await expect(
+    page.getByText(/This failure does not confirm that the approved key was revoked/),
+  ).toBeVisible();
+  expect(state.cancelCount).toBe(1);
+});
+
+test("a replacement request cannot inherit the previous request’s chat-key association", async ({
+  page,
+}) => {
+  const { state } = await requestedConnection(page);
+  await page.getByLabel("Message", { exact: true }).fill("Draft belonging to the first key");
+  await page.getByText("Manage access request", { exact: true }).click();
+  await page.getByRole("button", { name: "Discard this request…", exact: true }).click();
+  await page.getByRole("button", { name: "Discard and refresh details", exact: true }).click();
+  state.sessionStatus = 401;
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect(page.getByLabel("Access key", { exact: true })).toBeVisible();
+  state.row = { ...row(), id: "8437c606-1b63-4c9d-9e65-50d18f98acbd" };
+  await page.getByLabel("Your name", { exact: true }).fill("Fixture guest");
+  await page.getByRole("button", { name: "Request access", exact: true }).click();
+  await expect(
+    page.getByText("Waiting for the host to review your request.", { exact: true }),
+  ).toBeVisible();
+  state.row.state = "rejected";
+  await page.getByRole("button", { name: "Check status", exact: true }).click();
+  await expect(page.getByText("The host declined this request.", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Access key", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeEnabled();
+  await expect(page.getByText(/The host ended this request’s access/)).toHaveCount(0);
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+    "Draft belonging to the first key",
+  );
+  await page.getByRole("button", { name: "Start another request", exact: true }).click();
+  state.row = {
+    ...row(),
+    id: "8c79e7e3-18d0-4337-a7c9-037b5a5939b1",
+    state: "approved",
+    grantId: "f106c10b-efae-412c-a567-593550d2c138",
+    grantExpiresAt: new Date(Date.now() + 3600000).toISOString(),
+  };
+  await page.getByLabel("Your name", { exact: true }).fill("Fixture guest");
+  await page.getByRole("button", { name: "Request access", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Connect to model", exact: true })).toBeEnabled();
+  state.sessionStatus = 200;
+  await page.getByRole("button", { name: "Connect to model", exact: true }).click();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
+  await page.getByText("Manage access request", { exact: true }).click();
+  await page.getByRole("button", { name: "Cancel request / access", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  expect(state.submissions).toHaveLength(3);
+  expect(state.cancelCount).toBe(1);
 });
 
 test("host sees explicit permission choice, full capacity and recoverable status failure", async ({

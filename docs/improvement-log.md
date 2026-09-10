@@ -1,5 +1,30 @@
 # Autonomous improvement log
 
+## Guest control of requested access after connecting
+
+The request controller now belongs to the guest page, independently of the chat
+session reset. Disconnect clears conversation and draft while preserving the
+request credentials and current cancellation outcome. Manage access request stays
+reachable while chatting or entering another key. Request-key cancellation pauses
+that key's active stream and future sends/reconnects; cancellation of an unrelated
+request leaves the current manually entered key alone. Key entry also has an
+explicit way back to current access without clearing the draft.
+
+Claude Opus 5 High advised preserving the controller across Disconnect instead of
+adding another discard confirmation. Existing request-discard warnings remain.
+The implementation also lets bounded explicit submit/cancel operations finish when
+a tab is backgrounded; polling still pauses and stalled mutations time out.
+The final review caught a stale request association after discard/replacement; chat
+is now associated with both request and grant IDs. Compact management retains
+Cloudflare request-credential disclosure and announces outcomes outside the closed
+section. The request recovery window does not define the grant lifetime. Expired recovery
+timers allow an explicitly labelled cancellation attempt, and unconfirmed/missing
+records or failed revocation point to host revocation without claiming access ended.
+
+Validation and review evidence are recorded in [verification](verification.md).
+All credentials remain in memory, and reload/close still lose them. This does not
+add a durable guest self-revocation endpoint after the host's request record expires.
+
 ## Guest recovery after an unanswered prompt
 
 Guest chat no longer claims completion when a successful stream returns no visible
