@@ -38,6 +38,25 @@ final class SharingController {
     SharingService.Status startInternet(@RequestBody Empty request) { return sharing.startInternet(); }
     @PostMapping(value = "/internet/stop", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Status stopInternet(@RequestBody Empty request) { return sharing.stopInternet(); }
+    @PostMapping(value = "/requests/start", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Status startRequests(@RequestBody Empty request) { return sharing.startRequests(); }
+    @PostMapping(value = "/requests/stop", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Status stopRequests(@RequestBody Empty request) { return sharing.stopRequests(); }
+    @PostMapping(value = "/requests/{id}/approve", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Status approveRequest(@PathVariable String id, @Valid @RequestBody Approve request) {
+        return sharing.approveRequest(requestId(id), request.code(), request.expiresInHours());
+    }
+    @PostMapping(value = "/requests/{id}/reject", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Status rejectRequest(@PathVariable String id, @Valid @RequestBody Reject request) {
+        return sharing.rejectRequest(requestId(id), request.code());
+    }
+    private static UUID requestId(String id) {
+        if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+            throw new GatewayException(org.springframework.http.HttpStatus.BAD_REQUEST, "An access request UUID is required.");
+        return UUID.fromString(id);
+    }
+    record Approve(@NotBlank @Size(max = 8) String code, @NotNull @Min(1) @Max(168) Integer expiresInHours) {}
+    record Reject(@NotBlank @Size(max = 8) String code) {}
     record Start(@NotBlank String model, @NotBlank @Size(max = 80) String hostLabel) {}
     record Create(@NotBlank @Size(max = 80) String label, @NotNull @Min(1) @Max(168) Integer expiresInHours, @jakarta.validation.constraints.Pattern(regexp = "local|internet") String channel) {}
     record Empty() {}

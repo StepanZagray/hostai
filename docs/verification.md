@@ -325,10 +325,70 @@ GPU workload, user conversation or default access store was used.
 
 This verifies the reference discovery implementation and its consent/access
 boundaries. Public deployment, guest-URL ownership, human identity, moderation,
-in-app access requests and production abuse resistance remain outside this evidence.
+in-app access requests and production abuse resistance were outside that directory-cycle
+evidence. The subsequent access-request cycle is documented below.
 
 Claude Opus 5 High reviewed the integration. Its actionable findings led to the
 cross-site read checks, concurrent-read bound, replacement of expired entries at
 capacity, numeric protocol coverage and clearer capacity feedback. Primary tests
 verified the resulting changes; the review's earlier observations about pending
 audience integration and unused clock arguments were already resolved locally.
+
+
+## Access-request approval cycle
+
+The complete backend suite passed 555 tests with Java 26 and offline Maven.
+Frontend unit checks passed 279 tests; TypeScript, lint, formatting, the production
+build and five built-server HTTP tests passed. Tests use private stores and synthetic
+model metadata/streams; they do not establish model memory fit or GPU performance.
+
+The 31 inbox tests and 12 request-flow tests cover canonical credentials,
+content-idempotent retries, capacity, monotonic deadlines, independently bounded
+anonymous/known/discovery traffic, owner duration selection, cancellation/approval
+races, storage failures and rollback after tunnel replacement during approval.
+The HTTP flow tests exercise a real private listener and store with explicitly
+synthetic verified-tunnel observations. Existing grant, guest socket, sharing and
+directory tests also ran in the full suite.
+
+Seventy-four local browser regression scenarios passed across guest chat, sharing,
+request recovery, directory controls, setup, model download/retry and owner chat.
+The standalone directory's updated access explanation also passed against a real
+private Node registry. All UI runs used the Sway 1.12/pixman/device-isolated runner;
+its compositor/runtime cleanup was checked. No live desktop browser was used.
+
+A separate public browser scenario passed through cloudflared 2026.9.0, using the
+release asset verified against its published SHA-256 digest. It required a guest
+request, explicit host selection of one hour, approval and an explicit Connect.
+Connecting did not increment inference counts. The test streamed one completed
+reply, waited for partial content and an active backend request on a second reply,
+then revoked the key and verified the active count reached zero. Reconnect checked
+metadata without inference and exposed revoked request status. Screenshots include
+`access-requests-owner-320.png`, `access-requests-owner-1440.png`,
+`access-requests-guest-pending-320.png`, `access-requests-guest-approved.png`,
+`access-requests-guest-revoked.png`, `access-requests-guest-uncertain.png` and
+`access-requests-owner-full-320.png` under `test-results/`.
+
+One repeated public startup in a broader run failed DNS verification before any
+guest request or inference. Its combined run therefore reported 74 passed / one
+failed, while the separate public scenario passed. Do not interpret the successful
+public run as an uptime guarantee: Quick Tunnel startup remains dependent on
+external DNS and Cloudflare. The app kept public access blocked on that failure.
+
+The public scenario now requires both `HOSTAI_INTEGRATION=1` and
+`HOSTAI_PUBLIC_INTEGRATION=1`. A run without the latter was confirmed to skip the
+public test and leave sharing stopped. Start only disposable services configured
+with the synthetic Ollama fixture and private access storage before running it:
+
+```sh
+HOSTAI_INTEGRATION=1 HOSTAI_PUBLIC_INTEGRATION=1 \
+  HOSTAI_GUEST_TEST_URL=http://127.0.0.1:8081 \
+  pnpm test:ui access-requests-integration.spec.ts
+```
+
+It intentionally starts and stops a real public tunnel. Ordinary local regression
+runs should omit `HOSTAI_PUBLIC_INTEGRATION`; an explicit test-name exclusion can
+also avoid selecting the network scenario when matching `integration.spec.ts`.
+
+Protocol details and operational limits are in [access requests](access-requests.md).
+No public registry deployment, verified human identity, stable public hosting or
+end-to-end encryption was added by this cycle.

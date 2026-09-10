@@ -1,12 +1,48 @@
 # Autonomous improvement log
 
+## Guest requests with explicit host approval
+
+Guests can now request access from a public guest page, wait for the host to choose
+an expiry, then explicitly connect. Hosts get an opt-in inbox with unverified names,
+matching codes, required duration selection, rejection and existing key revocation.
+Directory copy now explains both invitations and requests. Intake, tunnel and
+listing controls remain independent; stopping intake does not revoke approved keys.
+
+The guest holds independent request/access secrets and submits only the access
+commitment. Approval, cancellation and durable grant changes share one monitor.
+Lost responses reuse one immutable request; a changed tunnel during approval rolls
+back the key. Anonymous admission, known request actions and discovery have separate
+bounded budgets. Request records expire, and the UI explains the 20 active request
+key / 100 total stored key limits without claiming revocation frees stored slots.
+
+Claude Opus 5 High advised on the protocol and reviewed the backend integration.
+Its findings led to independent known-request rate limits, cheaper bounded discovery,
+consistent host-name acceptance, explicit stale-rejection errors and safer storage
+error classification. Primary integration caught last-slot approval recovery being
+incorrectly gated by new-request discovery, request-record expiry being confused
+with key expiry, and credentials surviving Disconnect.
+
+Validation: 555 Java tests, 279 frontend tests, five built HTTP tests, 74 local
+browser regression scenarios and a standalone-directory browser scenario passed.
+A separate real Cloudflare browser scenario passed request, approval, explicit
+Connect, streaming, mid-generation revocation and a revoked-key recheck, using the
+synthetic Ollama fixture. A repeated tunnel startup failed DNS verification and
+kept access blocked: this remains temporary infrastructure, not stable hosting.
+Real public tests now require HOSTAI_PUBLIC_INTEGRATION=1 as well as the isolated
+integration flag, so ordinary local tests cannot enable a public tunnel.
+
+No public registry was deployed, no real model was downloaded and no GPU benchmark
+was performed. Screenshots and the detailed verification record are in
+[test-results](../test-results/) and [verification](verification.md).
+
 ## Optional searchable host directory
 
 Hosts can explicitly publish a verified temporary guest endpoint to their configured
 directory. A standalone browser page and the owner's Find a host route search by
 model or host name, distinguish empty/error/expired results, and retain search
-through refresh failures. Guests still need an invitation obtained privately from
-the host; no access-request flow or default public directory has been deployed.
+through refresh failures. At that milestone, guests still needed an invitation obtained privately from
+the host; the approval inbox was added in the subsequent cycle above. A default
+public directory remains undeployed.
 
 The Node reference registry accepts audience-bound Ed25519 updates, persists at
 most 100 listings, and expires freshness after 90 seconds. It never probes submitted

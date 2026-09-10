@@ -32,7 +32,9 @@ not production hosting. A key is a bearer permission, not a verified identity.
 4. Create a named **local** or **internet** key expiring in 1 hour, 24 hours or
    7 days. Internet keys can only be created while the public connection is live.
    Copy the link once; it cannot be recovered later. Anyone possessing it has its
-   permission. Existing local keys never become internet keys.
+   permission. Existing local keys never become internet keys. Alternatively, separately
+   enable [access requests](access-requests.md) and choose an expiry when approving
+   each guest in the app. Intake, directory publication and tunnel access are independent.
 5. Open a local link on this machine, or an internet link on the client's device. The guest page removes
    its `#access=` fragment before requesting metadata and keeps the key in memory.
    HTTP metadata uses `Authorization: Bearer …`; internet chat sends the key in
@@ -93,6 +95,10 @@ Storage requires POSIX permissions, stable file identities, exclusive locking,
 atomic rename and directory fsync. The store directory is 0700 and files are 0600.
 Only one gateway can open a store. Windows/non-POSIX storage support is not
 implemented; Linux is verified. No existing permission is silently repaired.
+
+Request-created keys are labelled with the guest name and matching code. The host
+can revoke them in the same Access keys list; it never receives the client-held
+raw secret. Stopping request intake leaves approved permissions valid.
 
 The versioned JSON file is bounded to 128 KiB and 100 total keys, including revoked
 and expired keys. Schema v1 grants are read as local only; the next mutation

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { css } from "../../styled-system/css";
 import { Button, muted, panel } from "../components/ui";
 import { GuestConversation } from "./guest-conversation";
+import { GuestAccessRequest } from "./guest-access-request";
 import { useGuestChat } from "./use-guest-chat";
 
 const controls = css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" });
@@ -21,6 +22,7 @@ export function GuestChat() {
   const chat = useGuestChat();
   const [enteredKey, setEnteredKey] = useState("");
   const [changeKey, setChangeKey] = useState(false);
+  const [requestEpoch, setRequestEpoch] = useState(0);
   const composer = useRef<HTMLTextAreaElement>(null);
   const keyInput = useRef<HTMLInputElement>(null);
   const showKey =
@@ -213,6 +215,7 @@ export function GuestChat() {
             <Button
               onClick={() => {
                 chat.disconnect();
+                setRequestEpoch((value) => value + 1);
                 setEnteredKey("");
                 setChangeKey(false);
               }}
@@ -221,6 +224,16 @@ export function GuestChat() {
             </Button>
           </div>
         )}
+        <GuestAccessRequest
+          key={requestEpoch}
+          enabled={showKey && potentiallyInternet}
+          connecting={checking}
+          onConnect={(key) => {
+            setEnteredKey("");
+            setChangeKey(false);
+            return chat.connect(key);
+          }}
+        />
         <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
           Kept in this tab's memory only. Disconnecting or reloading clears the conversation and
           draft.

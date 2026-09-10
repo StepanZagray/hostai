@@ -77,11 +77,11 @@ export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
         })}
         aria-label="Before connecting"
       >
-        <p className={css({ fontWeight: 700 })}>An invitation is still required.</p>
+        <p className={css({ fontWeight: 700 })}>The host must approve access.</p>
         <p>
-          Get an access key from the host before chatting. This directory does not issue keys. Host
-          names are self-reported; a recent update does not guarantee availability or verify who
-          operates a host.
+          Open the guest page to request access if the host allows it, or use an invitation key.
+          This directory does not issue keys. Host names are self-reported; a recent update does not
+          guarantee availability or verify who operates a host.
         </p>
         <p className={css({ mt: "2" })}>
           Opening a guest page contacts that host and its Cloudflare relay. Cloudflare terminates
@@ -259,7 +259,7 @@ export function DirectoryPage({ embedded = false }: { embedded?: boolean }) {
                           : `Updated ${updated}`}
                     </Badge>
                     <p className={`${muted} ${css({ fontSize: "xs" })}`}>
-                      Invitation required · one shared model
+                      Host permission required · one shared model
                     </p>
                     {canOpen ? (
                       <a

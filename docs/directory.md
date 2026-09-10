@@ -3,9 +3,9 @@
 Hosts can explicitly publish their shared model to a configured directory. Clients
 can search that directory in **Find a host**, or use its standalone browser page
 without installing HostAI or downloading a model. Opening a result leads to the
-host's separate guest chat page. **The guest still needs an invitation key from
-the host.** The directory never issues keys and there is no in-app access-request
-or contact flow yet.
+host's separate guest chat page. **The host must approve access**, either through
+an invitation key or an explicitly enabled [access-request inbox](access-requests.md).
+The directory never issues keys or enables request intake.
 
 The repository includes a self-hostable reference registry; it does not configure
 or deploy a public shared directory. Registration is open, with bounded storage
@@ -22,14 +22,17 @@ requirements are addressed.
 3. In **Let clients find this host**, read which metadata becomes public and choose
    **Publish listing**. The gateway must already have `HOSTAI_DIRECTORY_URL` set
    to the directory's HTTPS root origin and have been restarted.
-4. Create an internet invitation key and give it privately to the intended guest.
-   Publishing a listing does not grant chat permission.
+4. Create an internet invitation key and give it privately to the intended guest,
+   or separately allow access requests and review them in Client access. Publishing
+   a listing does not grant chat permission.
 5. **Remove listing** withdraws discovery only. The tunnel and existing keys stay
    usable. **Stop internet sharing** closes public access; **Revoke** ends a key's
    permission and active requests.
 
 Only the host name, one model, credential-free guest URL, stable installation ID,
-update/expiry times and invitation requirement appear in the directory. Search
+update/expiry times and the requirement for host permission appear in the directory.
+The version 1 wire field remains `invitationRequired: true`: clients always need a
+key, whether privately supplied or obtained through host approval. Search
 stays in the browser and browsing does not contact listed hosts. Opening a guest
 page contacts that host and Cloudflare; Cloudflare terminates TLS and can see
 messages and keys. See [guest access](guest-access.md).

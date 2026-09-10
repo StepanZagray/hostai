@@ -210,6 +210,34 @@ public final class AccessGrantStore implements AutoCloseable {
     /** Issues a credential for exactly the specified channel, without changing existing grants. */
     public synchronized IssuedGrant create(String label, String model, Duration lifetime, String channel) {
         requireUsable();
+        byte[] secret = new byte[32];
+        random.nextBytes(secret);
+        try {
+            Grant grant = commit(label, model, lifetime, channel, digest(secret));
+            return new IssuedGrant(grant, "hga1." + grant.id() + "."
+                    + Base64.getUrlEncoder().withoutPadding().encodeToString(secret));
+        } finally {
+            Arrays.fill(secret, (byte) 0);
+        }
+    }
+
+    /**
+     * Trusted owner-side primitive: the caller retains approval authority and must never expose
+     * this operation directly to guests. The commitment must be SHA-256 of a 32-byte client secret;
+     * only its length can be checked here. Client possession is tested later by {@link #authenticate}.
+     * A client can already disclose its own bearer permission; a commitment does not prevent that.
+     * Returns only metadata for a fresh grant, after its private digest has been durably committed.
+     */
+    synchronized Grant createCommitted(String label, String model, Duration lifetime, String channel, byte[] secretHash) {
+        requireUsable();
+        if (secretHash == null || secretHash.length != 32) {
+            throw new IllegalArgumentException("Grant commitment must contain exactly 32 bytes.");
+        }
+        return commit(label, model, lifetime, channel, secretHash.clone());
+    }
+
+    /** Both callers hold the store monitor and supply an exclusively owned digest. */
+    private Grant commit(String label, String model, Duration lifetime, String channel, byte[] secretHash) {
         validateLabel(label);
         validateModel(model);
         validateLifetime(lifetime);
@@ -224,21 +252,14 @@ public final class AccessGrantStore implements AutoCloseable {
         }
         UUID id;
         do { id = UUID.randomUUID(); } while (find(id).isPresent());
-        byte[] secret = new byte[32];
-        random.nextBytes(secret);
-        try {
-            Grant grant = new Grant(id, label, model, now, expires, null, channel);
-            List<StoredGrant> next = new ArrayList<>(records);
-            next.addFirst(new StoredGrant(grant, digest(secret)));
-            next.sort(Comparator.comparing((StoredGrant row) -> row.grant.createdAt()).reversed());
-            List<StoredGrant> committed = List.copyOf(next);
-            persist(committed);
-            records = committed;
-            return new IssuedGrant(grant, "hga1." + id + "."
-                    + Base64.getUrlEncoder().withoutPadding().encodeToString(secret));
-        } finally {
-            Arrays.fill(secret, (byte) 0);
-        }
+        Grant grant = new Grant(id, label, model, now, expires, null, channel);
+        List<StoredGrant> next = new ArrayList<>(records);
+        next.addFirst(new StoredGrant(grant, secretHash));
+        next.sort(Comparator.comparing((StoredGrant row) -> row.grant.createdAt()).reversed());
+        List<StoredGrant> committed = List.copyOf(next);
+        persist(committed);
+        records = committed;
+        return grant;
     }
 
     /** Newest creation timestamp first; most recently issued first when timestamps tie. */

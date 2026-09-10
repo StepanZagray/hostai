@@ -24,6 +24,96 @@ afterEach(() => {
 });
 
 describe("same-origin API proxy", () => {
+  const requestId = "abcdef01-2345-4678-9abc-def012345678";
+  const ownerRequestPaths = [
+    "/api/sharing/requests/start",
+    "/api/sharing/requests/stop",
+    `/api/sharing/requests/${requestId}/approve`,
+    `/api/sharing/requests/${requestId}/reject`,
+    `/api/sharing/requests/${requestId.toUpperCase()}/approve`,
+  ];
+  function ownerRequest(path: string, headers: HeadersInit = {}, method = "POST") {
+    return new Request(origin + path, {
+      method,
+      headers: { "Content-Type": "application/json", ...headers },
+      ...(method === "POST"
+        ? { body: JSON.stringify({ code: "ABC-123", expiresInHours: 24 }) }
+        : {}),
+    });
+  }
+  it.each(ownerRequestPaths)("forwards the exact owner request endpoint: %s", async (path) => {
+    const fetch = backend();
+    const request = ownerRequest(path, { Origin: origin, "Sec-Fetch-Site": "same-origin" });
+    const response = await proxy({ request });
+    expect(response.status).toBe(200);
+    await response.text();
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0].pathname).toBe(path);
+    expect(fetch.mock.calls[0][1].method).toBe("POST");
+    expect(JSON.parse(new TextDecoder().decode(fetch.mock.calls[0][1].body))).toEqual({
+      code: "ABC-123",
+      expiresInHours: 24,
+    });
+  });
+  it.each(ownerRequestPaths)(
+    "rejects cross-origin and same-site owner requests: %s",
+    async (path) => {
+      const fetch = backend();
+      const rejected: HeadersInit[] = [
+        { Origin: "https://foreign.example" },
+        { Origin: "null" },
+        { "Sec-Fetch-Site": "cross-site" },
+        { "Sec-Fetch-Site": "same-site" },
+        { "Sec-Fetch-Site": "unknown" },
+        { Origin: origin, "Sec-Fetch-Site": "cross-site" },
+      ];
+      for (const headers of rejected) {
+        expect((await proxy({ request: ownerRequest(path, headers) })).status).toBe(403);
+      }
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
+  it.each<HeadersInit>([{}, { "Sec-Fetch-Site": "none" }])(
+    "allows non-browser owner request clients: %j",
+    async (headers) => {
+      const fetch = backend();
+      await (await proxy({ request: ownerRequest(ownerRequestPaths[0], headers) })).text();
+      expect(fetch).toHaveBeenCalledOnce();
+    },
+  );
+  it.each([
+    "/api/sharing/requests",
+    "/api/sharing/requests/START",
+    "/api/sharing/requests/start/",
+    "/api/sharing/requests/start/extra",
+    "/api/sharing/requests//stop",
+    "/api/sharing/requests/not-a-uuid/approve",
+    `/api/sharing/requests/${requestId.slice(1)}/approve`,
+    `/api/sharing/requests/${requestId.replace("a", "g")}/reject`,
+    `/api/sharing/requests/${requestId}/APPROVE`,
+    `/api/sharing/requests/${requestId}/approve/`,
+    `/api/sharing/requests/${requestId}/approve/extra`,
+    `/api/sharing/requests/${requestId}/revoke`,
+    `/api/sharing/requests/${requestId}%2fapprove`,
+    `/api/sharing/requests/${requestId}/%61pprove`,
+    "/api/sharing/requests/%2e%2e/approve",
+  ])("rejects malformed owner request paths: %s", async (path) => {
+    const fetch = backend();
+    expect((await proxy({ request: ownerRequest(path) })).status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each(ownerRequestPaths)(
+    "requires POST and JSON for owner request actions: %s",
+    async (path) => {
+      const fetch = backend();
+      for (const method of ["GET", "PUT", "DELETE", "OPTIONS"])
+        expect((await proxy({ request: ownerRequest(path, {}, method) })).status).toBe(404);
+      expect(
+        (await proxy({ request: ownerRequest(path, { "Content-Type": "text/plain" }) })).status,
+      ).toBe(415);
+      expect(fetch).not.toHaveBeenCalled();
+    },
+  );
   it.each(["/api/directory", "/api/directory/listings"])(
     "rejects cross-site directory reads before contacting Java: %s",
     async (path) => {

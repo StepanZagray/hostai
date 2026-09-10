@@ -61,6 +61,11 @@ export async function proxy({ request }: { request: Request }) {
   const isSharingRead = ["/api/sharing", "/api/directory", "/api/directory/listings"].includes(
     url.pathname,
   );
+  const isAccessRequestMutation =
+    ["/api/sharing/requests/start", "/api/sharing/requests/stop"].includes(url.pathname) ||
+    /^\/api\/sharing\/requests\/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\/(?:approve|reject)$/.test(
+      url.pathname,
+    );
   const isSharingMutation =
     [
       "/api/sharing/start",
@@ -79,7 +84,8 @@ export async function proxy({ request }: { request: Request }) {
       ? ["/api/status", "/api/models", "/api/requests"].includes(url.pathname) ||
         isDownload ||
         isSharingRead
-      : request.method === "POST" && (isChat || isDownload || isCancel || isSharingMutation);
+      : request.method === "POST" &&
+        (isChat || isDownload || isCancel || isSharingMutation || isAccessRequestMutation);
   if (!allowed) return Response.json({ detail: "Endpoint not found." }, { status: 404 });
   const isDirectory =
     url.pathname === "/api/directory" || url.pathname.startsWith("/api/directory/");
@@ -88,7 +94,7 @@ export async function proxy({ request }: { request: Request }) {
     const site = request.headers.get("sec-fetch-site");
     if (
       (origin && origin !== url.origin) ||
-      (isDirectory
+      (isDirectory || isAccessRequestMutation
         ? site !== null && !["same-origin", "none"].includes(site)
         : site === "cross-site")
     )

@@ -252,7 +252,7 @@ class DirectoryPublicationTest {
         try (var fixture = new DirectoryClientTest.Fixture()) {
             var transport = new Transport(); transport.emit("live", 1, DirectoryClientTest.GUEST);
             var sharing = mock(SharingService.class);
-            when(sharing.status()).thenReturn(new SharingService.Status("local", "Fixture host", "fixture:small", null, null, List.of(), null));
+            when(sharing.status()).thenReturn(new SharingService.Status("local", "Fixture host", "fixture:small", null, null, List.of(), null, null));
             try (var directory = new DirectoryPublication(fixture.configuration(), () -> {
                 var status = sharing.status();
                 return new DirectoryPublication.Shared(status.state().equals("local"), status.hostLabel(), status.model());

@@ -103,6 +103,174 @@ class AccessGrantStoreTest {
         }
     }
 
+    @ParameterizedTest @ValueSource(strings = {"local", "internet"})
+    void committedClientSecretAuthenticatesOnlyItsIssuedScopeAndPersistsOnlyHash(String channel) throws Exception {
+        Path directory = temporary.resolve("committed");
+        byte[] secret = clientSecret();
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
+        String encodedSecret = Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
+        String encodedHash = HexFormat.of().formatHex(hash);
+        Grant grant;
+        String token;
+        byte[] committed;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            var other = store.create("Other", "other:model", MINUTE);
+            grant = store.createCommitted("  Client laptop 🔐  ", "Org/Exact.Model:Q4_0",
+                    Duration.ofDays(7), channel, hash);
+            token = clientToken(grant.id(), secret);
+            assertThat(grant).isEqualTo(new Grant(grant.id(), "  Client laptop 🔐  ", "Org/Exact.Model:Q4_0",
+                    START, START.plus(Duration.ofDays(7)), null, channel));
+            assertThat(grant.id()).isNotEqualTo(other.grant().id());
+            assertThat(store.list()).containsExactly(grant, other.grant());
+            committed = Files.readAllBytes(data(directory));
+            var modified = Files.getLastModifiedTime(data(directory));
+            assertThat(store.authenticate(token)).contains(grant);
+            byte[] wrong = secret.clone();
+            wrong[0] ^= 1;
+            assertThat(store.authenticate(clientToken(grant.id(), wrong))).isEmpty();
+            assertThat(store.authenticate(clientToken(grant.id(), hash))).isEmpty();
+            assertThat(store.authenticate(clientToken(UUID.randomUUID(), secret))).isEmpty();
+            assertThat(store.authenticate(clientToken(other.grant().id(), secret))).isEmpty();
+            assertThat(store.authenticate("hga1." + grant.id() + other.token().substring(41))).isEmpty();
+            String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+            char alias = alphabet.charAt(alphabet.indexOf(token.charAt(84)) + 1);
+            for (String malformed : List.of("Bearer " + token, " " + token, token + "=",
+                    token + "\n", "hga2" + token.substring(4), token.substring(0, 84) + alias)) {
+                assertThat(store.authenticate(malformed)).isEmpty();
+            }
+            assertThat(store.authenticate(other.token())).contains(other.grant());
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(committed);
+            assertThat(Files.getLastModifiedTime(data(directory))).isEqualTo(modified);
+            var root = JSON.readTree(committed);
+            assertThat(root.propertyNames()).containsExactlyInAnyOrder("version", "grants");
+            assertThat(root.get("version").intValue()).isEqualTo(2);
+            var row = root.get("grants").get(0);
+            assertThat(row.propertyNames()).containsExactlyInAnyOrder(
+                    "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel");
+            assertThat(row.get("hash").stringValue()).isEqualTo(encodedHash);
+            assertThat(row.get("channel").stringValue()).isEqualTo(channel);
+            assertThat(grant.toString()).doesNotContain(encodedSecret, encodedHash);
+            assertThat(store.list().toString()).doesNotContain(encodedSecret, encodedHash);
+            assertThat(store.authenticate(token).toString()).doesNotContain(encodedSecret, encodedHash);
+            assertThat(store.toString()).doesNotContain(encodedSecret, encodedHash);
+            assertMode(directory, "rwx------");
+            try (var files = Files.list(directory)) {
+                for (Path file : files.toList()) {
+                    assertMode(file, "rw-------");
+                    assertThat(Files.getOwner(file)).isEqualTo(Files.getOwner(directory));
+                    assertThat(Files.readString(file)).doesNotContain(token, encodedSecret, HexFormat.of().formatHex(secret));
+                }
+            }
+            assertOnlyFinalFiles(directory);
+        }
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.authenticate(token)).contains(grant);
+            assertThat(reopened.list().getFirst()).isEqualTo(grant);
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(committed);
+        }
+    }
+
+    @Test
+    void callerCannotMutateCommittedHashInMemoryOrThroughSubsequentWritesAndRestart() throws Exception {
+        Path directory = temporary.resolve("commitment-copy");
+        byte[] secret = clientSecret();
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
+        byte[] original = hash.clone();
+        byte[] wrong = secret.clone();
+        wrong[31] ^= 1;
+        byte[] replacement = MessageDigest.getInstance("SHA-256").digest(wrong);
+        Grant grant;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            grant = store.createCommitted("Client", "model", MINUTE, "internet", hash);
+            assertThat(hash).isEqualTo(original);
+            System.arraycopy(replacement, 0, hash, 0, hash.length);
+            assertThat(store.authenticate(clientToken(grant.id(), secret))).contains(grant);
+            assertThat(store.authenticate(clientToken(grant.id(), wrong))).isEmpty();
+            // A subsequent snapshot must still serialize the owned copy, not the changed input.
+            var other = store.create("Other", "other", MINUTE);
+            store.revoke(other.grant().id());
+            assertThat(JSON.readTree(Files.readAllBytes(data(directory))).get("grants").get(1)
+                    .get("hash").stringValue()).isEqualTo(HexFormat.of().formatHex(original));
+        }
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.authenticate(clientToken(grant.id(), secret))).contains(grant);
+            assertThat(reopened.authenticate(clientToken(grant.id(), wrong))).isEmpty();
+        }
+    }
+
+    @Test
+    void duplicateCommitmentsKeepIndependentIdsPermissionsRevocationsAndExpiryAcrossRestart() throws Exception {
+        Path directory = temporary.resolve("duplicate-commitments");
+        byte[] secret = clientSecret();
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
+        Grant first;
+        Grant second;
+        Grant revoked;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            first = store.createCommitted("Local", "first:model", MINUTE, "local", hash);
+            second = store.createCommitted("Internet", "second:model", MINUTE.multipliedBy(2), "internet", hash);
+            assertThat(first.id()).isNotEqualTo(second.id());
+            assertThat(store.list()).containsExactly(second, first);
+            assertThat(store.authenticate(clientToken(first.id(), secret))).contains(first);
+            assertThat(store.authenticate(clientToken(second.id(), secret))).contains(second);
+            var rows = JSON.readTree(Files.readAllBytes(data(directory))).get("grants");
+            assertThat(rows.size()).isEqualTo(2);
+            assertThat(rows.get(0).get("hash")).isEqualTo(rows.get(1).get("hash"));
+            clock.now = START.plusSeconds(10);
+            revoked = store.revoke(first.id());
+            assertThat(revoked).isEqualTo(new Grant(first.id(), first.label(), first.model(),
+                    first.createdAt(), first.expiresAt(), clock.now, "local"));
+            assertThat(store.authenticate(clientToken(first.id(), secret))).isEmpty();
+            assertThat(store.authenticate(clientToken(second.id(), secret))).contains(second);
+        }
+        byte[] committed = Files.readAllBytes(data(directory));
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.list()).containsExactly(second, revoked);
+            assertThat(reopened.authenticate(clientToken(first.id(), secret))).isEmpty();
+            assertThat(reopened.authenticate(clientToken(second.id(), secret))).contains(second);
+            assertThat(reopened.revoke(first.id())).isEqualTo(revoked);
+            clock.now = second.expiresAt().minusNanos(1);
+            assertThat(reopened.authenticate(clientToken(second.id(), secret))).contains(second);
+            clock.now = second.expiresAt();
+            assertThat(reopened.authenticate(clientToken(second.id(), secret))).isEmpty();
+            clock.now = second.expiresAt().plusNanos(1);
+            assertThat(reopened.authenticate(clientToken(second.id(), secret))).isEmpty();
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(committed);
+        }
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.list()).containsExactly(second, revoked);
+            assertThat(reopened.authenticate(clientToken(first.id(), secret))).isEmpty();
+            assertThat(reopened.authenticate(clientToken(second.id(), secret))).isEmpty();
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(committed);
+        }
+    }
+
+    static Stream<byte[]> invalidCommitments() {
+        return Stream.of(null, new byte[0], new byte[1], new byte[31], new byte[33], new byte[64]);
+    }
+
+    @ParameterizedTest @MethodSource("invalidCommitments")
+    void invalidCommitmentsCannotPersistChangesOrPoisonStore(byte[] hash) throws Exception {
+        Path directory = temporary.resolve("invalid-commitment");
+        var legacy = writeLegacyFixture(directory);
+        byte[] secret = clientSecret();
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            byte[] before = Files.readAllBytes(data(directory));
+            var modified = Files.getLastModifiedTime(data(directory));
+            assertThatThrownBy(() -> store.createCommitted("Client", "model", MINUTE, "internet", hash))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Grant commitment must contain exactly 32 bytes.").hasNoCause();
+            assertThat(store.list()).isEqualTo(legacy.stream().map(IssuedGrant::grant).toList());
+            assertThat(store.authenticate(legacy.getFirst().token())).contains(legacy.getFirst().grant());
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+            assertThat(Files.getLastModifiedTime(data(directory))).isEqualTo(modified);
+            assertOnlyFinalFiles(directory);
+            var accepted = store.createCommitted("Accepted", "model", MINUTE, "internet",
+                    MessageDigest.getInstance("SHA-256").digest(secret));
+            assertThat(store.authenticate(clientToken(accepted.id(), secret))).contains(accepted);
+        }
+    }
+
     @Test
     void emptyDirectoryGetsVersionedEmptyFileAndReopens() throws Exception {
         Path directory = Files.createDirectory(temporary.resolve("empty"),
@@ -266,9 +434,12 @@ class AccessGrantStoreTest {
     void invalidChannelIssuanceAndMetadataAreRejectedWithoutPoisoning(String channel) throws Exception {
         Path directory = temporary.resolve("invalid-channel");
         var legacy = writeLegacyFixture(directory);
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(clientSecret());
         try (var store = AccessGrantStore.open(directory, clock)) {
             byte[] before = Files.readAllBytes(data(directory));
             assertThatThrownBy(() -> store.create("Label", "model", MINUTE, channel))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.createCommitted("Label", "model", MINUTE, channel, hash))
                     .isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> new Grant(UUID.randomUUID(), "Label", "model",
                     START, START.plus(MINUTE), null, channel)).isInstanceOf(IllegalArgumentException.class);
@@ -419,12 +590,18 @@ class AccessGrantStoreTest {
 
     @ParameterizedTest @MethodSource("invalidLabels")
     void rejectsInvalidLabelsWithoutPoisoning(String label) throws Exception {
+        byte[] secret = clientSecret();
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
         try (var store = AccessGrantStore.open(temporary.resolve("labels"), clock)) {
             byte[] before = Files.readAllBytes(data(temporary.resolve("labels")));
             assertThatThrownBy(() -> store.create(label, "model", MINUTE)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.createCommitted(label, "model", MINUTE, "local", hash))
+                    .isInstanceOf(IllegalArgumentException.class);
             assertThat(store.list()).isEmpty();
             assertThat(Files.readAllBytes(data(temporary.resolve("labels")))).isEqualTo(before);
             assertThat(store.authenticate(store.create("a".repeat(80), "model", MINUTE).token())).isPresent();
+            var committed = store.createCommitted("a".repeat(80), "model", MINUTE, "local", hash);
+            assertThat(store.authenticate(clientToken(committed.id(), secret))).contains(committed);
         }
     }
 
@@ -433,12 +610,21 @@ class AccessGrantStoreTest {
     }
 
     @ParameterizedTest @MethodSource("invalidModels")
-    void usesExistingModelAdmissionAndLengthBound(String model) {
-        try (var store = AccessGrantStore.open(temporary.resolve("models"), clock)) {
+    void usesExistingModelAdmissionAndLengthBound(String model) throws Exception {
+        Path directory = temporary.resolve("models");
+        byte[] secret = clientSecret();
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            byte[] before = Files.readAllBytes(data(directory));
             assertThatThrownBy(() -> store.create("Label", model, MINUTE)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.createCommitted("Label", model, MINUTE, "local", hash))
+                    .isInstanceOf(IllegalArgumentException.class);
             assertThat(store.list()).isEmpty();
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
             var accepted = store.create("Label", "a".repeat(128), MINUTE);
             assertThat(store.authenticate(accepted.token())).contains(accepted.grant());
+            var committed = store.createCommitted("Label", "a".repeat(128), MINUTE, "local", hash);
+            assertThat(store.authenticate(clientToken(committed.id(), secret))).contains(committed);
         }
     }
 
@@ -448,23 +634,38 @@ class AccessGrantStoreTest {
     }
 
     @ParameterizedTest @MethodSource("invalidLifetimes")
-    void rejectsOutOfRangeLifetimeWithoutPoisoning(Duration lifetime) {
-        try (var store = AccessGrantStore.open(temporary.resolve("lifetime"), clock)) {
+    void rejectsOutOfRangeLifetimeWithoutPoisoning(Duration lifetime) throws Exception {
+        Path directory = temporary.resolve("lifetime");
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(clientSecret());
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            byte[] before = Files.readAllBytes(data(directory));
             assertThatThrownBy(() -> store.create("Label", "model", lifetime)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.createCommitted("Label", "model", lifetime, "local", hash))
+                    .isInstanceOf(IllegalArgumentException.class);
             assertThat(store.list()).isEmpty();
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
             assertThat(store.create("Minimum", "model", MINUTE).grant().expiresAt()).isEqualTo(START.plus(MINUTE));
             assertThat(store.create("Maximum", "model", Duration.ofDays(7)).grant().expiresAt())
+                    .isEqualTo(START.plus(Duration.ofDays(7)));
+            assertThat(store.createCommitted("Minimum", "model", MINUTE, "local", hash).expiresAt())
+                    .isEqualTo(START.plus(MINUTE));
+            assertThat(store.createCommitted("Maximum", "model", Duration.ofDays(7), "local", hash).expiresAt())
                     .isEqualTo(START.plus(Duration.ofDays(7)));
         }
     }
 
     @Test
-    void rejectsExpiryOverflowAndMissingOpenArguments() {
+    void rejectsExpiryOverflowAndMissingOpenArguments() throws Exception {
         assertThatThrownBy(() -> AccessGrantStore.open(null, clock)).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> AccessGrantStore.open(temporary.resolve("missing"), null)).isInstanceOf(IllegalArgumentException.class);
         try (var store = AccessGrantStore.open(temporary.resolve("overflow"), clock)) {
+            byte[] before = Files.readAllBytes(data(temporary.resolve("overflow")));
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(clientSecret());
             clock.now = Instant.MAX;
             assertThatThrownBy(() -> store.create("Overflow", "model", MINUTE)).isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> store.createCommitted("Overflow", "model", MINUTE, "local", hash))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThat(Files.readAllBytes(data(temporary.resolve("overflow")))).isEqualTo(before);
             clock.now = START;
             assertThat(store.list()).isEmpty();
             assertThat(store.authenticate(store.create("Okay", "model", MINUTE).token())).isPresent();
@@ -504,30 +705,48 @@ class AccessGrantStoreTest {
     @Test
     void hundredGrantCapIncludesActiveRevokedAndExpiredGrantsAcrossRestart() throws Exception {
         Path directory = temporary.resolve("capacity");
+        byte[] secret = clientSecret();
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
         String active;
         try (var store = AccessGrantStore.open(directory, clock)) {
             var first = store.create("First", "model", MINUTE);
             active = first.token();
             var tokens = new HashSet<String>();
             tokens.add(active);
-            for (int i = 1; i < 100; i++) tokens.add(store.create("Grant " + i, "model", MINUTE).token());
+            for (int i = 1; i < 100; i++) {
+                if (i % 2 == 0) tokens.add(store.create("Grant " + i, "model", MINUTE).token());
+                else tokens.add(clientToken(store.createCommitted("Grant " + i, "model", MINUTE,
+                        "internet", hash).id(), secret));
+            }
             assertThat(tokens).hasSize(100);
             assertThat(store.list()).hasSize(100);
+            byte[] before = Files.readAllBytes(data(directory));
             assertThatThrownBy(() -> store.create("Full", "model", MINUTE)).isInstanceOf(IllegalStateException.class)
                     .isNotInstanceOf(StorageException.class).hasMessageContaining("100");
+            assertThatThrownBy(() -> store.createCommitted("Full", "model", MINUTE, "internet", hash))
+                    .isInstanceOf(IllegalStateException.class).isNotInstanceOf(StorageException.class)
+                    .hasMessageContaining("100");
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+            for (String token : tokens) assertThat(store.authenticate(token)).isPresent();
             assertThat(store.authenticate(active)).isPresent();
             store.revoke(first.grant().id());
             clock.now = START.plus(MINUTE);
             byte[] bytes = Files.readAllBytes(data(directory));
             assertThatThrownBy(() -> store.create("Still full", "model", MINUTE)).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> store.createCommitted("Still full", "model", MINUTE, "local", hash))
+                    .isInstanceOf(IllegalStateException.class).isNotInstanceOf(StorageException.class);
             assertThat(store.list()).hasSize(100);
             assertThat(Files.readAllBytes(data(directory))).isEqualTo(bytes);
             assertThat(bytes.length).isLessThan(MAX_BYTES);
         }
         try (var store = AccessGrantStore.open(directory, clock)) {
+            byte[] before = Files.readAllBytes(data(directory));
             assertThat(store.authenticate(active)).isEmpty();
             assertThat(store.list()).hasSize(100);
             assertThatThrownBy(() -> store.create("Still full", "model", MINUTE)).isInstanceOf(IllegalStateException.class);
+            assertThatThrownBy(() -> store.createCommitted("Still full", "model", MINUTE, "local", hash))
+                    .isInstanceOf(IllegalStateException.class).isNotInstanceOf(StorageException.class);
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
         }
     }
 
@@ -732,8 +951,9 @@ class AccessGrantStoreTest {
     }
 
     @Test
-    void closeIsIdempotentFailsClosedAndReleasesLock() {
+    void closeIsIdempotentFailsClosedAndReleasesLock() throws Exception {
         Path directory = temporary.resolve("closed");
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(clientSecret());
         var store = AccessGrantStore.open(directory, clock);
         var issued = store.create("Close", "model", MINUTE);
         store.close();
@@ -741,6 +961,8 @@ class AccessGrantStoreTest {
         assertThat(store.authenticate(issued.token())).isEmpty();
         assertThatThrownBy(store::list).isInstanceOf(StorageException.class).hasMessageContaining("closed");
         assertThatThrownBy(() -> store.create("New", "model", MINUTE)).isInstanceOf(StorageException.class);
+        assertThatThrownBy(() -> store.createCommitted("New", "model", MINUTE, "internet", hash))
+                .isInstanceOf(StorageException.class).hasMessageContaining("closed");
         assertThatThrownBy(() -> store.revoke(issued.grant().id())).isInstanceOf(StorageException.class);
         try (var reopened = AccessGrantStore.open(directory, clock)) {
             assertThat(reopened.authenticate(issued.token())).contains(issued.grant());
@@ -758,9 +980,11 @@ class AccessGrantStoreTest {
         try (var reopened = AccessGrantStore.open(directory, clock)) { assertThat(reopened.list()).isEmpty(); }
     }
 
-    @ParameterizedTest @ValueSource(strings = {"create", "revoke"})
+    @ParameterizedTest @ValueSource(strings = {"create", "committed", "revoke"})
     void filesystemWriteFailureNeverReturnsSuccessAndPermanentlyPoisonsInstance(String operation) throws Exception {
         Path directory = temporary.resolve("write-failure");
+        byte[] secret = clientSecret();
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(secret);
         String oldToken;
         Grant original;
         Path saved = temporary.resolve("saved.json");
@@ -772,16 +996,21 @@ class AccessGrantStoreTest {
             Files.createDirectory(data(directory), PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
             StorageException failure = assertThrows(StorageException.class, () -> {
                 if (operation.equals("create")) store.create("Never returned", "model", MINUTE);
-                else store.revoke(original.id());
+                else if (operation.equals("committed")) {
+                    store.createCommitted("Never returned", "model", MINUTE, "internet", hash);
+                } else store.revoke(original.id());
             });
             assertSanitized(failure, directory);
-            assertThat(failure.getMessage()).contains("disabled");
+            assertThat(failure.getMessage()).contains("disabled").doesNotContain(HexFormat.of().formatHex(hash),
+                    Base64.getUrlEncoder().withoutPadding().encodeToString(secret));
             assertThat(store.authenticate(oldToken)).isEmpty();
             assertThatThrownBy(store::list).isInstanceOf(StorageException.class).hasMessageContaining("disabled");
             Files.delete(data(directory));
             Files.move(saved, data(directory));
             assertThat(store.authenticate(oldToken)).isEmpty();
             assertThatThrownBy(() -> store.create("Still disabled", "model", MINUTE)).isInstanceOf(StorageException.class);
+            assertThatThrownBy(() -> store.createCommitted("Still disabled", "model", MINUTE, "internet", hash))
+                    .isInstanceOf(StorageException.class).hasMessageContaining("disabled");
             assertThatThrownBy(() -> store.revoke(original.id())).isInstanceOf(StorageException.class);
             assertOnlyFinalFiles(directory);
         }
@@ -792,7 +1021,7 @@ class AccessGrantStoreTest {
         }
     }
 
-    @ParameterizedTest @ValueSource(strings = {"create", "revoke"})
+    @ParameterizedTest @ValueSource(strings = {"create", "committed", "revoke"})
     void realWriteErrorCleansTemporaryFilePoisonsStoreAndReleasesLock(String operation) throws Exception {
         Path directory = temporary.resolve("file-size-limit");
         String token;
@@ -974,6 +1203,16 @@ class AccessGrantStoreTest {
         return directory;
     }
 
+    private static byte[] clientSecret() {
+        byte[] secret = new byte[32];
+        new SecureRandom().nextBytes(secret);
+        return secret;
+    }
+
+    private static String clientToken(UUID id, byte[] secret) {
+        return "hga1." + id + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
+    }
+
     private static Path data(Path directory) { return directory.resolve("grants.json"); }
 
     private static void changeDocument(Path directory, Consumer<ObjectNode> change) throws Exception {
@@ -1032,6 +1271,7 @@ class AccessGrantStoreTest {
 
     public static final class WriteFailureProbe {
         public static void main(String[] args) throws Exception {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(clientSecret());
             String token = new java.io.BufferedReader(new java.io.InputStreamReader(
                     System.in, java.nio.charset.StandardCharsets.UTF_8)).readLine();
             try (var store = AccessGrantStore.open(Path.of(args[0]), Clock.fixed(START, ZoneOffset.UTC))) {
@@ -1039,7 +1279,9 @@ class AccessGrantStoreTest {
                 if (store.authenticate(token).isEmpty()) throw new AssertionError("Fixture must authenticate before failure.");
                 try {
                     if (args[1].equals("create")) store.create("Never returned", "model", MINUTE);
-                    else store.revoke(id);
+                    else if (args[1].equals("committed")) {
+                        store.createCommitted("Never returned", "model", MINUTE, "internet", hash);
+                    } else store.revoke(id);
                     throw new AssertionError("Write failure must not return success.");
                 } catch (StorageException expected) {
                     if (!expected.getMessage().contains("commit failed") || expected.getCause() != null) {
@@ -1054,6 +1296,10 @@ class AccessGrantStoreTest {
                 try {
                     store.revoke(id);
                     throw new AssertionError("Poisoned store mutated grants.");
+                } catch (StorageException expected) { /* permanently disabled */ }
+                try {
+                    store.createCommitted("Never returned", "model", MINUTE, "internet", hash);
+                    throw new AssertionError("Poisoned store committed a grant.");
                 } catch (StorageException expected) { /* permanently disabled */ }
             }
             System.out.print("FAILED_CLOSED");

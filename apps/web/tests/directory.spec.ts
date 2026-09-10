@@ -72,7 +72,7 @@ test("model and host search keeps invitation and identity limits visible without
   await expect(
     page.getByRole("heading", { name: "fixture-model:small", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("An invitation is still required.")).toBeVisible();
+  await expect(page.getByText("The host must approve access.")).toBeVisible();
   await page.getByLabel("Search model or host").fill("BOB");
   await expect(
     page.getByRole("heading", { name: "another-model:large", exact: true }),
@@ -253,7 +253,7 @@ test("standalone directory serves its own client surface", async ({ page, reques
       page.getByRole("heading", { name: "Find a model host", exact: true }),
     ).toBeVisible();
     await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
-    await expect(page.getByText("An invitation is still required.")).toBeVisible();
+    await expect(page.getByText("The host must approve access.")).toBeVisible();
     await page.getByLabel("Search model or host").fill("directory-browser");
     await expect(
       page.getByRole("heading", { name: "directory-browser:small", exact: true }),

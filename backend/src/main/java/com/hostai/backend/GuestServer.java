@@ -8,6 +8,7 @@ import java.util.concurrent.TimeoutException;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.buffer.DataBufferLimitException;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -37,6 +38,8 @@ import static org.springframework.web.reactive.function.server.RequestPredicates
 
 /** A separate HTTP handler graph: owner controllers and their proxy cannot be routed here. */
 final class GuestServer implements AutoCloseable {
+    private static final Set<String> REQUEST_PATHS = Set.of("/guest/v1/hello", "/guest/v1/requests",
+            "/guest/v1/requests/self", "/guest/v1/requests/self/cancel");
     private final DisposableServer listener;
     private final Set<Connection> connections;
 
@@ -66,6 +69,24 @@ final class GuestServer implements AutoCloseable {
                 .andRoute(GET("/guest/v1/session"), request -> {
                     String token = bearer(request);
                     return sharing.session(token, permit(request)).flatMap(session -> ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(session));
+                })
+                .andRoute(GET("/guest/v1/hello"), request -> {
+                    return response(sharing.requestHello(permit(request)));
+                })
+                .andRoute(POST("/guest/v1/requests"), request -> {
+                    sharing.requireRequestGuest(permit(request), true);
+                    String token = requestBearer(request);
+                    return requestBody(request, json, AccessRequestBody.class).flatMap(body ->
+                            response(sharing.submitRequest(permit(request), token, body.intakeId(),
+                                    body.name(), body.model(), body.accessCommitment())));
+                })
+                .andRoute(GET("/guest/v1/requests/self"), request ->
+                        response(sharing.pollRequest(permit(request), bearer(request))))
+                .andRoute(POST("/guest/v1/requests/self/cancel"), request -> {
+                    sharing.requireRequestGuest(permit(request), true);
+                    String token = requestBearer(request);
+                    return requestBody(request, json, EmptyRequest.class).flatMap(body ->
+                            response(sharing.cancelRequest(permit(request), token)));
                 })
                 .andRoute(POST("/guest/v1/chat"), request -> {
                     if (internet != null) return Mono.error(new GatewayException(HttpStatus.CONFLICT,
@@ -105,6 +126,9 @@ final class GuestServer implements AutoCloseable {
                     var request = exchange.getRequest();
                     String host = request.getURI().getHost();
                     List<String> tags = request.getHeaders().getOrEmpty(PublicIngress.HEADER);
+                    boolean requestRoute = REQUEST_PATHS.contains(request.getPath().value());
+                    if (requestRoute && internet == null)
+                        return problem(exchange, new GatewayException(HttpStatus.NOT_FOUND, "Access requests require internet sharing."), json);
                     if (internet == null) {
                         if (host == null || !List.of("127.0.0.1", "localhost", "[::1]").contains(host) || !tags.isEmpty())
                             return problem(exchange, new GatewayException(HttpStatus.FORBIDDEN, "Local preview access only."), json);
@@ -116,7 +140,15 @@ final class GuestServer implements AutoCloseable {
                         headers.set("Strict-Transport-Security", "max-age=86400");
                         if (sockets.matches(request.getPath().value()))
                             return Mono.defer(() -> sockets.upgrade(exchange, internet)).subscribeOn(scheduler);
-                        if (request.getPath().value().equals("/guest/v1/session")) {
+                        if (requestRoute) {
+                            List<String> origins = request.getHeaders().getOrEmpty("Origin");
+                            List<String> sites = request.getHeaders().getOrEmpty("Sec-Fetch-Site");
+                            if ((!origins.isEmpty() && (origins.size() != 1 || !internet.origin().toString().equals(origins.getFirst())))
+                                    || (!sites.isEmpty() && (sites.size() != 1 || !List.of("same-origin", "none").contains(sites.getFirst())))
+                                    || request.getURI().getRawQuery() != null)
+                                return problem(exchange, new GatewayException(HttpStatus.FORBIDDEN, "Use this host's guest page to request access."), json);
+                        }
+                        if (request.getPath().value().equals("/guest/v1/session") || requestRoute) {
                             try { exchange.getAttributes().put("hostai.guestPermit", internet.permit()); }
                             catch (GatewayException error) { return problem(exchange, error, json); }
                         }
@@ -143,6 +175,47 @@ final class GuestServer implements AutoCloseable {
             throw new GatewayException(HttpStatus.SERVICE_UNAVAILABLE, "The local client port could not be opened. Check whether another workspace is using it.");
         }
     }
+
+    private static Mono<ServerResponse> response(Object value) {
+        return ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(value);
+    }
+
+    private static String requestBearer(ServerRequest request) {
+        String value = bearer(request);
+        if (!value.matches("hgq1\\.[A-Za-z0-9_-]{43}")) throw SharingService.unauthorized();
+        byte[] decoded = java.util.Base64.getUrlDecoder().decode(value.substring(5));
+        if (decoded.length != 32 || !java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value.substring(5)))
+            throw SharingService.unauthorized();
+        return value;
+    }
+
+    private static <T> Mono<T> requestBody(ServerRequest request, JsonMapper json, Class<T> type) {
+        if (request.headers().header(HttpHeaders.CONTENT_TYPE).size() != 1
+                || !request.headers().contentType().map(value -> value.getType().equalsIgnoreCase("application")
+                && value.getSubtype().equalsIgnoreCase("json")).orElse(false))
+            return Mono.error(new GatewayException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "JSON is required."));
+        return DataBufferUtils.join(request.exchange().getRequest().getBody(), 2048)
+                .timeout(Duration.ofSeconds(5))
+                .switchIfEmpty(Mono.error(new GatewayException(HttpStatus.BAD_REQUEST, "An access request is required.")))
+                .map(buffer -> {
+                    byte[] bytes = new byte[buffer.readableByteCount()];
+                    try { buffer.read(bytes); }
+                    finally { DataBufferUtils.release(buffer); }
+                    try {
+                        T body = json.readValue(bytes, type);
+                        if (body == null) throw new IllegalArgumentException();
+                        return body;
+                    } catch (RuntimeException error) {
+                        throw new GatewayException(HttpStatus.BAD_REQUEST, "Invalid access request.");
+                    } finally { java.util.Arrays.fill(bytes, (byte) 0); }
+                }).onErrorMap(DataBufferLimitException.class, error ->
+                        new GatewayException(HttpStatus.PAYLOAD_TOO_LARGE, "Access requests must be at most 2048 bytes."));
+    }
+
+    record AccessRequestBody(String intakeId, String name, String model, String accessCommitment) {
+        @Override public String toString() { return "AccessRequestBody[credential=<redacted>]"; }
+    }
+    record EmptyRequest() {}
 
     private static PublicIngress.Permit permit(ServerRequest request) {
         return (PublicIngress.Permit) request.attribute("hostai.guestPermit").orElseThrow(PublicIngress::unavailable);

@@ -3,7 +3,7 @@ import { css } from "../../styled-system/css";
 import { usePublication } from "../directory/use-publication";
 import { Button, PanelHeading, muted, panel, button } from "./ui";
 
-export function DirectorySharing() {
+export function DirectorySharing({ requestsEnabled = false }: { requestsEnabled?: boolean }) {
   const { status, error, loading, pending, refresh, start, stop } = usePublication();
   return (
     <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Public directory listing">
@@ -15,7 +15,7 @@ export function DirectorySharing() {
         <p className={muted}>
           Publishing makes your host name, model, public address and stable host ID visible to
           everyone browsing that directory. Access keys remain private; clients still need your
-          invitation.
+          invitation{requestsEnabled ? " or your approval of their access request." : "."}
         </p>
         {!status ? (
           <p role="status" className={`${muted} ${css({ mt: "3" })}`}>

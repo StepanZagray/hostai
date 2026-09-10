@@ -1,5 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { DirectorySharing } from "../components/directory-sharing";
+import { AccessRequests } from "../components/access-requests";
+import {
+  canRequestAction,
+  parseRequests,
+  type RequestAction,
+  type RequestsStatus,
+} from "../components/access-requests-model";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KeyRound, Play, RefreshCw, Square } from "lucide-react";
 import { css } from "../../styled-system/css";
@@ -49,6 +56,7 @@ interface Status {
   error: string | null;
   grants: Grant[];
   internet?: InternetStatus;
+  requests?: RequestsStatus;
 }
 interface Invite {
   grant: Grant;
@@ -170,7 +178,10 @@ function statusValue(value: Status): Status {
         typeof value.internet.restartRequired !== "boolean"))
   )
     throw new Error("Internet sharing status could not be read.");
-  return value;
+  const requests = parseRequests(value.requests);
+  if (requests?.available && (value.state !== "local" || value.internet?.state !== "live"))
+    throw new Error("Guest access request availability could not be read. Refresh status.");
+  return { ...value, requests };
 }
 
 function Sharing() {
@@ -187,6 +198,8 @@ function Sharing() {
   const [actionError, setActionError] = useState("");
   const [pending, setPending] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [approvalUncertain, setApprovalUncertain] = useState(false);
+  const approvalNeedsRefresh = useRef(false);
   const read = useRef<AbortController | null>(null);
   const action = useRef<AbortController | null>(null);
   const eligible = models.filter((model) => chatUnavailableReason(model) === null);
@@ -212,33 +225,43 @@ function Sharing() {
     setInvite((previous) => (previous && inviteUsable(previous, next) ? previous : null));
     setError("");
   }, []);
-  const refresh = useCallback(async () => {
-    if (read.current || action.current || document.visibilityState !== "visible") return;
-    const abort = new AbortController();
-    read.current = abort;
-    setRefreshing(true);
-    const timer = setTimeout(() => abort.abort(), 12_000);
-    try {
-      const next = statusValue(await api("/api/sharing", abort.signal));
-      if (read.current !== abort) return;
-      applyStatus(next);
-    } catch (error) {
-      if (read.current === abort)
-        setError(
-          abort.signal.aborted
-            ? "Client access status timed out."
-            : error instanceof Error
-              ? error.message
-              : "Client access status is unavailable.",
-        );
-    } finally {
-      clearTimeout(timer);
-      if (read.current === abort) {
-        read.current = null;
-        setRefreshing(false);
+  const refresh = useCallback(
+    async (acknowledgeApproval = false) => {
+      if (read.current || action.current || document.visibilityState !== "visible") return;
+      const abort = new AbortController();
+      read.current = abort;
+      setRefreshing(true);
+      const timer = setTimeout(() => abort.abort(), 12_000);
+      try {
+        const next = statusValue(await api("/api/sharing", abort.signal));
+        if (read.current !== abort) return;
+        applyStatus(next);
+        // Polling can reconcile the key list, but only an explicit refresh acknowledges
+        // an approval whose response was lost. Do not silently enable a new approval.
+        if (acknowledgeApproval && next.requests) {
+          approvalNeedsRefresh.current = false;
+          setApprovalUncertain(false);
+          setActionError("");
+        }
+      } catch (error) {
+        if (read.current === abort)
+          setError(
+            abort.signal.aborted
+              ? "Client access status timed out."
+              : error instanceof Error
+                ? error.message
+                : "Client access status is unavailable.",
+          );
+      } finally {
+        clearTimeout(timer);
+        if (read.current === abort) {
+          read.current = null;
+          setRefreshing(false);
+        }
       }
-    }
-  }, [applyStatus]);
+    },
+    [applyStatus],
+  );
   useEffect(() => {
     void refresh();
     return () => {
@@ -272,6 +295,8 @@ function Sharing() {
 
   async function mutate(name: string, path: string, body: object) {
     if (action.current) return;
+    if ((name.startsWith("request-approve:") || name === "create") && approvalNeedsRefresh.current)
+      return;
     const abort = new AbortController();
     action.current = abort;
     const previous = read.current;
@@ -311,10 +336,18 @@ function Sharing() {
         setLabel("");
       } else {
         const next = statusValue(result);
+        if (name.startsWith("request-") && !next.requests)
+          throw new Error("Guest access request status could not be read. Refresh status.");
         applyStatus(next);
       }
     } catch (error) {
       if (action.current !== abort) return;
+      if (name.startsWith("request-approve:")) {
+        approvalNeedsRefresh.current = true;
+        setApprovalUncertain(true);
+      }
+      if (name.startsWith("request-") && !(error instanceof AccessRequestError))
+        setError("Guest access request status is out of date. Refresh status.");
       setActionError(
         name === "create" &&
           !(error instanceof AccessRequestError && error.status >= 400 && error.status < 500)
@@ -330,6 +363,34 @@ function Sharing() {
         setPending("");
         void refresh();
       }
+    }
+  }
+
+  function requestAction(intent: RequestAction) {
+    if (action.current) return;
+    if (intent.type === "refresh") {
+      void refresh(true);
+      return;
+    }
+    if (
+      !canRequestAction(
+        intent,
+        status,
+        ready && internetLive && !refreshing,
+        approvalNeedsRefresh.current,
+      )
+    )
+      return;
+    if (intent.type === "start" || intent.type === "stop") {
+      void mutate(`request-${intent.type}`, `/api/sharing/requests/${intent.type}`, {});
+    } else {
+      void mutate(
+        `request-${intent.type}:${intent.id}`,
+        `/api/sharing/requests/${intent.id}/${intent.type}`,
+        intent.type === "approve"
+          ? { code: intent.code, expiresInHours: intent.expiresInHours }
+          : { code: intent.code },
+      );
     }
   }
 
@@ -350,7 +411,7 @@ function Sharing() {
         title="Client access"
         description="Choose one model and manage who can use the separate client page."
         action={
-          <Button disabled={refreshing} onClick={() => void refresh()}>
+          <Button disabled={refreshing || !!pending} onClick={() => void refresh(true)}>
             <RefreshCw size={16} />
             {refreshing ? "Checking access…" : "Refresh access"}
           </Button>
@@ -557,7 +618,7 @@ function Sharing() {
               </p>
               <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
                 This address contains no access key. Create an internet client link below to give
-                someone permission to chat.
+                someone permission to chat, or allow guest access requests and approve them below.
               </p>
             </div>
           )}
@@ -632,7 +693,16 @@ function Sharing() {
           </p>
         </div>
       </section>
-      <DirectorySharing />
+      <DirectorySharing requestsEnabled={status?.requests?.enabled === true} />
+      <AccessRequests
+        status={status}
+        ready={ready && !refreshing && (internet?.state !== "live" || internetLive)}
+        pending={pending}
+        error={!!error || !!actionError}
+        refreshing={refreshing}
+        approvalUncertain={approvalUncertain}
+        onAction={requestAction}
+      />
       <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Create client key">
         <PanelHeading
           title="Create an access key"
@@ -648,6 +718,7 @@ function Sharing() {
                 label.trim() &&
                 !pending &&
                 !invite &&
+                !approvalUncertain &&
                 (channel === "local" || internetLive) &&
                 (status?.grants.length ?? 0) < 100
               )
@@ -725,6 +796,7 @@ function Sharing() {
                 !!pending ||
                 !label.trim() ||
                 !!invite ||
+                approvalUncertain ||
                 (status?.grants.length ?? 0) >= 100
               }
             >
@@ -794,6 +866,10 @@ function Sharing() {
           <ul className={css({ display: "grid", gap: "4" })}>
             {status?.grants.map((grant) => {
               const expired = Date.parse(grant.expiresAt) <= Date.now();
+              const request = status.requests?.items.find((item) => item.grantId === grant.id);
+              const grantLabel = request
+                ? `Request · ${request.name} · ${request.code}`
+                : grant.label;
               return (
                 <li
                   key={grant.id}
@@ -809,7 +885,7 @@ function Sharing() {
                     })}
                   >
                     <h3 className={css({ fontWeight: 650, overflowWrap: "anywhere" })}>
-                      {grant.label}
+                      {grantLabel}
                     </h3>
                     <Badge tone={grant.revokedAt || expired ? "neutral" : "good"}>
                       {grant.revokedAt ? "Revoked" : expired ? "Expired" : "Valid key"}
@@ -829,7 +905,7 @@ function Sharing() {
                         void mutate("revoke", `/api/sharing/grants/${grant.id}/revoke`, {})
                       }
                     >
-                      Revoke {grant.label}
+                      Revoke {grantLabel}
                     </Button>
                   )}
                 </li>
