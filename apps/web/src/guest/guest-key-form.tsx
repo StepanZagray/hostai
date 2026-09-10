@@ -9,6 +9,7 @@ export function GuestKeyForm({
   blocked = false,
   value,
   focusOnShow,
+  focusWhenIdle = false,
   onChange,
   onConnect,
 }: {
@@ -18,6 +19,7 @@ export function GuestKeyForm({
   blocked?: boolean;
   value: string;
   focusOnShow: boolean;
+  focusWhenIdle?: boolean;
   onChange: (value: string) => void;
   onConnect: () => void;
 }) {
@@ -26,13 +28,20 @@ export function GuestKeyForm({
   useEffect(() => {
     if (shown && focusOnShow) input.current?.focus({ preventScroll: true });
   }, [shown, focusOnShow]);
+  useEffect(() => {
+    if (shown && focusWhenIdle && document.activeElement === document.body)
+      input.current?.focus({ preventScroll: true });
+  }, [shown, focusWhenIdle]);
   if (!shown) return null;
   const form = (
     <form
       className={css({ my: "3" })}
       onSubmit={(event) => {
         event.preventDefault();
-        if (!checking && !blocked) onConnect();
+        if (!checking && !blocked) {
+          input.current?.focus({ preventScroll: true });
+          onConnect();
+        }
       }}
     >
       <label htmlFor="guest-key" className={css({ display: "block", fontWeight: 650, mb: "2" })}>
@@ -51,7 +60,8 @@ export function GuestKeyForm({
           value={value}
           onFocus={() => setExpanded(true)}
           onChange={(event) => onChange(event.target.value)}
-          disabled={checking}
+          readOnly={checking}
+          aria-busy={checking}
           aria-describedby="guest-disclosure guest-key-help"
           className={css({
             w: "full",
@@ -63,7 +73,7 @@ export function GuestKeyForm({
             px: "3",
             py: "2",
             flex: "1 1 180px",
-            _disabled: { opacity: 0.65, cursor: "not-allowed" },
+            _readOnly: { opacity: 0.65 },
           })}
         />
         <Button type="submit" variant="primary" disabled={checking || blocked || !value}>
@@ -71,8 +81,9 @@ export function GuestKeyForm({
         </Button>
       </div>
       <p id="guest-key-help" className={`${muted} ${css({ mt: "2" })}`}>
-        Use the key supplied by this host. A different key clears your conversation and draft. Your
-        key stays in this tab only; reloading loses it.
+        Use the key supplied by this host. Connecting successfully with a different key clears your
+        conversation and draft. A failed check keeps them. Your key stays in this tab only;
+        reloading loses it.
       </p>
     </form>
   );

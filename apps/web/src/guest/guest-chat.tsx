@@ -57,17 +57,17 @@ function GuestChatSession({
     currentRequest?.grantId ? { id: currentRequest.id, grantId: currentRequest.grantId } : null;
   const composer = useRef<HTMLTextAreaElement>(null);
   const showKey =
-    !chat.hasKey ||
-    chat.phase === "needs-key" ||
-    changeKey ||
-    (!chat.session && chat.phase === "blocked");
+    !chat.hasKey || chat.phase === "needs-key" || changeKey || !chat.session || chat.replacingKey;
   const checking = chat.phase === "checking";
   const scope = chat.session?.scope;
   const potentiallyInternet =
     typeof window !== "undefined" && window.location.protocol === "https:";
 
   useEffect(() => {
-    if (chat.ready) composer.current?.focus({ preventScroll: true });
+    if (chat.ready) {
+      setChangeKey(false);
+      composer.current?.focus({ preventScroll: true });
+    }
   }, [chat.ready]);
   const requestEnabled = showKey && potentiallyInternet && !changeKey;
   useEffect(
@@ -217,6 +217,12 @@ function GuestChatSession({
             {chat.error}
           </p>
         )}
+        {chat.replacingKey && (
+          <p className={`${muted} ${css({ my: "3" })}`}>
+            Previous conversation retained. Reconnect retries the latest key. Enter your previous
+            key to return to this conversation. Sending stays paused until a key connects.
+          </p>
+        )}
         {chat.retrySeconds > 0 && (
           <p className={`${muted} ${css({ mb: "3", fontVariantNumeric: "tabular-nums" })}`}>
             Try reconnecting in {chat.retrySeconds} seconds. Nothing will be sent automatically.
@@ -243,14 +249,17 @@ function GuestChatSession({
           blocked={requestKeyBlocked && accessRequest.request.matchesKey(enteredKey)}
           value={enteredKey}
           onChange={setEnteredKey}
-          focusOnShow={changeKey || (!potentiallyInternet && !chat.hasKey)}
+          focusOnShow={changeKey}
+          focusWhenIdle={
+            !chat.session && (chat.phase === "needs-key" || (!potentiallyInternet && !chat.hasKey))
+          }
           onConnect={() => {
             const requested = accessRequest.request.matchesKey(enteredKey);
             if (requested && requestKeyBlocked) return;
             setChatRequest(requested ? requestIdentity() : null);
             void chat.connect(enteredKey);
             setEnteredKey("");
-            setChangeKey(false);
+            setChangeKey(true);
           }}
         />
         {chat.hasKey && (
@@ -268,8 +277,9 @@ function GuestChatSession({
                 Use another key
               </Button>
             )}
-            {changeKey && (
+            {changeKey && chat.session && !chat.replacingKey && (
               <Button
+                disabled={checking}
                 onClick={() => {
                   setEnteredKey("");
                   setChangeKey(false);

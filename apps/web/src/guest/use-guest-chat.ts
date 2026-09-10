@@ -17,6 +17,10 @@ type ActiveChat = { controller: AbortController; turn: ConversationTurn };
 
 export function useGuestChat() {
   const key = useRef<string | null>(null);
+  // A failed replacement keeps the conversation owned by its original key,
+  // while reconnect retries the most recently attempted key above.
+  const sessionKey = useRef<string | null>(null);
+  const availableSession = useRef<GuestSession | null>(null);
   const [phase, setPhase] = useState<Phase>(() => {
     key.current = takeInvite();
     return key.current !== null ? "checking" : "disconnected";
@@ -36,6 +40,7 @@ export function useGuestChat() {
   const ready = phase === "ready" && !!session?.available && retrySeconds === 0;
 
   function abortAll() {
+    availableSession.current = null;
     metadata.current?.abort();
     metadata.current = null;
     active.current?.controller.abort();
@@ -61,6 +66,7 @@ export function useGuestChat() {
 
   const pauseAccess = useCallback(
     (message: string) => {
+      availableSession.current = null;
       metadata.current?.abort();
       metadata.current = null;
       stop("Guest access is paused. The unfinished exchange is excluded from later context.");
@@ -73,6 +79,7 @@ export function useGuestChat() {
   function disconnect() {
     abortAll();
     key.current = null;
+    sessionKey.current = null;
     setSession(null);
     setTurns([]);
     setDraft("");
@@ -83,6 +90,7 @@ export function useGuestChat() {
   }
 
   function rejectResponse(response: Response) {
+    availableSession.current = null;
     setPhase(response.status === 401 ? "needs-key" : "blocked");
     setError(responseProblem(response.status));
     setRetryAt(response.status === 429 ? retryAfter(response) : 0);
@@ -98,18 +106,10 @@ export function useGuestChat() {
       return;
     }
     if (candidate === key.current && retryAt > performance.now()) return;
-    const differentKey = candidate !== key.current;
-    if (differentKey) {
-      abortAll();
-      setTurns([]);
-      setDraft("");
-      setSession(null);
-      setNotice("");
-      setRetryAt(0);
-    } else {
-      stop();
-      metadata.current?.abort();
-    }
+    availableSession.current = null;
+    stop();
+    metadata.current?.abort();
+    if (candidate !== key.current) setRetryAt(0);
     key.current = candidate;
     setPhase("checking");
     setError("");
@@ -128,7 +128,17 @@ export function useGuestChat() {
       const next = parseSession(await response.json());
       if (metadata.current !== controller) return;
       if (!next) throw new Error("Invalid guest metadata");
-      setSession(next);
+      if (next.available || sessionKey.current === null || sessionKey.current === candidate) {
+        if (sessionKey.current !== null && sessionKey.current !== candidate) {
+          setTurns([]);
+          setDraft("");
+          setNotice("");
+        }
+        // Initial unavailable metadata still owns an editable draft. Metadata
+        // for an unavailable replacement must not relabel the old conversation.
+        sessionKey.current = candidate;
+        setSession(next);
+      }
       setNow(performance.now());
       setRetryAt(0);
       // The host authenticated this key. Its expiry instant cannot be compared
@@ -137,6 +147,7 @@ export function useGuestChat() {
         setPhase("blocked");
         setError("This host is not accepting guest messages. Reconnect to check availability.");
       } else {
+        availableSession.current = next;
         setPhase("ready");
       }
     } catch {
@@ -152,7 +163,18 @@ export function useGuestChat() {
   }
 
   async function send() {
-    if (!ready || !session || !key.current || active.current || metadata.current) return;
+    // Matching the available metadata also blocks a stale render from sending
+    // retained history before React commits a successful replacement's reset.
+    if (
+      !ready ||
+      !session ||
+      !key.current ||
+      key.current !== sessionKey.current ||
+      availableSession.current !== session ||
+      active.current ||
+      metadata.current
+    )
+      return;
     // Exclude the entire unfinished exchange, including its user prompt. Retrying
     // the restored draft therefore cannot duplicate it in the request context.
     const prepared = prepareChatRequest(
@@ -222,6 +244,7 @@ export function useGuestChat() {
       }
     } catch {
       if (active.current !== current || current.controller.signal.aborted) return;
+      availableSession.current = null;
       update("failed");
       setDraft((value) => value || turn.prompt);
       setPhase("blocked");
@@ -242,11 +265,13 @@ export function useGuestChat() {
   useEffect(() => {
     if (key.current !== null) void connect(key.current);
     return () => {
+      availableSession.current = null;
       metadata.current?.abort();
       metadata.current = null;
       active.current?.controller.abort();
       active.current = null;
       key.current = null;
+      sessionKey.current = null;
     };
     // Only the captured startup invite triggers an automatic handshake.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -274,6 +299,7 @@ export function useGuestChat() {
     ready,
     retrySeconds,
     hasKey: key.current !== null,
+    replacingKey: sessionKey.current !== null && key.current !== sessionKey.current,
     connect,
     disconnect,
     stop,

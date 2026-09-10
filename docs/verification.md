@@ -1,5 +1,35 @@
 # Verification
 
+## Guest replacement-key recovery
+
+The existing browser scenario first confirmed destructive clearing after an invalid
+replacement key; the new preservation expectation failed against that production
+bundle. The updated run passes all 67 guest-chat and access-request scenarios with
+no skips. Ten new cases cover four widths (320, 768, 1024 and 1440px), restoring the
+previous key's context, unavailable/malformed/transport-failed replacements,
+initially unavailable access with an editable draft, and keyboard focus moved
+while checking. The revised replacement/disconnect case verifies that successful
+new-key sending carries only the new prompt under the new credential. Existing
+coverage exercises late handshake replies, disconnect, expiry, cancellation,
+request association, cooldowns, clipboard behavior and streaming recovery.
+
+`pnpm check` and all 295 frontend tests pass. Owner and guest production bundles
+build successfully; the guest bundle was rebuilt after the final focus/cancellation
+fixes. Narrow and desktop replacement-failure captures were visually inspected.
+Assertions verify browser focus and form state, not actual screen-reader speech.
+All browser API responses are intercepted fixtures, including public WebSocket
+responses; no real model, Java HTTP integration, tunnel or deployment was tested
+in this frontend cycle. Backend source is unchanged. The Java package is refreshed
+with the final guest assets using Maven `-DskipTests package`; backend tests are
+explicitly skipped for that packaging step.
+
+Evidence in `test-results/guest-key-handoff/` includes the original behavior,
+failing preservation reproduction, Opus advice, final checks and four viewport
+captures. The first wider run exposed a missing Keep current access control for
+paused approved keys; the final run verifies that recovered interaction too.
+Drafts and credentials still live only in this tab; reload or disconnect clears
+the conversation, and successful replacement deliberately starts fresh.
+
 ## Explicit cleanup of expired and revoked keys
 
 `pnpm check`, all 295 frontend tests, both owner/guest production builds and

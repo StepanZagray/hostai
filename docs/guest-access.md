@@ -47,14 +47,21 @@ not production hosting. A key is a bearer permission, not a verified identity.
    its first encrypted WebSocket message. Keys never go in cookies, queries,
    WebSocket subprotocols or browser storage. Connecting does not automatically generate a response.
 6. Chat, Stop, or reconnect. Same-key reconnect retains the draft and transcript;
-   a different key, Disconnect, or reload clears them. A request made in this tab
+   a successful connection with a different key, Disconnect, or reload clears them.
+   A rejected, unavailable or unreadable replacement check retains the previous
+   conversation and draft while sending stays blocked. Reconnect retries the latest
+   attempted key; re-enter the previous key to restore its retained conversation.
+   Previous metadata is not relabelled as belonging to an unavailable replacement.
+   A request made in this tab
    survives Disconnect, retaining its credentials for cancellation or an explicit
    reconnect; reload and closing the tab clear everything. Unfinished exchanges remain
    visible but are excluded from subsequent model context. An empty or whitespace-only
    answer is incomplete too: the question returns to an empty composer, while an
    independently typed draft is preserved. **Copy question** on incomplete exchanges
    recovers an earlier prompt without replacing the draft. Stop returns keyboard
-   focus to the composer; involuntary expiry leaves draft focus in place instead
+   focus to the composer. Manual key entry stays mounted and read-only during its
+   check so a rejection leaves keyboard users at the editable key field; moving
+   focus elsewhere while waiting is respected. Involuntary expiry leaves draft focus in place instead
    of moving typing into the key field. Retry is manual; an empty answer does not require a new
    access check when the existing session is still usable.
    The displayed expiry is the host's timestamp rendered in your time zone, not a

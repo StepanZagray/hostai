@@ -1,5 +1,35 @@
 # Autonomous improvement log
 
+## Preserve guest work through rejected replacement keys
+
+A browser reproduction confirmed that trying an invalid replacement key erased
+both the existing transcript and draft before the host checked it. The guest hook
+now separates the latest attempted key from the key owning its retained session.
+Failed, unavailable and unreadable replacement checks preserve prior work and
+metadata, with sending blocked. Reconnect retries the latest attempt; re-entering
+the original key preserves its context. An available successful replacement clears
+prior history and draft before new-key sending can occur. A synchronous metadata
+identity check also prevents a stale render from sending old context under the new
+credential. Initial unavailable access still permits an editable draft, retained
+when the same key becomes available. Credentials remain in tab memory only.
+
+Claude Opus 5 High independently identified the rejected-key keyboard loop: the
+field unmounted or disabled during checking, then returned empty without focus.
+The key editor now stays mounted and read-only while checking. Submitting places
+focus in that stable field, and a failed check makes it editable without stealing
+focus after deliberate movement elsewhere. Automatic invalid-invite focus is
+limited to an idle document; mid-conversation errors retain draft focus. Successful
+connections still clear the manual key editor. The existing credential-clearing
+policy remains: keys typed into the form are cleared on submission, and raw keys
+are never reconstructed from conversation history or written to browser storage.
+
+Astra implemented the bounded hook change in an isolated worktree; the primary
+reviewed it and integrated the UI and browser checks. The first wider run caught
+an over-restrictive Keep current access condition for paused approved keys; that
+control remains available to close the editor without restoring permission.
+Opus's separate feedback suggestions for Enter during a pending check and entering
+the current key during a cooldown remain future improvements.
+
 ## Recover storage for private invitations
 
 The 100-key store previously retained expired and revoked records without a way

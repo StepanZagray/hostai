@@ -664,7 +664,7 @@ test("same-key metadata errors and busy checks retain conversation and draft", a
   expect(state.chatRequests).toHaveLength(1);
 });
 
-test("different key clears history even if handshake fails; disconnect aborts and clears", async ({
+test("failed replacement preserves the conversation until that key connects; disconnect clears", async ({
   page,
 }) => {
   const state = await fixture(page);
@@ -678,15 +678,21 @@ test("different key clears history even if handshake fails; disconnect aborts an
   await page.getByLabel("Access key", { exact: true }).fill("different-fixture-key");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("A valid access key is required");
-  await expect(page.getByRole("article")).toHaveCount(0);
-  await expect(page.getByLabel("Message", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("article")).toHaveCount(1);
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Old key's draft");
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+  expect(state.chatRequests).toHaveLength(1);
   state.sessionStatus = 200;
   state.stream = true;
   await page.getByRole("button", { name: "Reconnect", exact: true }).click();
   await expect(
     page.getByText("Access was available at the last check.", { exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole("article")).toHaveCount(0);
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
   await send(page, "New key's question");
+  expect(state.chatRequests[1].messages).toEqual([{ role: "user", content: "New key's question" }]);
+  expect(state.chatKeys[1]).toBe("Bearer different-fixture-key");
   await push(page, "New partial output");
   await page.getByRole("button", { name: "Disconnect", exact: true }).click();
   await expect(page.getByRole("article")).toHaveCount(0);
@@ -968,6 +974,143 @@ test("a stalled access check times out and reconnect remains manual", async ({ p
     await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeEnabled();
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
     expect(state.chatRequests).toEqual([]);
+  } finally {
+    release();
+  }
+});
+
+for (const width of [320, 768, 1024, 1440]) {
+  test(`failed replacement keeps editable work and keyboard recovery at ${width}px`, async ({
+    page,
+  }) => {
+    const state = await fixture(page);
+    await page.setViewportSize({ width, height: 1100 });
+    await connected(page);
+    await send(page, "Keep my earlier question");
+    await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+    await page.getByLabel("Message", { exact: true }).fill("Keep my unsent draft");
+    await page.getByRole("button", { name: "Use another key", exact: true }).click();
+    const input = page.getByLabel("Access key", { exact: true });
+    await input.fill("rejected-replacement");
+    state.sessionStatus = 401;
+    await input.press("Enter");
+    await expect(page.getByRole("alert")).toContainText("A valid access key is required");
+    await expect(input).toBeFocused();
+    await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Keep my unsent draft");
+    await expect(page.getByText("A fixture answer.", { exact: true })).toBeVisible();
+    await expect(page.getByText(/Previous conversation retained/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+    expect(state.chatRequests).toHaveLength(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `test-results/guest-key-handoff-${width}.png`, fullPage: true });
+  });
+}
+
+test("returning to the previous key restores its retained context without an automatic send", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  await connected(page);
+  await send(page, "Earlier permission question");
+  await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+  await page.getByLabel("Message", { exact: true }).fill("Return to my draft");
+  await page.getByRole("button", { name: "Use another key", exact: true }).click();
+  state.sessionStatus = 401;
+  await page.getByLabel("Access key", { exact: true }).fill("invalid-other-key");
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByRole("alert")).toBeVisible();
+  state.sessionStatus = 200;
+  await page.getByLabel("Access key", { exact: true }).fill(access);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Return to my draft");
+  await expect(page.getByText(/Previous conversation retained/)).toHaveCount(0);
+  expect(state.chatRequests).toHaveLength(1);
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect.poll(() => state.chatRequests.length).toBe(2);
+  expect(state.chatKeys[1]).toBe(`Bearer ${access}`);
+  expect(state.chatRequests[1].messages).toEqual([
+    { role: "user", content: "Earlier permission question" },
+    { role: "assistant", content: "A fixture answer." },
+    { role: "user", content: "Return to my draft" },
+  ]);
+});
+
+for (const kind of ["unavailable", "malformed", "transport"] as const) {
+  test(`${kind} replacement does not relabel retained work as the new permission`, async ({
+    page,
+  }) => {
+    const state = await fixture(page);
+    const originalModel = state.metadata.model;
+    await connected(page);
+    await send(page, "Keep this private context");
+    await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
+    await page.getByLabel("Message", { exact: true }).fill("A draft for the first permission");
+    await page.getByRole("button", { name: "Use another key", exact: true }).click();
+    state.metadata.model = "replacement-model:small";
+    state.metadata.available = false;
+    if (kind === "malformed") state.metadata.scope = "unsupported-scope";
+    if (kind === "transport") await page.route("**/guest/v1/session", (route) => route.abort());
+    await page.getByLabel("Access key", { exact: true }).fill("replacement-key");
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByText(originalModel, { exact: true })).toBeVisible();
+    await expect(page.getByText("replacement-model:small", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+      "A draft for the first permission",
+    );
+    await page.getByLabel("Message", { exact: true }).press("Enter");
+    expect(state.chatRequests).toHaveLength(1);
+    await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
+  });
+}
+
+test("initially unavailable access keeps its draft when the same key becomes available", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.metadata.available = false;
+  await openGuest(page, access);
+  await expect(page.getByRole("alert")).toBeVisible();
+  await page.getByLabel("Message", { exact: true }).fill("Write while waiting for this model");
+  state.metadata.available = true;
+  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
+    "Write while waiting for this model",
+  );
+  expect(state.chatRequests).toEqual([]);
+});
+
+test("manual key check keeps its field mounted and does not steal focus after a failed reply", async ({
+  page,
+}) => {
+  await fixture(page);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/guest/v1/session", async (route) => {
+    await gate;
+    await route.fulfill({ status: 401, json: {} });
+  });
+  await openGuest(page);
+  const input = page.getByLabel("Access key", { exact: true });
+  try {
+    await input.fill("incorrect-key");
+    await page.getByRole("button", { name: "Connect", exact: true }).click();
+    await expect(input).toBeFocused();
+    await expect(input).toHaveAttribute("readonly", "");
+    await expect(input).toHaveAttribute("aria-busy", "true");
+    const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
+    await disconnect.focus();
+    await expect(disconnect).toBeFocused();
+    release();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(input).toBeEditable();
+    await expect(disconnect).toBeFocused();
   } finally {
     release();
   }
