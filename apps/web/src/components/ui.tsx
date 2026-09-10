@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import { Check, Copy, ArrowUpRight, Circle } from "lucide-react";
 import { css, cva } from "../../styled-system/css";
 
@@ -57,7 +57,7 @@ export function Button({
   variant,
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "ghost" }) {
+}: ComponentPropsWithRef<"button"> & { variant?: "primary" | "secondary" | "ghost" }) {
   return <button className={`${button({ variant })} ${className}`} {...props} />;
 }
 export function Badge({
@@ -167,11 +167,13 @@ export function CopyButton({
   label = "Copy",
   compact = false,
   disabled = false,
+  failureMessage = "Select and copy the text manually",
 }: {
   text: string;
   label?: string;
   compact?: boolean;
   disabled?: boolean;
+  failureMessage?: string;
 }) {
   const [copyState, setCopyState] = useState<{ text: string; result: string } | null>(null);
   const sequence = useRef(0);
@@ -189,8 +191,7 @@ export function CopyButton({
       await navigator.clipboard.writeText(text);
       if (attempt === sequence.current) setCopyState({ text, result: "Copied" });
     } catch {
-      if (attempt === sequence.current)
-        setCopyState({ text, result: "Select and copy the text manually" });
+      if (attempt === sequence.current) setCopyState({ text, result: failureMessage });
     }
   }
   return (

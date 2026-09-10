@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { InviteLinkActions } from "../components/invite-link-actions";
 import { AccessRequests } from "../components/access-requests";
 import {
   canRequestAction,
@@ -9,16 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { KeyRound, Play, RefreshCw, Square } from "lucide-react";
 import { css } from "../../styled-system/css";
-import {
-  Badge,
-  Button,
-  CopyButton,
-  PageHeading,
-  PanelHeading,
-  button,
-  muted,
-  panel,
-} from "../components/ui";
+import { Badge, Button, PageHeading, PanelHeading, button, muted, panel } from "../components/ui";
 import { useHost } from "../lib/host-context";
 import { chatUnavailableReason } from "../lib/model-admission";
 import { errorMessage } from "../lib/api";
@@ -211,6 +203,11 @@ function Sharing() {
   const action = useRef<AbortController | null>(null);
   const hostNameInput = useRef<HTMLInputElement>(null);
   const servingControls = useRef<HTMLElement>(null);
+  const keyControls = useRef<HTMLElement>(null);
+  const recoverInviteFocus = useCallback(
+    () => keyControls.current?.focus({ preventScroll: true }),
+    [],
+  );
   const eligible = models.filter((model) => chatUnavailableReason(model) === null);
   // Explicit URL intent wins; otherwise resume the server's last configuration.
   // Never silently substitute another model when the intended one disappears.
@@ -811,7 +808,12 @@ function Sharing() {
         approvalUncertain={approvalUncertain}
         onAction={requestAction}
       />
-      <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Create client key">
+      <section
+        ref={keyControls}
+        tabIndex={-1}
+        className={`${panel} ${css({ mb: "6" })}`}
+        aria-label="Create client key"
+      >
         <PanelHeading
           title="Create an access key"
           description="Give each client its own key so you can revoke access separately."
@@ -946,14 +948,18 @@ function Sharing() {
                 Anyone with the link can use {newInvite.grant.model} until{" "}
                 {date(newInvite.grant.expiresAt)} (your local time).
               </p>
-              <div className={css({ display: "flex", gap: "3", flexWrap: "wrap" })}>
-                <CopyButton
-                  text={newInvite.inviteUrl}
-                  label="Copy client link"
-                  disabled={!ready || !!pending}
-                />
-                <Button onClick={() => setInvite(null)}>Hide link</Button>
-              </div>
+              <InviteLinkActions
+                key={newInvite.grant.id}
+                url={newInvite.inviteUrl}
+                disabled={!ready || !!pending}
+                onDismiss={() => setInvite(null)}
+                onFocusLost={recoverInviteFocus}
+                disabledReason={
+                  pending
+                    ? "Finish the current access change before copying or showing this link."
+                    : "Refresh access to check this link before copying or showing it."
+                }
+              />
               <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
                 This link is shown only once. If you lose it, revoke its key and create another. It
                 is not saved in your browser.

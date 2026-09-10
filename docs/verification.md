@@ -1,5 +1,28 @@
 # Verification
 
+## Invitation clipboard recovery
+
+`pnpm check`, all 293 frontend tests and owner/guest production builds pass.
+The isolated sharing and answer browser suites pass 47 cases, with one opt-in
+real backend sharing scenario skipped. Seven new cases cover denied, unavailable
+and never-settling clipboard access; default credential absence; explicit read-only
+reveal and selection; text hiding; stale-status recovery; revocation; navigation;
+and four viewport widths. The existing expiry case now checks a revealed field
+and focus recovery too. Background polling preserves a partial text selection.
+
+The initial run exposed an overly long accessible name because the help text was
+inside the label. A separate label and description fix it; the final complete run
+passes. 320px and 1440px panel captures were visually inspected. Evidence is in
+`test-results/invite-copy/`, including the initial failure, final logs, Opus advice,
+all four viewport captures and private-display/server cleanup.
+
+The production owner bundle used intercepted API responses and simulated clipboard
+outcomes. Tests verify the manually selectable value and keyboard focus, not the
+operating system's clipboard or delivery to a real recipient. No actual model,
+Java lifecycle or public tunnel was exercised or changed in this cycle. Existing
+bearer-key permission and temporary relay privacy limits still apply.
+
+
 ## Invite-only scope (current)
 
 Host search, public listings, directory publication and the standalone registry

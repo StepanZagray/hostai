@@ -1,5 +1,26 @@
 # Autonomous improvement log
 
+## Recover invitation handoff when clipboard access fails
+
+The invite panel previously told the owner to select text manually after a failed
+copy, but never rendered that text. Claude Opus 5 High confirmed the gap and the
+related case of a clipboard request that never settles. An independent Show link
+for manual copy action now reveals and selects a read-only field on request.
+The ordinary copy path still exposes no credential in the page DOM.
+
+The disclosure shares the existing invite and ready/pending guards. It closes on
+stale status, pending access changes, expiry, revocation, unusable addresses and
+navigation. Recovery requires a fresh reveal. No URL, token or reveal state is
+written to browser storage, navigation or a new request. Focus returns to the
+reveal control after explicit text hiding, or a retained group/section if a status
+change removes the focused field. Polling does not reset an existing selection.
+
+The shared CopyButton accepts an invite-specific failure hint while preserving
+its default behavior for already-visible code and answers. Button forwards a
+React 19 ref for focus recovery. The first browser run caught helper text being
+included in the input's accessible name; it now has a separate label and description.
+
+
 ## Invite-only product scope
 
 The user explicitly removed host discoverability from the product scope. The

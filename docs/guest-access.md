@@ -32,8 +32,12 @@ not production hosting. A key is a bearer permission, not a verified identity.
    it or change existing Cloudflare/Tailscale configuration.
 4. Create a named **local** or **internet** key expiring in 1 hour, 24 hours or
    7 days. Internet keys can only be created while the public connection is live.
-   Copy the link once; it cannot be recovered later. Anyone possessing it has its
-   permission. Existing local keys never become internet keys. Alternatively, separately
+   Copy the link while it is retained on this page; it cannot be recovered later.
+   If clipboard access fails or hangs, **Show link for manual copy** reveals a
+   selected, read-only field. **Hide link text** removes the field; **Hide link**
+   discards the one-time link. Neither action revokes its key. Stale access status
+   hides the field and requires a new explicit reveal after recovery. Anyone
+   possessing the link has its permission. Existing local keys never become internet keys. Alternatively, separately
    enable [access requests](access-requests.md) and choose an expiry when approving
    each guest in the app. Request intake and tunnel access are separate controls. Send the guest link privately
    to the people you intend to invite.

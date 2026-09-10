@@ -12,7 +12,7 @@ type Internet = {
   error: string | null;
   restartRequired?: boolean;
 };
-type SharingTestWindow = typeof window & { sharingCopies: string[] };
+type SharingTestWindow = typeof window & { sharingCopies: string[]; sharingCopyFails?: boolean };
 const publicOrigin = "https://temporary-fixture.trycloudflare.com";
 const grant = (channel?: Channel) => ({
   id: "b475df22-52e7-4f2d-89f2-b7b655cae056",
@@ -30,6 +30,8 @@ async function accessFixture(page: Page, names = [model]) {
     Object.defineProperty(navigator, "clipboard", {
       value: {
         writeText: async (text: string) => {
+          if ((window as SharingTestWindow).sharingCopyFails)
+            throw new DOMException("Clipboard blocked", "NotAllowedError");
           (window as SharingTestWindow).sharingCopies.push(text);
         },
       },
@@ -124,6 +126,9 @@ async function accessFixture(page: Page, names = [model]) {
     reads: () => reads,
     failRead: () => {
       failRead = true;
+    },
+    recoverRead: () => {
+      failRead = false;
     },
   };
 }
@@ -1051,11 +1056,20 @@ test("expired one-time keys cannot be copied even before the next status poll", 
   await page.getByLabel("Key label", { exact: true }).fill("Visitor");
   await page.getByRole("button", { name: "Create client link", exact: true }).click();
   await expect(page.getByRole("button", { name: "Copy client link", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Show link for manual copy", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Client link for manual copy", exact: true }),
+  ).toBeVisible();
   await page.evaluate(() => {
     Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
   });
   await page.clock.fastForward(3_600_001);
+  await expect(page.getByRole("region", { name: "Create client key", exact: true })).toBeFocused();
   await expect(page.getByRole("button", { name: "Copy client link", exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Client link for manual copy", exact: true }),
+  ).toHaveCount(0);
+  expect(await page.content()).not.toContain("fixture-secret");
   expect(fixture.calls).toEqual(["/api/sharing/grants"]);
 });
 
@@ -1116,4 +1130,159 @@ test("real owner link connects a guest and revocation ends an active response", 
     await page.request.post(`/api/sharing/grants/${invite.grant.id}/revoke`, { data: {} });
     await page.request.post("/api/sharing/stop", { data: {} });
   }
+});
+
+for (const width of [320, 768, 1024, 1440]) {
+  test(`failed invite copying offers an explicit selectable link at ${width}px`, async ({
+    page,
+  }) => {
+    const fixture = await accessFixture(page);
+    publishInternet(fixture);
+    await page.setViewportSize({ width, height: 1100 });
+    await page.goto("/sharing");
+    await page.evaluate(() => {
+      (window as SharingTestWindow).sharingCopyFails = true;
+    });
+    await page.getByLabel("Key channel").selectOption("internet");
+    await page.getByLabel("Key label", { exact: true }).fill("Invited visitor");
+    await page.getByRole("button", { name: "Create client link", exact: true }).click();
+    const field = page.getByRole("textbox", { name: "Client link for manual copy", exact: true });
+    const show = page.getByRole("button", { name: "Show link for manual copy", exact: true });
+    await expect(show).toBeEnabled();
+    expect(await page.content()).not.toContain("fixture-secret");
+    await page.getByRole("button", { name: "Copy client link", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Copy failed." })).toContainText(
+      "Use Show link for manual copy.",
+    );
+    await expect(field).toHaveCount(0);
+    expect(await page.content()).not.toContain("fixture-secret");
+    await show.focus();
+    await show.press("Enter");
+    await expect(field).toHaveValue(`${publicOrigin}/#access=fixture-secret`);
+    await expect(field).toBeFocused();
+    await expect(field).not.toBeEditable();
+    expect(
+      await field.evaluate((element) => {
+        const input = element as HTMLInputElement;
+        return input.value.slice(input.selectionStart ?? 0, input.selectionEnd ?? 0);
+      }),
+    ).toBe(`${publicOrigin}/#access=fixture-secret`);
+    expect(
+      await page.evaluate(() =>
+        [...Object.values(localStorage), ...Object.values(sessionStorage)].join(" "),
+      ),
+    ).not.toContain("fixture-secret");
+    expect(page.url()).not.toContain("fixture-secret");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page
+      .getByRole("region", { name: "New client link", exact: true })
+      .screenshot({ path: `test-results/invite-manual-copy-${width}.png` });
+    await page.getByRole("button", { name: "Hide link text", exact: true }).click();
+    await expect(show).toBeFocused();
+    await expect(field).toHaveCount(0);
+    expect(await page.content()).not.toContain("fixture-secret");
+    await show.click();
+    await page.getByRole("button", { name: "Hide link", exact: true }).click();
+    await expect(page.getByRole("region", { name: "New client link", exact: true })).toHaveCount(0);
+    expect(await page.content()).not.toContain("fixture-secret");
+    expect(fixture.calls).toEqual(["/api/sharing/grants"]);
+  });
+}
+
+test("stale access hides manually revealed credentials and recovery requires a new reveal", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const fixture = await accessFixture(page);
+  publishInternet(fixture);
+  await page.goto("/sharing");
+  await page.getByLabel("Key channel").selectOption("internet");
+  await page.getByLabel("Key label", { exact: true }).fill("Visitor");
+  await page.getByRole("button", { name: "Create client link", exact: true }).click();
+  const show = page.getByRole("button", { name: "Show link for manual copy", exact: true });
+  const field = page.getByRole("textbox", { name: "Client link for manual copy", exact: true });
+  await show.click();
+  await expect(field).toBeFocused();
+  await field.evaluate((element) => (element as HTMLInputElement).setSelectionRange(5, 12));
+  await page.clock.fastForward(5000);
+  expect(
+    await field.evaluate((element) => {
+      const input = element as HTMLInputElement;
+      return [input.selectionStart, input.selectionEnd];
+    }),
+  ).toEqual([5, 12]);
+  fixture.failRead();
+  await page.clock.fastForward(5000);
+  await expect(show).toBeDisabled();
+  await expect(field).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Client link actions", exact: true })).toBeFocused();
+  expect(await page.content()).not.toContain("fixture-secret");
+  fixture.recoverRead();
+  await refreshAccess(page);
+  await expect(show).toBeEnabled();
+  await expect(field).toHaveCount(0);
+  await show.click();
+  await expect(field).toBeVisible();
+  fixture.state.grants[0].revokedAt = new Date().toISOString();
+  await page.clock.fastForward(5000);
+  await expect(page.getByRole("region", { name: "New client link", exact: true })).toHaveCount(0);
+  expect(await page.content()).not.toContain("fixture-secret");
+  expect(fixture.calls).toEqual(["/api/sharing/grants"]);
+});
+
+test("manual copy also recovers local preview links without a clipboard API and resets on navigation", async ({
+  page,
+}) => {
+  const fixture = await accessFixture(page);
+  Object.assign(fixture.state, { state: "local", model, guestUrl: "http://127.0.0.1:8081" });
+  await page.goto("/sharing");
+  await page.evaluate(() => Reflect.deleteProperty(navigator.clipboard, "writeText"));
+  await page.getByLabel("Key label", { exact: true }).fill("Local visitor");
+  await page.getByRole("button", { name: "Create client link", exact: true }).click();
+  await page.getByRole("button", { name: "Copy client link", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Copy failed." })).toBeVisible();
+  await page.getByRole("button", { name: "Show link for manual copy", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Client link for manual copy", exact: true }),
+  ).toHaveValue("http://127.0.0.1:8081/#access=fixture-secret");
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Connection", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Client access", exact: true })
+    .click();
+  await expect(page.getByRole("region", { name: "New client link", exact: true })).toHaveCount(0);
+  expect(await page.content()).not.toContain("fixture-secret");
+  expect(fixture.calls).toEqual(["/api/sharing/grants"]);
+  await expect(
+    page.getByRole("button", { name: "Revoke Local visitor", exact: true }),
+  ).toBeEnabled();
+});
+
+test("an unsettled clipboard request does not block manual copying or reveal credentials by itself", async ({
+  page,
+}) => {
+  const fixture = await accessFixture(page);
+  publishInternet(fixture);
+  await page.goto("/sharing");
+  await page.evaluate(() => {
+    navigator.clipboard.writeText = () => new Promise<void>(() => {});
+  });
+  await page.getByLabel("Key channel").selectOption("internet");
+  await page.getByLabel("Key label", { exact: true }).fill("Visitor");
+  await page.getByRole("button", { name: "Create client link", exact: true }).click();
+  await page.getByRole("button", { name: "Copy client link", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Copy client link", exact: true })).toBeDisabled();
+  await expect(page.getByRole("status").filter({ hasText: "Copying…" })).toBeVisible();
+  expect(await page.content()).not.toContain("fixture-secret");
+  await page.getByRole("button", { name: "Show link for manual copy", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Client link for manual copy", exact: true }),
+  ).toHaveValue(`${publicOrigin}/#access=fixture-secret`);
+  expect(await page.evaluate(() => (window as SharingTestWindow).sharingCopies)).toEqual([]);
+  expect(fixture.calls).toEqual(["/api/sharing/grants"]);
 });
