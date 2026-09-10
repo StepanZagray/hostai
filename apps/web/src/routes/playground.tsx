@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
   ArrowDown,
@@ -24,9 +24,10 @@ import {
   panel,
 } from "../components/ui";
 import { useHost } from "../lib/host-context";
-import { readChatStream } from "../lib/api";
+import { useOwnerConversations } from "../lib/owner-conversations-context";
+import { emptyOwnerConversation } from "../lib/owner-conversations";
 import { chatUnavailableReason } from "../lib/model-admission";
-import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
+import { prepareChatRequest } from "../lib/conversation";
 import { Answer } from "../components/answer";
 import { useConversationScroll } from "../lib/use-conversation-scroll";
 
@@ -39,106 +40,56 @@ export const Route = createFileRoute("/playground")({
 function Playground() {
   const { model: requestedModel } = Route.useSearch();
   const { models, status, refresh } = useHost();
-  const [chosenModel, setChosenModel] = useState(requestedModel ?? "");
+  const navigate = Route.useNavigate();
+  const { conversations, snapshot } = useOwnerConversations();
   const defaultModel = models.find((item) => chatUnavailableReason(item) === null) ?? models[0];
-  const model = chosenModel || (defaultModel?.name ?? "");
+  const model = requestedModel || snapshot.selectedModel || (defaultModel?.name ?? "");
+  const conversation = snapshot.conversations.get(model) ?? emptyOwnerConversation();
   const selectedModel = models.find((item) => item.name === model);
   const modelAvailable = !!selectedModel;
   const modelError = selectedModel ? chatUnavailableReason(selectedModel) : null;
   const modelBlocked = !!status?.ollamaConnected && modelError !== null;
-  const [turns, setTurns] = useState<ConversationTurn[]>([]);
+  const modelMissing = !!status?.ollamaConnected && !!model && !modelAvailable;
+  const { turns, prompt, temperature, maxTokens, busy, error, notice, focusRevision } =
+    conversation;
   const messages = turns.flatMap((turn) => [
     { role: "user", content: turn.prompt, turn },
     { role: "assistant", content: turn.response, turn },
   ]);
-  const [prompt, setPrompt] = useState("");
-  const [temperature, setTemperature] = useState(0.7);
-  const [maxTokens, setMaxTokens] = useState(512);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
+  const setPrompt = (prompt: string) => conversations.edit(model, { prompt });
+  const setTemperature = (temperature: number) => conversations.edit(model, { temperature });
+  const setMaxTokens = (maxTokens: number) => conversations.edit(model, { maxTokens });
   const [showApi, setShowApi] = useState(false);
   const draft = useMemo(
     () => prepareChatRequest(turns, model, prompt.trim(), { temperature, maxTokens }),
     [turns, model, prompt, temperature, maxTokens],
   );
-  const abort = useRef<AbortController | null>(null);
   const composer = useRef<HTMLTextAreaElement>(null);
-  const restoreFocus = useRef(false);
+  const lastFocus = useRef({ model, revision: focusRevision });
   useEffect(() => {
-    if (!busy && restoreFocus.current) {
-      restoreFocus.current = false;
+    if (lastFocus.current.model !== model) {
+      lastFocus.current = { model, revision: focusRevision };
+      return;
+    }
+    if (!busy && focusRevision !== lastFocus.current.revision) {
+      lastFocus.current.revision = focusRevision;
       composer.current?.focus({ preventScroll: true });
     }
-  }, [busy]);
+  }, [busy, focusRevision, model]);
   const scroll = useConversationScroll(turns);
-  useEffect(() => () => abort.current?.abort(), []);
+  // Bind the visible controls before paint so the first edit cannot target an unselected model.
+  useLayoutEffect(() => {
+    conversations.select(model);
+    return () => conversations.stop(model, "Leaving this conversation stopped generation.");
+  }, [conversations, model]);
   const ready = !!status?.ollamaConnected && modelAvailable && modelError === null;
   const responded = turns.some(
     (turn) => turn.model === model && turn.state === "completed" && !!turn.response.trim(),
   );
-  async function send() {
-    if (abort.current || !ready || !prompt.trim()) return;
-    if (draft.error !== null) return;
-    const turn: ConversationTurn = {
-      id: crypto.randomUUID(),
-      model,
-      prompt: prompt.trim(),
-      response: "",
-      state: "streaming",
-      omittedTurns: draft.omittedTurns,
-    };
-    const updateTurn = (response: string, state: ConversationTurn["state"]) => {
-      setTurns((current) =>
-        current.map((item) => (item.id === turn.id ? { ...item, response, state } : item)),
-      );
-    };
-    setChosenModel(model);
-    setTurns((current) => [...current, turn]);
-    setPrompt("");
-    setError("");
-    setNotice("");
-    setBusy(true);
-    const current = new AbortController();
-    abort.current = current;
-    let answer = "";
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        signal: current.signal,
-        headers: { "Content-Type": "application/json" },
-        body: draft.body,
-      });
-      await readChatStream(response, (chunk) => {
-        answer += chunk.content;
-        updateTurn(answer, chunk.done ? "completed" : "streaming");
-        if (chunk.done && chunk.outputTokens !== undefined)
-          setNotice(`${chunk.outputTokens} output tokens · Generated locally`);
-      });
-      if (!answer.trim()) {
-        restoreFocus.current = true;
-        setPrompt((value) => value || turn.prompt);
-        setNotice(
-          "The model returned no text. Your prompt is restored; edit and send manually to retry.",
-        );
-      }
-    } catch (cause) {
-      restoreFocus.current = true;
-      setPrompt((value) => value || turn.prompt);
-      setNotice(
-        "Your prompt is restored. Edit it and send manually to retry; the unfinished exchange is excluded from context.",
-      );
-      if (current.signal.aborted)
-        setNotice("Generation stopped. Your prompt is restored; edit and send manually to retry.");
-      else
-        setError(cause instanceof Error ? cause.message : "Generation failed. Please try again.");
-      updateTurn(answer, current.signal.aborted ? "cancelled" : "failed");
-    } finally {
-      setBusy(false);
-      abort.current = null;
+  const send = () =>
+    conversations.send(model, ready, () => {
       void refresh();
-    }
-  }
+    });
   return (
     <>
       <PageHeading
@@ -196,11 +147,7 @@ function Playground() {
             <Button
               variant="ghost"
               disabled={busy || !messages.length}
-              onClick={() => {
-                setTurns([]);
-                setError("");
-                setNotice("");
-              }}
+              onClick={() => conversations.clear(model)}
             >
               <Trash2 />
               Clear
@@ -265,7 +212,9 @@ function Playground() {
                         ? "Ask a question, work through an idea, or put your model to the test."
                         : modelBlocked
                           ? "Choose another model to start a conversation. The selected model is unavailable for chat."
-                          : "Connect Ollama and install a model to start a conversation on your machine."}
+                          : modelMissing
+                            ? "This model is no longer in your library. Your draft is kept for it; restore the model or choose another one."
+                            : "Connect Ollama and install a model to start a conversation on your machine."}
                     </p>
                     {ready ? (
                       <div
@@ -287,10 +236,10 @@ function Playground() {
                       </div>
                     ) : (
                       <Link
-                        to={modelBlocked ? "/models" : "/connection"}
+                        to={modelBlocked || modelMissing ? "/models" : "/connection"}
                         className={button({ variant: "secondary" })}
                       >
-                        {modelBlocked ? "Review model library" : "Set up your host"}
+                        {modelBlocked || modelMissing ? "Review model library" : "Set up your host"}
                         <ArrowRight size={14} />
                       </Link>
                     )}
@@ -496,7 +445,7 @@ function Playground() {
                     type="button"
                     onClick={(event) => {
                       event.preventDefault();
-                      abort.current?.abort();
+                      conversations.stop(model);
                     }}
                   >
                     <Square />
@@ -554,10 +503,7 @@ function Playground() {
             value={model}
             disabled={!models.length || busy}
             onChange={(e) => {
-              setChosenModel(e.target.value);
-              setTurns([]);
-              setError("");
-              setNotice("");
+              void navigate({ search: { model: e.target.value }, replace: true });
             }}
             className={css({
               w: "full",
@@ -661,7 +607,8 @@ function Playground() {
               {ready &&
                 !responded &&
                 "Installed does not mean tested. Send a prompt to try this model. "}
-              Conversations live in this tab and clear when you leave the playground.
+              Each model keeps its own conversation, draft and settings in this tab. Leaving
+              Playground stops generation. Reloading or closing the tab clears this work.
             </p>
           </div>
         </aside>

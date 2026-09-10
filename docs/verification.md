@@ -460,4 +460,51 @@ inspected on the proved private Sway 1.12/pixman display. Its compositor/runtime
 were removed; all private Java, Node and stub services were stopped after checks.
 Claude Opus 5 High supplied the focused read-only advice. A model answering a
 prompt is evidence for that conversation only, not a persistent readiness or
-memory-fit assessment; navigation/model switching still clears owner history.
+memory-fit assessment. Navigation/model switching cleared owner history at that
+milestone; the following cycle adds retention within the tab.
+
+
+## Per-model owner conversations in tab memory
+
+The cycle passed 286 frontend tests, TypeScript, lint, formatting and production
+builds. Seven store tests cover separate model drafts/settings/context, instance
+isolation, prototype-like model names, cancellation before headers and after partial
+output, late callbacks, completion winning a cancellation race, selected-only Clear
+and pruning only untouched default sessions. Nothing serializes conversations into
+browser storage; the router still stores scroll coordinates in session storage.
+
+The final owner run passed 43 browser scenarios, alongside the three Java integration
+scenarios described below. Browser verification covers retained conversations and drafts through
+model changes, Models-to-Playground links and Connection navigation, scoped Clear,
+no automatic submission, model disappearance/reappearance during metadata polling,
+reload clearing work, 320px layout and keyboard focus after prompt recovery. The
+existing owner recovery cases run at 320/768/1024/1440px. Markdown, scrolling,
+context limits, admission and setup regressions are included.
+
+Three real proxy/Java scenarios passed against the synthetic Ollama service:
+completed/cancelled chat, cancel/retry/download confirmation followed by chat with
+the installed fixture, and navigation during generation. The last checks active
+requests return to zero, backend cancellation is recorded, partial text and draft
+survive return, and no second request is admitted automatically. No actual model
+files, GPU work or public tunnel were used. Java packaging succeeded with tests
+skipped; this cycle makes no new claim of a full backend test run.
+
+The initial browser storage assertion was too broad: the router legitimately
+stores scroll coordinates. The corrected assertion permits only that key and
+rejects conversation content. A repeat integration run reused the already-installed
+fixture, invalidating its initial model count and download state; a fresh stub and
+Java instance passed all three integration scenarios. A subsequent browser failure
+exposed a real first-edit race before passive model selection. Selecting the visible
+conversation in a layout effect fixes this before controls are painted.
+
+Claude Opus 5 High provided advice and a separate read-only review. Its confirmed
+focus finding was fixed: a different model's recovery counter must not steal focus
+from the selector. The store compares prune settings with its actual defaults.
+The suggested module singleton was rejected in favor of per-workspace ownership;
+request serialization was inspected and does not spread internal conversation data.
+
+Evidence is retained under `test-results/owner-memory/`, including restored desktop
+and mobile conversations, missing-model recovery, return after cancellation, logs
+and the private Sway 1.12/pixman isolation record. All test-owned Java, Node, Ollama-stub and advisor processes were stopped; the exact
+compositor PID and private runtime were confirmed absent. Conversation persistence
+across reloads and deletion undo remain unimplemented.

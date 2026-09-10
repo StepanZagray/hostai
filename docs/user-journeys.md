@@ -11,7 +11,7 @@ hosting and verified identities remain unimplemented.**
 Guests can use a private invitation or request access in the guest page when the
 host explicitly enables its [approval inbox](access-requests.md).
 
-Reviewed with Claude Opus 5 High on 9 September 2026. Code and isolated UI fixtures
+Reviewed with Claude Opus 5 High on 9–10 September 2026. Code and isolated UI fixtures
 are the evidence. Disposable Quick Tunnels have been exercised with synthetic
 data; provider evidence and remaining limits are recorded in verification. No
 real model was downloaded or inference benchmark run.
@@ -33,7 +33,7 @@ real model was downloaded or inference benchmark run.
 | Client: connect | [Shell](../apps/web/src/components/shell.tsx) exposes one local host workspace | The separate guest page checks model and channel permissions. An internet invite needs no client installation; the host name remains self-asserted. | See host identity, model and access requirements; connect without installing Java, Ollama or a model. |
 | Client: chat | Current Playground uses same-origin `/api/chat` | Guest chat has its own bundle/API and retains draft and partial output through reconnects. Temporary internet access requires a live verified tunnel and a separate internet key. | A client-only conversation surface, with authenticated access to allowed models and useful recovery states. |
 | Either: recover a send | Failed/stopped prompt stays in the transcript; partial answers are excluded from later context | Owner Playground and guest chat restore failed/stopped prompts and exclude the entire unfinished exchange. Guest chat additionally respects Retry-After; owner retry-delay feedback remains missing. | Edit/retry the failed turn without manually copying text or duplicating its context; preserve partial output. |
-| Either: return to work | Conversations live in route-local state | Navigation, Clear and model switching discard conversations; model switch has no undo. | Keep conversations scoped to host/model, make New chat explicit, and provide recovery for destructive actions. |
+| Either: return to work | Owner conversations, drafts and settings are retained per model in workspace tab memory; guests retain work through same-key reconnects | Reload/closing the tab clears work. Owner Clear removes only the selected history, retaining its draft/settings; no undo or durable conversation storage. | Return to the same model without losing work or automatically sending; make deletion explicit and recoverable. |
 
 ## Initial changes implemented
 
@@ -67,8 +67,10 @@ model—not a generic metrics dashboard.
    overview, setup and library; the current examples still assume Ollama defaults.
    Check existing runtime/service ownership before adding Start/Stop controls.
    Download cancellation must not imply all cached layers were deleted.
-2. **Make local chat recovery reliable.** Preserve conversations across navigation,
-   keep host/model identity attached to each conversation, and add Edit & retry.
+2. **Make local chat recovery reliable.** Owner navigation and model switching now
+   retain separate conversations, drafts and settings in tab memory. Leaving Playground
+   stops generation and retains partial output without auto-resuming. Next, design durable
+   storage, deletion recovery and Edit & retry while keeping model identity attached.
    Failed, stopped and empty responses now restore the prompt while both halves of
    that exchange stay out of outgoing context. Earlier completed exchanges remain
    eligible. Expose owner capacity/retry delay without automatically generating extra work.
@@ -168,8 +170,8 @@ limits. Public discovery remains a separate required product capability.
 Playground now labels metadata admission **Available to try**. A completed,
 nonempty reply changes that to **Model answered a prompt** and offers **Set up
 client access** for the same model. This records evidence only within the current
-conversation; it does not benchmark memory fit or persist across navigation. The
-link opens settings and never starts sharing or inference by itself.
+conversation, retained across in-app navigation; it does not benchmark memory fit or
+survive a reload. The link opens settings and never starts sharing or inference by itself.
 
 A failed, stopped or empty reply restores its question to the composer for explicit
 editing and sending. Partial output and the original question remain visible, but
@@ -178,5 +180,12 @@ selected model stay eligible, within the existing request limits. Stop suppresse
 its click's default action and has a separate button identity from Send, so restoring
 a draft cannot accidentally submit it during that same click.
 
-Conversation persistence, non-destructive model switching, owner Retry-After
-feedback, catalog discovery and runtime fit guidance remain follow-up work.
+Conversation storage across reloads, deletion recovery, owner Retry-After feedback,
+catalog discovery and runtime fit guidance remain follow-up work.
+
+Owner conversations now live in the workspace provider, separately for each model.
+Navigation and model switching retain drafts, completed/partial output and run
+settings. Leaving Playground stops generation; returning never sends automatically.
+Clear removes only the selected history, retaining its draft/settings. A missing
+model stays selected with its work intact until restored or explicitly switched.
+Nothing is written to conversation storage, and reload or closing the tab clears it.

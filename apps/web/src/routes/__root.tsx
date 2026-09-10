@@ -1,5 +1,6 @@
 import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router";
 import { Shell } from "../components/shell";
+import { OwnerConversationsProvider } from "../lib/owner-conversations-context";
 import { HostProvider } from "../lib/host-context";
 import "@fontsource-variable/manrope";
 import "@fontsource-variable/geist-mono";
@@ -25,7 +26,9 @@ export const Route = createRootRoute({
       </head>
       <body>
         <HostProvider>
-          <Shell />
+          <OwnerConversationsProvider>
+            <Shell />
+          </OwnerConversationsProvider>
         </HostProvider>
         <Scripts />
       </body>

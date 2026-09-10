@@ -96,3 +96,43 @@ test("downloads through the real proxy and Java, cancels, retries and chats with
     page.getByText("Hello from the isolated test runtime. Stream complete.", { exact: true }),
   ).toBeVisible();
 });
+
+test("leaving Playground stops Java inference and returning retains the partial conversation", async ({
+  page,
+}) => {
+  test.skip(
+    process.env.HOSTAI_INTEGRATION !== "1",
+    "Requires Java with isolated synthetic Ollama.",
+  );
+  await page.goto("/playground?model=test-model%3Asmall");
+  const before = (await (await page.request.get("/api/status")).json()).totalRequests;
+  const composer = page.getByRole("textbox", { name: "Message", exact: true });
+  await composer.fill("Keep this interrupted test");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByText("Hello from the isolated test runtime.", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Connection", exact: true }).click();
+  await expect
+    .poll(async () => (await (await page.request.get("/api/status")).json()).activeRequests)
+    .toBe(0);
+  await expect
+    .poll(async () => (await (await page.request.get("/api/requests")).json()).requests[0].status)
+    .toBe("cancelled");
+  await page.getByRole("link", { name: "Playground", exact: true }).click();
+  await expect(composer).toHaveValue("Keep this interrupted test");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Leaving this conversation stopped generation" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Hello from the isolated test runtime.", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+  await expect(
+    page.getByText("Stopped response · Question and response excluded from later prompts.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect((await (await page.request.get("/api/status")).json()).totalRequests).toBe(before + 1);
+  await page.screenshot({ path: "test-results/owner-memory-after-navigation.png", fullPage: true });
+});

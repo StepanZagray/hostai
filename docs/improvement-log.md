@@ -1,5 +1,35 @@
 # Autonomous improvement log
 
+## Owner conversations retained per model
+
+Owner Playground now keeps each model's conversation, draft and run settings in
+workspace tab memory. Navigation and explicit model switching retain that work;
+leaving stops generation and preserves partial output and the restored prompt.
+Returning never sends automatically. Clear affects only the selected history and
+retains its draft/settings. Reload or closing the tab clears all conversations.
+
+The selected model stays pinned if discovery temporarily loses it, including when
+the only work is an unsent draft. Recovery now points to the model library instead
+of telling an already connected host to connect Ollama again. Completed model-test
+evidence and the same-model client-access handoff survive in-app navigation.
+
+Claude Opus 5 High advised retaining separate model sessions, finalizing cancellation
+synchronously and rejecting late callbacks. The implementation uses a provider-owned
+external store instead of the suggested module singleton, so separate rendered
+workspaces cannot share conversation state. Only untouched empty/default sessions
+are pruned; meaningful work is never silently evicted. Browser verification exposed
+a first-edit race before passive model selection; binding the selected conversation
+before paint fixes it without accepting edits from stale views. The final Opus review
+also caught focus moving to the composer when switching between models with different
+recovery counters; focus recovery now stays within the same model.
+
+Validation: 286 frontend tests, 43 owner browser scenarios and three actual Java/proxy
+scenarios against synthetic Ollama passed, along with type/lint/format checks and
+production builds. Changed states were visually inspected on the isolated display.
+No real model, GPU workload or public tunnel was used. Evidence is retained under
+`test-results/owner-memory/`; all test services and private display resources were
+removed. Durable conversation storage and deletion undo remain follow-up work.
+
 ## Owner prompt recovery and model-test handoff
 
 Failed, stopped and empty owner replies now restore the prompt for editing. The
@@ -25,8 +55,9 @@ isolated browser scenarios passed. These include actual Java/proxy download and
 cancellation flows against the synthetic Ollama fixture, guest chat regression,
 owner failure recovery at 320/768/1024/1440px, and same-model sharing handoff without
 a mutation. Screenshots were inspected. No real model download, GPU workload or
-public tunnel was used. Conversation persistence, model-switch history recovery and
-owner Retry-After feedback remain incomplete.
+public tunnel was used. At that milestone, conversation persistence, model-switch
+history recovery and owner Retry-After feedback were incomplete; the entry above
+records the subsequent navigation/model-switch retention work.
 
 
 ## Guest onboarding without a key
