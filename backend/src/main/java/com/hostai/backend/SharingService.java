@@ -14,7 +14,9 @@ import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -87,8 +89,12 @@ public final class SharingService implements AutoCloseable {
 
     private Status snapshot(List<AccessGrantStore.Grant> grants) {
         syncRequests();
+        Instant now = clock.instant();
+        int removableKeys = (int) grants.stream()
+                .filter(grant -> grant.revokedAt() != null || !now.isBefore(grant.expiresAt())).count();
         return new Status(storageError != null ? "unavailable" : enabled ? "local" : "stopped",
-                hostLabel, model, server == null ? null : server.origin(), storageError, grants, internet.status(), requestStatus(grants));
+                hostLabel, model, server == null ? null : server.origin(), storageError, grants, removableKeys,
+                internet.status(), requestStatus(grants));
     }
 
     public Mono<Status> start(String selectedModel, String label) {
@@ -155,6 +161,22 @@ public final class SharingService implements AutoCloseable {
     public synchronized Status revoke(UUID id) {
         revokeGrant(id);
         return snapshot(store.list());
+    }
+
+    public synchronized Cleanup cleanup() {
+        try {
+            syncRequests();
+            requests.ownerItems(accessStore().list()); // Preserve the reason a request permission ended before removing it.
+            var removed = accessStore().cleanup(); // Commit before ending sessions or reporting recovered capacity.
+            Set<UUID> ids = removed.stream().map(AccessGrantStore.Grant::id).collect(Collectors.toSet());
+            List.copyOf(sessions.values()).stream().filter(session -> ids.contains(session.grant.id()))
+                    .forEach(GuestSession::end);
+            ids.forEach(windows::remove);
+            return new Cleanup(snapshot(store.list()), removed.size());
+        } catch (RuntimeException error) {
+            storageFault();
+            throw unavailable();
+        }
     }
 
     private void revokeGrant(UUID id) {
@@ -493,7 +515,9 @@ public final class SharingService implements AutoCloseable {
 
     @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Status(String state, String hostLabel, String model, String guestUrl, String error,
-                         List<AccessGrantStore.Grant> grants, InternetSharing.Status internet, RequestsStatus requests) {}
+                         List<AccessGrantStore.Grant> grants, int removableKeys,
+                         InternetSharing.Status internet, RequestsStatus requests) {}
+    public record Cleanup(Status status, int removedCount) {}
     public record Invite(AccessGrantStore.Grant grant, String token, String inviteUrl) {
         @Override public String toString() { return "Invite[grant=" + grant.id() + ", credential=<redacted>]"; }
     }

@@ -1,5 +1,41 @@
 # Verification
 
+## Explicit cleanup of expired and revoked keys
+
+`pnpm check`, all 295 frontend tests, both owner/guest production builds and
+`pnpm backend:test` pass. The backend run packages the gateway and reports 448
+tests with no failures, errors or skips. New coverage includes durable mixed-channel
+removal, active/paused permission preservation, expiry equality, clock rollback
+and restart, full-store recovery, no-op file identity/mtime and schema preservation,
+actual file-size-limited write failure, unavailable storage, active stream/rate-window
+preservation, ended stream cancellation, inbox labels and recovered approval capacity.
+Real HTTP tests reject malformed cleanup bodies, cross-origin mutations and guest
+access to the owner endpoint; the frontend proxy also rejects cross-origin cleanup.
+
+The isolated browser run passes 78 scenarios across cleanup, sharing and guest
+requests; one opt-in live Java owner/guest scenario is skipped. Sixteen cleanup
+cases cover four widths (320, 768, 1024 and 1440px), full capacity, stopped sharing,
+clock skew, changed eligibility, lost/malformed replies, unavailable/legacy status,
+valid one-time invites, duplicate prevention and focus moved during cleanup.
+Narrow and desktop cleanup captures and narrow full-inbox guidance were visually
+inspected. The initial pending-focus test attempted to focus a disabled field;
+the corrected test proves movement to an available navigation link before completion.
+An interrupted guest-fixture run served a directory index instead of guest.html;
+the corrected asset server and final run exercise the actual guest bundle.
+Evidence, Opus advice, the rejected Fable attempt and process-cleanup checks are
+retained in `test-results/key-cleanup/`.
+
+The UI uses the gateway’s eligibility count and committed removal result, preserves
+one-time invitations and drafts, and never retries cleanup automatically. Browser
+expiry badges still use the device clock; a clock-skew scenario verifies that the
+badge cannot enable removal against gateway metadata. Focus assertions measure
+browser behavior, not actual screen-reader speech.
+
+Browser validation uses production owner/guest bundles with intercepted APIs on
+a proved-private Sway/pixman display. The Java tests use isolated runtime stubs and
+temporary stores. No real Ollama inference, model download, public Cloudflare
+tunnel, deployment or owner credential store is exercised by this cycle.
+
 ## Keyboard recovery for download outcomes
 
 The original keyboard-cancel scenario failed against the previous production

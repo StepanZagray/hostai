@@ -251,11 +251,11 @@ describe("request panel markup", () => {
     expect(button(html, "Refresh status")).not.toContain(' disabled=""');
     expect(button(html, "Approve")).toContain(' disabled=""');
   });
-  it("explains the separate limits without promising key deletion", () => {
+  it("explains how explicit cleanup recovers stored capacity separately from revocation", () => {
     const total = render(status({ available: false, remainingGrantSlots: 0 }));
     expect(total).toContain("0 of 100 retained key slots remaining");
-    expect(total).toContain("there is no key deletion control");
-    expect(total).toContain("does not free a stored key slot");
+    expect(total).toContain("Remove expired and revoked keys in Access");
+    expect(total).toContain("removing its saved record frees");
     const active = render(status({ available: false, remainingRequestSlots: 0 }));
     expect(active).toContain("revoke one in Access keys below");
   });

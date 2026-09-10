@@ -151,7 +151,13 @@ raw secret. Stopping request intake leaves approved permissions valid.
 The versioned JSON file is bounded to 128 KiB and 100 total keys, including revoked
 and expired keys. Schema v1 grants are read as local only; the next mutation
 writes schema v2 with explicit channels. Older builds cannot read schema v2.
-There is no pruning/delete UI yet. Raw keys are never stored.
+Raw keys are never stored. **Access keys → Remove expired and revoked keys** frees
+stored-key slots explicitly. The gateway checks eligibility against its own clock
+at removal; the displayed count is advisory. Active permissions, including paused
+local and internet keys, are preserved. Removal is durable and irreversible, even
+if the clock later moves backward. Nothing is pruned automatically, and cleanup
+does not start sharing, create keys or send invitations. A lost reply is reported
+as unconfirmed and status is refreshed without automatically retrying cleanup.
 Authentication uses the committed memory snapshot; external file edits are not a
 revocation interface. Corrupt data, unsafe permissions or a failed mutation stop
 guest access without disabling local owner chat. Repair requires a gateway
@@ -232,6 +238,7 @@ JSON and enforce exact browser Origin checks. They do not grant CORS access.
 | POST `/api/sharing/internet/stop` | `{}` | Block public access and begin teardown; local access remains |
 | POST `/api/sharing/grants` | `{ "label": "Visitor", "expiresInHours": 24, "channel": "local" }` | Grant metadata, raw token and fragment invite URL, returned only by creation |
 | POST `/api/sharing/grants/<UUID>/revoke` | `{}` | Updated state after durable revocation; repeating a known revoke is idempotent |
+| POST `/api/sharing/grants/cleanup` | `{}` | `{ status, removedCount }` after durable removal of expired/revoked records; `status.removableKeys` reports current gateway eligibility |
 
 On the guest listener, GET `/guest/v1/session` and POST `/guest/v1/chat` require
 one Authorization bearer header. Session metadata includes `hostLabel`, `model`,

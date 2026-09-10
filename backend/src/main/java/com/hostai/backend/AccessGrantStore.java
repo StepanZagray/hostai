@@ -313,6 +313,28 @@ public final class AccessGrantStore implements AutoCloseable {
         return revoked;
     }
 
+    /**
+     * Explicit owner cleanup, independent of publication state. Eligibility uses one clock
+     * reading; active grants retain their exact metadata and hashes. Removed metadata is
+     * returned only after durable replacement, so removed credentials cannot revive on rollback.
+     * A no-op does not write or migrate the stored document.
+     */
+    public synchronized List<Grant> cleanup() {
+        requireUsable();
+        Instant now = clock.instant();
+        List<StoredGrant> next = new ArrayList<>();
+        List<Grant> removed = new ArrayList<>();
+        for (StoredGrant row : records) {
+            if (row.grant.revokedAt() != null || !now.isBefore(row.grant.expiresAt())) removed.add(row.grant);
+            else next.add(row);
+        }
+        if (removed.isEmpty()) return List.of();
+        List<StoredGrant> committed = List.copyOf(next);
+        persist(committed);
+        records = committed;
+        return List.copyOf(removed);
+    }
+
     private Optional<StoredGrant> find(UUID id) {
         return records.stream().filter(row -> row.grant.id().equals(id)).findFirst();
     }

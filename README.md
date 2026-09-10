@@ -77,6 +77,10 @@ Access always starts stopped after a gateway restart. Keys are stored as hashes
 in a private local file; conversations and drafts remain in the guest tab's memory.
 A key is a bearer credential, not a verified person or host identity.
 
+The gateway retains up to 100 key records. In **Access keys**, choose **Remove
+expired and revoked keys** to free storage. This keeps active and paused permissions;
+cleanup is explicit and removed records cannot be recovered.
+
 For internet access, install `cloudflared` and restart the gateway, then choose
 **Start internet sharing** on the Sharing page. HostAI verifies the temporary
 Cloudflare endpoint before allowing an internet key and invite. Local keys do not

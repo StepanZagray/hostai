@@ -1,5 +1,33 @@
 # Autonomous improvement log
 
+## Recover storage for private invitations
+
+The 100-key store previously retained expired and revoked records without a way
+to recover capacity. Access keys now reports a gateway-computed removable count
+and offers explicit **Remove expired and revoked keys**. Active local and internet
+permissions survive, including paused keys. The control works with sharing stopped,
+keeps an existing valid invitation and draft, and never creates or sends an invite.
+Full-store guidance in key creation and guest approvals points to this recovery.
+
+Claude Opus 5 High reviewed the contract and persistence ordering. The gateway
+samples its clock while holding the store lock, persists the survivor snapshot
+before returning a removal count, then ends only removed-key sessions and clears
+those rate windows. A no-op does not rewrite or migrate the file. Request history
+is reconciled before removal so expiry/revocation labels retain their meaning.
+Removed credentials stay invalid after clock rollback and restart; storage failures
+stop guest access and cannot claim recovered capacity.
+
+The UI treats the count as advisory and announces the committed result, including
+zero. A lost or malformed reply remains unconfirmed and triggers a status refresh
+without an automatic retry. Missing/malformed status disables cleanup. Keyboard
+focus remains on the cleanup group when its button disables, and completion does
+not steal focus after the user moves elsewhere. Browser expiry badges continue to
+use the device clock; eligibility comes solely from the gateway.
+
+The Fable implementation attempt was rejected by its usage limit and made no
+changes. Astra implemented and verified the bounded backend change in an isolated
+worktree; the primary agent reviewed and integrated it with the frontend.
+
 ## Keep keyboard focus with download outcomes
 
 A browser reproduction confirmed that keyboard cancellation dropped focus to the

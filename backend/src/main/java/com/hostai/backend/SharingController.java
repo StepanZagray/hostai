@@ -28,6 +28,8 @@ final class SharingController {
     SharingService.Status stop(@RequestBody Empty request) { return sharing.stop(); }
     @PostMapping(value = "/grants", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Invite create(@Valid @RequestBody Create request) { return sharing.create(request.label(), request.expiresInHours(), request.channel() == null ? "local" : request.channel()); }
+    @PostMapping(value = "/grants/cleanup", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Cleanup cleanup(@RequestBody Empty request) { return sharing.cleanup(); }
     @PostMapping(value = "/grants/{id}/revoke", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Status revoke(@PathVariable String id, @RequestBody Empty request) {
         if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))

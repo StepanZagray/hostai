@@ -125,7 +125,9 @@ that grant before returning failure.
   and respects `Retry-After`.
 - At most 20 active request-created keys and 100 total stored keys. The latter
   includes expired and revoked keys: revocation frees an active request slot but
-  does not free a stored-key slot. There is no key deletion control yet.
+  does not itself free a stored-key slot. Use **Remove expired and revoked keys**
+  in Access keys to recover stored capacity. Active and paused permissions remain,
+  and pending requests still need explicit approval after cleanup.
 - Request bodies are bounded to 2 KiB and a five-second upload deadline. Names
   are at most 40 UTF-16 units and exclude controls, formatting characters and
   surrogate characters. There is no freeform request message.

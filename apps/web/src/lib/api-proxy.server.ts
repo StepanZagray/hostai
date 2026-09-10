@@ -69,6 +69,7 @@ export async function proxy({ request }: { request: Request }) {
       "/api/sharing/start",
       "/api/sharing/stop",
       "/api/sharing/grants",
+      "/api/sharing/grants/cleanup",
       "/api/sharing/internet/start",
       "/api/sharing/internet/stop",
     ].includes(url.pathname) ||

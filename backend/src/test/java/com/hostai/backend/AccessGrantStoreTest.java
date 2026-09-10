@@ -531,6 +531,133 @@ class AccessGrantStoreTest {
     }
 
     @Test
+    void explicitCleanupRemovesOnlyExpiredAndRevokedAcrossChannelsAndSurvivesClockRollbackAndRestart() throws Exception {
+        Path directory = temporary.resolve("cleanup");
+        List<IssuedGrant> removed;
+        List<IssuedGrant> retained;
+        byte[] committed;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            var expiredLocal = store.create("Expired local", "model", MINUTE, "local");
+            var expiredInternet = store.create("Expired internet", "model", MINUTE, "internet");
+            var revokedLocal = store.create("Revoked local", "other:model", Duration.ofDays(1), "local");
+            var revokedInternet = store.create("Revoked internet", "other:model", Duration.ofDays(1), "internet");
+            var activeLocal = store.create("Keep local", "another:model", MINUTE.multipliedBy(2), "local");
+            var activeInternet = store.create("Keep internet", "another:model", MINUTE.multipliedBy(2), "internet");
+            store.revoke(revokedLocal.grant().id());
+            store.revoke(revokedInternet.grant().id());
+            removed = List.of(expiredLocal, expiredInternet, revokedLocal, revokedInternet);
+            retained = List.of(activeInternet, activeLocal);
+            clock.now = START.plus(MINUTE); // Expiry equality is removable.
+            var expected = store.list().stream().filter(grant -> grant.revokedAt() != null
+                    || grant.expiresAt().equals(clock.now)).toList();
+            var cleaned = store.cleanup();
+            assertThat(cleaned).isEqualTo(expected);
+            assertThatThrownBy(cleaned::clear).isInstanceOf(UnsupportedOperationException.class);
+            assertThat(store.list()).isEqualTo(retained.stream().map(IssuedGrant::grant).toList());
+            committed = Files.readAllBytes(data(directory));
+            var root = JSON.readTree(committed);
+            assertThat(root.get("version").intValue()).isEqualTo(2);
+            assertThat(root.get("grants").size()).isEqualTo(2);
+            assertOnlyFinalFiles(directory);
+            assertMode(data(directory), "rw-------");
+            clock.now = START.minusSeconds(1);
+            for (var issued : removed) assertThat(store.authenticate(issued.token())).isEmpty();
+            for (var issued : retained) assertThat(store.authenticate(issued.token())).contains(issued.grant());
+        }
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.list()).isEqualTo(retained.stream().map(IssuedGrant::grant).toList());
+            for (var issued : removed) assertThat(reopened.authenticate(issued.token())).isEmpty();
+            for (var issued : retained) assertThat(reopened.authenticate(issued.token())).contains(issued.grant());
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(committed);
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"empty", "active", "legacy"})
+    void cleanupWithoutEligibleKeysDoesNotReplaceOrMigrateFile(String fixture) throws Exception {
+        Path directory = temporary.resolve("no-cleanup");
+        if (fixture.equals("legacy")) {
+            writeLegacyFixture(directory);
+            changeDocument(directory, root -> root.set("grants", JSON.createArrayNode().add(root.get("grants").get(0))));
+        }
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            if (fixture.equals("active")) store.create("Keep", "model", MINUTE, "internet");
+            clock.now = START.plus(MINUTE).minusNanos(1);
+            var expected = store.list();
+            byte[] before = Files.readAllBytes(data(directory));
+            var modified = Files.getLastModifiedTime(data(directory));
+            var identity = Files.readAttributes(data(directory), java.nio.file.attribute.BasicFileAttributes.class).fileKey();
+            assertThat(store.cleanup()).isEmpty();
+            assertThat(store.cleanup()).isEmpty();
+            assertThat(store.list()).isEqualTo(expected);
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+            assertThat(Files.getLastModifiedTime(data(directory))).isEqualTo(modified);
+            assertThat(Files.readAttributes(data(directory), java.nio.file.attribute.BasicFileAttributes.class).fileKey()).isEqualTo(identity);
+            assertOnlyFinalFiles(directory);
+        }
+    }
+
+    @Test
+    void explicitCleanupRecoversOnlyRemovedCapacityAndPreservesFullStoreAcrossRestart() {
+        Path directory = temporary.resolve("cleanup-capacity");
+        List<Grant> expected;
+        String expiredToken;
+        String revokedToken;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            var expired = store.create("Expired", "model", MINUTE);
+            var revoked = store.create("Revoked", "model", Duration.ofHours(1), "internet");
+            expiredToken = expired.token();
+            revokedToken = revoked.token();
+            for (int i = 0; i < 98; i++) store.create("Keep " + i, "model", Duration.ofHours(1));
+            store.revoke(revoked.grant().id());
+            clock.now = START.plus(MINUTE);
+            assertThatThrownBy(() -> store.create("Full", "model", MINUTE)).isInstanceOf(IllegalStateException.class);
+            assertThat(store.cleanup()).hasSize(2);
+            assertThat(store.list()).hasSize(98);
+            store.create("New local", "model", MINUTE);
+            store.create("New internet", "model", MINUTE, "internet");
+            assertThatThrownBy(() -> store.create("Full again", "model", MINUTE)).isInstanceOf(IllegalStateException.class);
+            expected = store.list();
+        }
+        clock.now = START;
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.list()).isEqualTo(expected).hasSize(100);
+            assertThat(reopened.authenticate(expiredToken)).isEmpty();
+            assertThat(reopened.authenticate(revokedToken)).isEmpty();
+            assertThat(reopened.cleanup()).isEmpty();
+        }
+    }
+
+    @Test
+    void failedCleanupPoisonsTheInstanceAndNeverClaimsRecoveredCapacity() throws Exception {
+        Path directory = temporary.resolve("cleanup-failure");
+        IssuedGrant expired;
+        IssuedGrant active;
+        byte[] before;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            expired = store.create("Expired", "model", MINUTE);
+            active = store.create("Active", "model", Duration.ofHours(1));
+            before = Files.readAllBytes(data(directory));
+            clock.now = expired.grant().expiresAt();
+            try {
+                Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("r-x------"));
+                assertSanitized(assertThrows(StorageException.class, store::cleanup), directory);
+            } finally {
+                Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("rwx------"));
+            }
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+            assertThat(store.authenticate(active.token())).isEmpty();
+            assertThrows(StorageException.class, store::list);
+            assertThrows(StorageException.class, store::cleanup);
+            assertOnlyFinalFiles(directory);
+        }
+        clock.now = START;
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.list()).containsExactly(active.grant(), expired.grant());
+            assertThat(reopened.authenticate(expired.token())).contains(expired.grant());
+        }
+    }
+
+    @Test
     void revocationIsDurableAndIdempotentIncludingAfterRestart() throws Exception {
         Path directory = temporary.resolve("revoke");
         String revokedToken;
@@ -958,6 +1085,7 @@ class AccessGrantStoreTest {
         var issued = store.create("Close", "model", MINUTE);
         store.close();
         store.close();
+        assertThrows(StorageException.class, store::cleanup);
         assertThat(store.authenticate(issued.token())).isEmpty();
         assertThatThrownBy(store::list).isInstanceOf(StorageException.class).hasMessageContaining("closed");
         assertThatThrownBy(() -> store.create("New", "model", MINUTE)).isInstanceOf(StorageException.class);
@@ -1021,7 +1149,7 @@ class AccessGrantStoreTest {
         }
     }
 
-    @ParameterizedTest @ValueSource(strings = {"create", "committed", "revoke"})
+    @ParameterizedTest @ValueSource(strings = {"create", "committed", "revoke", "cleanup"})
     void realWriteErrorCleansTemporaryFilePoisonsStoreAndReleasesLock(String operation) throws Exception {
         Path directory = temporary.resolve("file-size-limit");
         String token;
@@ -1274,13 +1402,17 @@ class AccessGrantStoreTest {
             byte[] hash = MessageDigest.getInstance("SHA-256").digest(clientSecret());
             String token = new java.io.BufferedReader(new java.io.InputStreamReader(
                     System.in, java.nio.charset.StandardCharsets.UTF_8)).readLine();
-            try (var store = AccessGrantStore.open(Path.of(args[0]), Clock.fixed(START, ZoneOffset.UTC))) {
+            var clock = new MutableClock(START);
+            try (var store = AccessGrantStore.open(Path.of(args[0]), clock)) {
                 UUID id = store.list().getFirst().id();
                 if (store.authenticate(token).isEmpty()) throw new AssertionError("Fixture must authenticate before failure.");
                 try {
                     if (args[1].equals("create")) store.create("Never returned", "model", MINUTE);
                     else if (args[1].equals("committed")) {
                         store.createCommitted("Never returned", "model", MINUTE, "internet", hash);
+                    } else if (args[1].equals("cleanup")) {
+                        clock.now = START.plus(MINUTE);
+                        store.cleanup();
                     } else store.revoke(id);
                     throw new AssertionError("Write failure must not return success.");
                 } catch (StorageException expected) {

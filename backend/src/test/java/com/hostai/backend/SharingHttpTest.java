@@ -126,6 +126,61 @@ class SharingHttpTest {
         assertThat(STUB.chats.get()).isZero();
     }
 
+    @Test void ownerCleanupReturnsCommittedCountAndPreservesWorkingKeyWhileAccessIsStopped() throws Exception {
+        var retired = sharing.create("Remove this key", 1);
+        sharing.revoke(retired.grant().id());
+        var before = sharing.stop();
+        int expected = before.removableKeys();
+        assertThat(expected).isPositive();
+        var response = post(owner("/api/sharing/grants/cleanup"), Map.of(), null);
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.headers().firstValue("Cache-Control")).contains("no-store");
+        var root = json.readTree(response.body());
+        assertThat(root.propertyNames()).containsExactlyInAnyOrder("status", "removedCount");
+        assertThat(root.get("removedCount").intValue()).isEqualTo(expected);
+        var status = root.get("status");
+        assertThat(status.get("state").stringValue()).isEqualTo("stopped");
+        assertThat(status.get("removableKeys").intValue()).isZero();
+        assertThat(status.get("grants").size()).isEqualTo(before.grants().size() - expected);
+        assertThat(status.get("requests").get("remainingGrantSlots").intValue())
+                .isEqualTo(100 - status.get("grants").size());
+        assertThat(response.body()).doesNotContain(token, retired.token(), "hash", "inviteUrl", retired.grant().id().toString());
+        assertThat(STUB.metadata.get()).isZero();
+        assertThat(STUB.chats.get()).isZero();
+        var committed = Files.readAllBytes(directory.resolve("access/grants.json"));
+        var again = post(owner("/api/sharing/grants/cleanup"), Map.of(), null);
+        assertThat(again.statusCode()).isEqualTo(200);
+        assertThat(json.readTree(again.body()).get("removedCount").intValue()).isZero();
+        assertThat(Files.readAllBytes(directory.resolve("access/grants.json"))).isEqualTo(committed);
+        assertThat(post(owner("/api/sharing/start"), Map.of("model", "fixture-shared:small", "hostLabel", "Fixture host"), null).statusCode()).isEqualTo(200);
+        assertThat(get(guest + "/guest/v1/session", token).statusCode()).isEqualTo(200);
+        assertThat(get(guest + "/guest/v1/session", retired.token()).statusCode()).isEqualTo(401);
+    }
+
+    @Test void cleanupRejectsMalformedBodiesAndCrossSiteRequestsWithoutRemovingKeys() throws Exception {
+        var retired = sharing.create("Keep until explicit valid cleanup", 1);
+        sharing.revoke(retired.grant().id());
+        var before = sharing.status();
+        var committed = Files.readAllBytes(directory.resolve("access/grants.json"));
+        String path = "/api/sharing/grants/cleanup";
+        for (String body : List.of("", "null", "[]", "{", "{\"all\":true}", "{} {}")) {
+            assertThat(rawPost(owner(path), body, null, "application/json").statusCode()).as(body).isEqualTo(400);
+        }
+        assertThat(rawPost(owner(path), "{}", null, "text/plain").statusCode()).isEqualTo(415);
+        for (var header : List.of(Map.entry("Origin", guest), Map.entry("Origin", "https://untrusted.example"),
+                Map.entry("Sec-Fetch-Site", "cross-site"))) {
+            var request = request(owner(path), null).header("Content-Type", "application/json")
+                    .header(header.getKey(), header.getValue()).POST(HttpRequest.BodyPublishers.ofString("{}"));
+            assertThat(client.send(request.build(), HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403);
+        }
+        assertThat(post(guest + path, Map.of(), token).statusCode()).isEqualTo(404);
+        assertThat(post(guest + path, Map.of(), null).statusCode()).isEqualTo(404);
+        assertThat(sharing.status().grants()).isEqualTo(before.grants());
+        assertThat(Files.readAllBytes(directory.resolve("access/grants.json"))).isEqualTo(committed);
+        assertThat(STUB.metadata.get()).isZero();
+        assertThat(STUB.chats.get()).isZero();
+    }
+
     @Test void chatRejectsMissingInvalidAndDuplicateCredentialsBeforeRuntimeWork() throws Exception {
         for (String key : new String[] {null, "not-a-key"}) {
             var response = post(guest + "/guest/v1/chat", chat("fixture-shared:small", 128), key);
@@ -257,7 +312,7 @@ class SharingHttpTest {
     }
 
     @Test void ownerMutationsStaySameOriginOnlyAndGuestCallsCannotReachThem() throws Exception {
-        for (String path : List.of("/api/sharing/start", "/api/sharing/stop", "/api/sharing/internet/start", "/api/sharing/internet/stop", "/api/sharing/grants", "/api/sharing/grants/" + grantId + "/revoke")) {
+        for (String path : List.of("/api/sharing/start", "/api/sharing/stop", "/api/sharing/internet/start", "/api/sharing/internet/stop", "/api/sharing/grants", "/api/sharing/grants/cleanup", "/api/sharing/grants/" + grantId + "/revoke")) {
             var request = HttpRequest.newBuilder(URI.create(owner(path))).header("Content-Type", "application/json")
                     .header("Origin", "https://untrusted.example").POST(HttpRequest.BodyPublishers.ofString("{}")).build();
             assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403);

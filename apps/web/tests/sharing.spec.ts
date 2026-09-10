@@ -1,137 +1,13 @@
 import { expect, test, type Page } from "@playwright/test";
-import { hostFixture } from "./support/host-fixture";
-
-const model = "fixture-model:small";
-type Channel = "local" | "internet";
-type Internet = {
-  state: "off" | "starting" | "verifying" | "live" | "interrupted" | "stopping" | "failed";
-  provider: "cloudflare-quick";
-  available: boolean;
-  publicUrl: string | null;
-  checkedAt: string | null;
-  error: string | null;
-  restartRequired?: boolean;
-};
-type SharingTestWindow = typeof window & { sharingCopies: string[]; sharingCopyFails?: boolean };
-const publicOrigin = "https://temporary-fixture.trycloudflare.com";
-const grant = (channel?: Channel) => ({
-  id: "b475df22-52e7-4f2d-89f2-b7b655cae056",
-  label: "Visitor",
+import {
   model,
-  createdAt: new Date().toISOString(),
-  expiresAt: new Date(Date.now() + 3600000).toISOString(),
-  revokedAt: null as string | null,
-  channel,
-});
-async function accessFixture(page: Page, names = [model]) {
-  await hostFixture(page, true, names);
-  await page.addInitScript(() => {
-    (window as SharingTestWindow).sharingCopies = [];
-    Object.defineProperty(navigator, "clipboard", {
-      value: {
-        writeText: async (text: string) => {
-          if ((window as SharingTestWindow).sharingCopyFails)
-            throw new DOMException("Clipboard blocked", "NotAllowedError");
-          (window as SharingTestWindow).sharingCopies.push(text);
-        },
-      },
-    });
-  });
-  const state = {
-    state: "stopped",
-    hostLabel: "Local host",
-    model: null as string | null,
-    guestUrl: null as string | null,
-    error: null as string | null,
-    grants: [] as ReturnType<typeof grant>[],
-    internet: {
-      state: "off",
-      provider: "cloudflare-quick",
-      available: true,
-      publicUrl: null,
-      checkedAt: null,
-      error: null,
-    } as Internet | undefined,
-  };
-  const calls: string[] = [];
-  const bodies: {
-    channel?: Channel;
-    label?: string;
-    expiresInHours?: number;
-    model?: string;
-    hostLabel?: string;
-  }[] = [];
-  let reads = 0;
-  let failRead = false;
-  const response = {
-    channel: undefined as Channel | undefined,
-    inviteUrl: undefined as string | undefined,
-  };
-  await page.route("**/api/sharing**", async (route) => {
-    const path = new URL(route.request().url()).pathname;
-    if (route.request().method() === "GET") {
-      reads++;
-      return route.fulfill({
-        status: failRead ? 503 : 200,
-        json: failRead ? { detail: "The gateway is unavailable." } : state,
-      });
-    }
-    calls.push(path);
-    bodies.push(route.request().postDataJSON());
-    if (path === "/api/sharing/internet/start") {
-      if (state.state !== "local" || !state.internet?.available)
-        return route.fulfill({ status: 409, json: { detail: "Internet sharing is unavailable." } });
-      Object.assign(state.internet, {
-        state: "starting",
-        publicUrl: null,
-        checkedAt: null,
-        error: null,
-      });
-    } else if (path === "/api/sharing/internet/stop") {
-      Object.assign(state.internet!, { state: "stopping", publicUrl: null });
-    } else if (path === "/api/sharing/start") {
-      const body = route.request().postDataJSON();
-      Object.assign(state, body, {
-        hostLabel: body.hostLabel.trim(),
-        state: "local",
-        guestUrl: "http://127.0.0.1:8081",
-      });
-    } else if (path === "/api/sharing/stop") {
-      state.state = "stopped";
-      if (state.internet) Object.assign(state.internet, { state: "off", publicUrl: null });
-    } else if (path.endsWith("/revoke")) state.grants[0].revokedAt = new Date().toISOString();
-    else if (path.endsWith("/grants")) {
-      const body = route.request().postDataJSON();
-      if (body.channel === "internet" && state.internet?.state !== "live")
-        return route.fulfill({ status: 409, json: { detail: "Internet sharing is not live." } });
-      const item = { ...grant(response.channel ?? body.channel), label: body.label };
-      state.grants.push(item);
-      return route.fulfill({
-        json: {
-          grant: item,
-          token: "fixture-secret",
-          inviteUrl:
-            response.inviteUrl ??
-            `${item.channel === "internet" ? state.internet!.publicUrl : "http://127.0.0.1:8081"}/#access=fixture-secret`,
-        },
-      });
-    }
-    return route.fulfill({ json: state });
-  });
-  return {
-    state,
-    calls,
-    bodies,
-    response,
-    reads: () => reads,
-    failRead: () => {
-      failRead = true;
-    },
-    recoverRead: () => {
-      failRead = false;
-    },
-  };
-}
+  grant,
+  publicOrigin,
+  accessFixture,
+  publishLocal,
+  publishInternet,
+  type SharingTestWindow,
+} from "./support/sharing-fixture";
 
 test("model library leads to local access, one-time key creation and durable revoke controls", async ({
   page,
@@ -593,19 +469,6 @@ test("failed access refresh retains the emergency stop without claiming current 
 async function refreshAccess(page: Page) {
   await page.getByRole("button", { name: "Refresh access", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh access", exact: true })).toBeEnabled();
-}
-
-function publishLocal(fixture: Awaited<ReturnType<typeof accessFixture>>) {
-  Object.assign(fixture.state, { state: "local", model, guestUrl: "http://127.0.0.1:8081" });
-}
-
-function publishInternet(fixture: Awaited<ReturnType<typeof accessFixture>>) {
-  publishLocal(fixture);
-  Object.assign(fixture.state.internet!, {
-    state: "live",
-    publicUrl: publicOrigin,
-    checkedAt: new Date().toISOString(),
-  });
 }
 
 for (const width of [320, 768, 1024, 1440]) {

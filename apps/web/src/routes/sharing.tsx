@@ -1,4 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { KeyCleanup } from "../components/key-cleanup";
 import { InviteLinkActions } from "../components/invite-link-actions";
 import { AccessRequests } from "../components/access-requests";
 import {
@@ -49,6 +50,7 @@ interface Status {
   guestUrl: string | null;
   error: string | null;
   grants: Grant[];
+  removableKeys?: number;
   internet?: InternetStatus;
   requests?: RequestsStatus;
 }
@@ -159,7 +161,11 @@ function statusValue(value: Status): Status {
     !value ||
     !["stopped", "local", "unavailable"].includes(value.state) ||
     !Array.isArray(value.grants) ||
-    value.grants.length > 100
+    value.grants.length > 100 ||
+    (value.removableKeys !== undefined &&
+      (!Number.isInteger(value.removableKeys) ||
+        value.removableKeys < 0 ||
+        value.removableKeys > value.grants.length))
   )
     throw new Error("Client access status could not be read.");
   if (
@@ -195,6 +201,7 @@ function Sharing() {
   const [invite, setInvite] = useState<Invite | null>(null);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [cleanupMessage, setCleanupMessage] = useState("");
   const [pending, setPending] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [approvalUncertain, setApprovalUncertain] = useState(false);
@@ -333,11 +340,27 @@ function Sharing() {
     setRefreshing(false);
     setPending(name);
     setActionError("");
+    setCleanupMessage("");
     const timer = setTimeout(() => abort.abort(), 12_000);
     try {
       const result = await api(path, abort.signal, body);
       if (action.current !== abort) return;
-      if (name === "create") {
+      if (name === "cleanup") {
+        const next = statusValue(result?.status);
+        if (
+          next.removableKeys === undefined ||
+          !Number.isInteger(result.removedCount) ||
+          result.removedCount < 0 ||
+          result.removedCount + next.grants.length > 100
+        )
+          throw new Error("Key cleanup result could not be read.");
+        applyStatus(next);
+        setCleanupMessage(
+          result.removedCount === 0
+            ? "No keys were removed. The gateway found no expired or revoked keys."
+            : `Removed ${result.removedCount} expired or revoked ${result.removedCount === 1 ? "key" : "keys"}. Active keys were kept.`,
+        );
+      } else if (name === "create") {
         if (
           !result?.grant?.id ||
           typeof result.inviteUrl !== "string" ||
@@ -384,12 +407,14 @@ function Sharing() {
       if (name.startsWith("request-") && !(error instanceof AccessRequestError))
         setError("Guest access request status is out of date. Refresh status.");
       setActionError(
-        name === "create" &&
-          !(error instanceof AccessRequestError && error.status >= 400 && error.status < 500)
-          ? "Key creation could not be confirmed. Refresh the key list and revoke any unwanted key before creating another."
-          : error instanceof Error
-            ? error.message
-            : "The access change could not be confirmed. Refresh its status.",
+        name === "cleanup"
+          ? "Key cleanup could not be confirmed. Refresh access to check the saved keys before trying again."
+          : name === "create" &&
+              !(error instanceof AccessRequestError && error.status >= 400 && error.status < 500)
+            ? "Key creation could not be confirmed. Refresh the key list and revoke any unwanted key before creating another."
+            : error instanceof Error
+              ? error.message
+              : "The access change could not be confirmed. Refresh its status.",
       );
     } finally {
       clearTimeout(timer);
@@ -916,7 +941,8 @@ function Sharing() {
             {(status?.grants.length ?? 0) >= 100 && (
               <p className={`${muted} ${css({ mt: "3" })}`}>
                 Client access supports 100 saved keys, including expired and revoked keys. New keys
-                cannot be created at this limit.
+                cannot be created at this limit. Remove expired and revoked keys in Access keys
+                below to free space; keys that still have permission must be revoked first.
               </p>
             )}
             {!running && (
@@ -974,6 +1000,18 @@ function Sharing() {
           description="Revocation ends active requests and survives a gateway restart."
         />
         <div className={css({ px: "5", pb: "5" })}>
+          <KeyCleanup
+            removable={status?.removableKeys}
+            total={status?.grants.length ?? 0}
+            ready={ready}
+            pending={!!pending}
+            removing={pending === "cleanup"}
+            message={cleanupMessage}
+            onRemove={() => {
+              if (ready && !pending && status?.removableKeys)
+                void mutate("cleanup", "/api/sharing/grants/cleanup", {});
+            }}
+          />
           {status && status.state !== "unavailable" && !error && !status.grants.length && (
             <p className={muted}>No keys are recorded.</p>
           )}

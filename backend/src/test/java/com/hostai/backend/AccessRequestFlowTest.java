@@ -215,6 +215,47 @@ class AccessRequestFlowTest {
                 error -> assertThat(error.status()).isEqualTo(HttpStatus.CONFLICT));
         assertThat(sharing.status().requests().items().getFirst().state()).isEqualTo("pending");
         assertThat(sharing.status().state()).isEqualTo("local");
+        var cleaned = sharing.cleanup();
+        assertThat(cleaned.removedCount()).isEqualTo(1);
+        assertThat(cleaned.status().removableKeys()).isZero();
+        assertThat(cleaned.status().requests().remainingGrantSlots()).isEqualTo(1);
+        assertThat(cleaned.status().requests().available()).isTrue();
+        assertThat(cleaned.status().requests().items().getFirst().state()).isEqualTo("pending");
+        assertThat(sharing.requestHello(ingress.permit()).requestsAccepted()).isTrue();
+        assertThat(sharing.approveRequest(row.id(), row.code(), 1).grants()).hasSize(100);
+        assertThat(sharing.status().requests().remainingGrantSlots()).isZero();
+    }
+
+    @Test void cleanupReconcilesEndedRequestsAndKeepsActiveInternetPermissionAndIntake() {
+        var expiredCredential = credential();
+        var expired = submit(expiredCredential);
+        var expiry = sharing.approveRequest(expired.id(), expired.code(), 1).grants().getFirst();
+        var revokedCredential = credential();
+        var revoked = submit(revokedCredential);
+        var revokedGrant = sharing.approveRequest(revoked.id(), revoked.code(), 2).grants().getFirst();
+        var activeCredential = credential();
+        var active = submit(activeCredential);
+        var activeGrant = sharing.approveRequest(active.id(), active.code(), 2).grants().getFirst();
+        sharing.revoke(revokedGrant.id());
+        clock.now = expiry.expiresAt();
+        var cleaned = sharing.cleanup();
+        assertThat(cleaned.removedCount()).isEqualTo(2);
+        assertThat(cleaned.status().grants()).containsExactly(activeGrant);
+        assertThat(cleaned.status().requests().remainingGrantSlots()).isEqualTo(99);
+        assertThat(cleaned.status().requests().remainingRequestSlots()).isEqualTo(19);
+        assertThat(cleaned.status().requests().available()).isTrue();
+        assertThat(cleaned.status().requests().items()).filteredOn(item -> item.id().equals(expired.id()))
+                .singleElement().satisfies(item -> assertThat(item.state()).isEqualTo("expired"));
+        assertThat(cleaned.status().requests().items()).filteredOn(item -> item.id().equals(revoked.id()))
+                .singleElement().satisfies(item -> assertThat(item.state()).isEqualTo("revoked"));
+        assertThat(cleaned.status().requests().items()).filteredOn(item -> item.id().equals(active.id()))
+                .singleElement().satisfies(item -> assertThat(item.state()).isEqualTo("approved"));
+        assertThat(sharing.authenticate(activeCredential.token(activeGrant.id().toString()), ingress.permit())).isEqualTo(activeGrant);
+        clock.now = expiry.createdAt();
+        assertThatThrownBy(() -> sharing.authenticate(expiredCredential.token(expiry.id().toString()), ingress.permit()))
+                .isInstanceOf(GatewayException.class);
+        assertThatThrownBy(() -> sharing.authenticate(revokedCredential.token(revokedGrant.id().toString()), ingress.permit()))
+                .isInstanceOf(GatewayException.class);
     }
 
     @Test void acceptedHostNamesRemainUsableForRequestIntake() {

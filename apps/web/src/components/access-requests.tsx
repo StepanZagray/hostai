@@ -71,9 +71,9 @@ export function AccessRequests({
             </p>
             {requests.remainingGrantSlots === 0 ? (
               <p className={`${muted} ${css({ mt: "2" })}`}>
-                The 100 retained key limit is reached. Expiry and revocation do not free these
-                slots, and there is no key deletion control. New approvals and new keys are
-                unavailable; existing valid keys can still be used.
+                The 100 retained key limit is reached. Remove expired and revoked keys in Access
+                keys below to free stored key slots. If every key still has permission, revoke an
+                unused key first. Existing valid keys can still be used.
               </p>
             ) : requests.remainingRequestSlots === 0 ? (
               <p className={`${muted} ${css({ mt: "2" })}`}>
@@ -138,9 +138,10 @@ export function AccessRequests({
                 tunnel starts, or the gateway restarts. A matching code does not verify identity.
               </p>
               <p className={css({ mt: "2" })}>
-                The app stores up to 100 keys, including expired and revoked keys; there is no key
-                deletion control yet. Up to 20 request keys may be active. Revocation frees an
-                active request slot, but does not free a stored key slot.
+                The app stores up to 100 keys, including expired and revoked keys. Remove ended keys
+                in Access keys below to free stored key slots. Up to 20 request keys may be active.
+                Revocation frees an active request slot; removing its saved record frees the stored
+                key slot.
               </p>
             </details>
             <h3 className={css({ fontWeight: 650, mt: "5", mb: "3" })}>

@@ -384,6 +384,7 @@ describe("owner management proxy", () => {
     "/api/sharing/internet/start",
     "/api/sharing/internet/stop",
     "/api/sharing/grants",
+    "/api/sharing/grants/cleanup",
     `/api/sharing/grants/${id}/revoke`,
   ])("forwards %s with JSON negotiation", async (path) => {
     const fetch = backend();
@@ -401,6 +402,19 @@ describe("owner management proxy", () => {
   ])("rejects %s without upstream work", async (path) => {
     const fetch = backend();
     expect((await proxy({ request: mutation(path) })).status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it("rejects cross-origin key cleanup without upstream work", async () => {
+    const fetch = backend();
+    const rejected: HeadersInit[] = [
+      { Origin: "https://foreign.example" },
+      { "Sec-Fetch-Site": "cross-site" },
+    ];
+    for (const headers of rejected) {
+      expect(
+        (await proxy({ request: mutation("/api/sharing/grants/cleanup", headers) })).status,
+      ).toBe(403);
+    }
     expect(fetch).not.toHaveBeenCalled();
   });
   it("rejects cross-site metadata even when Origin is absent", async () => {

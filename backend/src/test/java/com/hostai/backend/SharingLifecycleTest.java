@@ -161,11 +161,107 @@ class SharingLifecycleTest {
         assertThat(runtime.chats.get()).isEqualTo(1);
     }
 
-    @ParameterizedTest @ValueSource(strings = {"create", "revoke"})
+    @Test void cleanupWhileStoppedPreservesPausedPermissionsAndNeverStartsRuntimeOrListeners() throws Exception {
+        Path directory = temporary.resolve("access");
+        AccessGrantStore.IssuedGrant activeLocal;
+        AccessGrantStore.IssuedGrant activeInternet;
+        AccessGrantStore.IssuedGrant expired;
+        AccessGrantStore.IssuedGrant revoked;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            activeLocal = store.create("Paused local", "another:model", Duration.ofHours(2));
+            activeInternet = store.create("Paused internet", "other:model", Duration.ofHours(2), "internet");
+            expired = store.create("Expired", MODEL, Duration.ofHours(1));
+            revoked = store.create("Revoked", MODEL, Duration.ofHours(2), "internet");
+            store.revoke(revoked.grant().id());
+        }
+        SharingService sharing = service(directory);
+        clock.set(expired.grant().expiresAt().minusNanos(1));
+        assertThat(sharing.status().removableKeys()).isEqualTo(1);
+        clock.set(expired.grant().expiresAt());
+        var before = Files.readAllBytes(directory.resolve("grants.json"));
+        assertThat(sharing.status().removableKeys()).isEqualTo(2);
+        assertThat(sharing.status().grants()).hasSize(4);
+        assertThat(Files.readAllBytes(directory.resolve("grants.json"))).isEqualTo(before);
+        var result = sharing.cleanup();
+        assertThat(result.removedCount()).isEqualTo(2);
+        assertThat(result.status().state()).isEqualTo("stopped");
+        assertThat(result.status().guestUrl()).isNull();
+        assertThat(result.status().model()).isNull();
+        assertThat(result.status().internet().state()).isEqualTo("off");
+        assertThat(result.status().removableKeys()).isZero();
+        assertThat(result.status().requests().remainingGrantSlots()).isEqualTo(98);
+        assertThat(result.status().grants()).containsExactly(activeInternet.grant(), activeLocal.grant());
+        assertThat(sharing.cleanup().removedCount()).isZero();
+        assertThat(runtime.metadata.get()).isZero();
+        assertThat(runtime.chats.get()).isZero();
+        sharing.close();
+        clock.set(START);
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.authenticate(expired.token())).isEmpty();
+            assertThat(reopened.authenticate(revoked.token())).isEmpty();
+            assertThat(reopened.authenticate(activeLocal.token())).contains(activeLocal.grant());
+            assertThat(reopened.authenticate(activeInternet.token())).contains(activeInternet.grant());
+        }
+    }
+
+    @Test void cleanupEndsOnlyRemovedExpiredSessionsAndReleasesGuestCapacity() throws Exception {
+        SharingService sharing = service(temporary.resolve("access"));
+        start(sharing);
+        var expired = sharing.create("Expires during generation", 1);
+        var active = sharing.create("Keep active", 2);
+        runtime.records = SharingRuntimeStub.hold();
+        RunningChat guest = observe(sharing.chat(expired.token(), request(MODEL)));
+        awaitPartial(guest);
+        // The session's already-scheduled real-time deadline is an hour away.
+        clock.set(expired.grant().expiresAt());
+        var result = sharing.cleanup();
+        assertThat(result.removedCount()).isEqualTo(1);
+        assertThat(result.status().state()).isEqualTo("local");
+        assertThat(result.status().grants()).containsExactly(active.grant());
+        assertAccessEnded(guest.completion().get(5, TimeUnit.SECONDS));
+        awaitCancelledGuest();
+        clock.set(START);
+        assertRejected(HttpStatus.UNAUTHORIZED, () -> sharing.authenticate(expired.token()));
+        runtime.records = SharingRuntimeStub.complete();
+        assertCompleted(sharing.chat(active.token(), request(MODEL)).collectList().block(WAIT));
+        awaitIdle();
+    }
+
+    @Test void cleanupPreservesActiveGuestStreamAndItsRateLimit() throws Exception {
+        SharingService sharing = service(temporary.resolve("access"));
+        start(sharing);
+        var retired = sharing.create("Remove", 1);
+        sharing.revoke(retired.grant().id());
+        var active = sharing.create("Keep", 1);
+        for (int i = 1; i < SharingService.REQUESTS_PER_MINUTE; i++) {
+            assertCompleted(sharing.chat(active.token(), request(MODEL)).collectList().block(WAIT));
+            awaitIdle();
+        }
+        runtime.records = SharingRuntimeStub.hold();
+        RunningChat guest = observe(sharing.chat(active.token(), request(MODEL)));
+        awaitPartial(guest);
+        var result = sharing.cleanup();
+        assertThat(result.removedCount()).isEqualTo(1);
+        assertThat(result.status().grants()).containsExactly(active.grant());
+        assertThat(sharing.authenticate(active.token())).isEqualTo(active.grant());
+        awaitPartial(guest);
+        guest.completion().cancel(true);
+        awaitIdle();
+        runtime.records = SharingRuntimeStub.complete();
+        assertThrows(SharingService.GuestBusyException.class,
+                () -> sharing.chat(active.token(), request(MODEL)).blockLast(WAIT));
+        assertThat(runtime.chats.get()).isEqualTo(SharingService.REQUESTS_PER_MINUTE);
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"create", "revoke", "cleanup"})
     void storageMutationFailureStopsGuestsAndLeavesOwnerChatUsable(String operation) throws Exception {
         Path directory = temporary.resolve("access");
         SharingService sharing = service(directory);
         start(sharing);
+        if (operation.equals("cleanup")) {
+            var retired = sharing.create("Remove", 1);
+            sharing.revoke(retired.grant().id());
+        }
         var invite = sharing.create("Active visitor", 1);
         byte[] committed = Files.readAllBytes(directory.resolve("grants.json"));
         runtime.records = SharingRuntimeStub.hold();
@@ -178,6 +274,7 @@ class SharingLifecycleTest {
             Files.setPosixFilePermissions(directory, PosixFilePermissions.fromString("r-x------"));
             assertRejected(HttpStatus.SERVICE_UNAVAILABLE, () -> {
                 if (operation.equals("create")) sharing.create("Must not be issued", 1);
+                else if (operation.equals("cleanup")) sharing.cleanup();
                 else sharing.revoke(invite.grant().id());
             });
         } finally {
@@ -188,6 +285,8 @@ class SharingLifecycleTest {
         assertThat(Files.readAllBytes(directory.resolve("grants.json"))).isEqualTo(committed);
         var unavailable = sharing.status();
         assertThat(unavailable.state()).isEqualTo("unavailable");
+        assertThat(unavailable.removableKeys()).isZero();
+        assertRejected(HttpStatus.SERVICE_UNAVAILABLE, sharing::cleanup);
         assertThat(unavailable.error()).contains("Client access is stopped", "local chat still works");
         assertRejected(HttpStatus.SERVICE_UNAVAILABLE, () -> sharing.authenticate(invite.token()));
         assertRejected(HttpStatus.SERVICE_UNAVAILABLE, () -> sharing.session(invite.token()).block(WAIT));
