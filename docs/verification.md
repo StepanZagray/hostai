@@ -1,5 +1,35 @@
 # Verification
 
+## Quick Tunnel watchdog on a POSIX /bin/sh — 12 September 2026
+
+GitHub Actions ran `pnpm backend:test` on `ubuntu-latest` and reported 18 failures
+and 18 errors, all in `InternetSharingTest` and `QuickTunnelProcessTest`. The same
+suite passed locally. The cause was a real defect, not a flaky test.
+
+POSIX assigns an asynchronous list `/dev/null` on standard input *before* its own
+redirections, so the watchdog's `(... ) <&0 &` re-duplicated `/dev/null` and read
+EOF immediately, killing cloudflared the moment it started. bash keeps the
+inherited pipe, so the bug is invisible wherever `/bin/sh` is bash (Arch) and
+fatal wherever it is dash (Debian, Ubuntu, and CI). **Temporary internet sharing
+could never have worked on a Debian or Ubuntu host.**
+
+`QuickTunnelProcess.WATCHDOG` now saves the inherited pipe on descriptor 3
+(`exec 3<&0`), starts the child with that descriptor closed, and has the watcher
+read `<&3`, so the parent-death watch behaves identically on both shells.
+
+Verified against a real POSIX shell rather than by reasoning: a static busybox
+`ash` was bound over `/bin/sh` with bubblewrap. Before the change the child was
+killed instantly under `busybox sh` and survived under bash; after it survives
+under both, and still gets reaped when the parent's stdin closes. Under that
+sandbox `./mvnw -o test` runs 544 tests with `InternetSharingTest` 16/16 and
+`QuickTunnelProcessTest` 36/36. Four errors in
+`AccessGrantStoreTest.realWriteErrorCleansTemporaryFilePoisonsStoreAndReleasesLock`
+are an artifact of running its `ulimit -f 0` probe inside bubblewrap; that class
+passes 287/287 outside the sandbox and passed in CI.
+
+`pnpm check`, `pnpm test` (417), `pnpm build` and `pnpm test:http` (5) pass; those
+four CI steps had already passed before this fix.
+
 ## Durable access keys and internet-first hosting — 12 September 2026
 
 `node scripts/backend.mjs test` passes 544 backend tests. Coverage added for

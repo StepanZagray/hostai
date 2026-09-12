@@ -40,9 +40,14 @@ final class QuickTunnelProcess implements AutoCloseable {
     private static final long DISCOVERY_NANOS = Duration.ofMillis(500).toNanos();
     // Static POSIX wrapper: argv remains data. The watcher owns a duplicated stdin pipe; JVM
     // death closes its writer and kills this one child. Normal child exit also reaps the watcher.
+    // POSIX gives an asynchronous list /dev/null on standard input *before* its own
+    // redirections, so `<&0` re-duplicates /dev/null and the watcher sees EOF at once.
+    // bash keeps the inherited pipe and dash does not; saving the pipe on descriptor 3
+    // makes the parent-death watch behave the same on both.
     private static final String WATCHDOG = """
-            "$@" </dev/null & child=$!
-            (while IFS= read -r line; do :; done; kill -KILL "$child" 2>/dev/null) <&0 & watcher=$!
+            exec 3<&0
+            "$@" </dev/null 3<&- & child=$!
+            (while IFS= read -r line <&3; do :; done; kill -KILL "$child" 2>/dev/null) & watcher=$!
             trap 'kill -KILL "$child" "$watcher" 2>/dev/null; wait "$child" 2>/dev/null; wait "$watcher" 2>/dev/null' EXIT
             trap 'exit 143' TERM INT HUP
             wait "$child"; result=$?
