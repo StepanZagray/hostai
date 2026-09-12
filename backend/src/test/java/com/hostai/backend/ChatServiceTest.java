@@ -19,13 +19,15 @@ class ChatServiceTest {
             List.of(new Api.Message("user", "Test only")), 0.7, 128);
 
     private ChatService service(String records) {
-        WebClient client = WebClient.builder().exchangeFunction(ignored -> Mono.just(
-                ClientResponse.create(HttpStatus.OK)
+        // The stub speaks Ollama only: the protocol probe sees 404 and chat receives the fixture records.
+        WebClient client = WebClient.builder().exchangeFunction(request -> Mono.just(
+                request.url().getPath().equals("/hostai/manifest") ? ClientResponse.create(HttpStatus.NOT_FOUND).build()
+                        : ClientResponse.create(HttpStatus.OK)
                         .header("Content-Type", "application/x-ndjson")
                         .body(records).build())).build();
-        OllamaGateway gateway = new OllamaGateway(client, Schedulers.immediate(),
+        RuntimeCatalog catalog = RuntimeCatalog.single(client, Schedulers.immediate(),
                 Duration.ofSeconds(3), Duration.ofSeconds(3), Duration.ofSeconds(5));
-        return new ChatService(registry, gateway);
+        return new ChatService(registry, catalog);
     }
 
     @Test void stoppingAtTerminalRecordPreservesCompletionAndTokens() {

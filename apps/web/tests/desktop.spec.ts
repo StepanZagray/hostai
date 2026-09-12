@@ -50,7 +50,7 @@ test("Electron renders the shared localhost app with an isolated renderer", asyn
     browser = await chromium.connectOverCDP(endpoint);
     const context = browser.contexts()[0];
     const page = context.pages()[0] || (await context.waitForEvent("page"));
-    await expect(page.getByRole("heading", { name: "Host overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
     await expect(page.getByText(/Gateway (online|unavailable)/)).toBeVisible();
     expect(await page.evaluate(() => typeof (globalThis as { require?: unknown }).require)).toBe(
       "undefined",
@@ -61,7 +61,7 @@ test("Electron renders the shared localhost app with an isolated renderer", asyn
       resolve(process.env.XDG_RUNTIME_DIR!, "../electron-overview.png"),
     ]);
     await page.getByRole("link", { name: "Playground", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Playground", exact: true })).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Model", exact: true })).toBeVisible();
     await expect(page.getByRole("textbox", { name: "Message", exact: true })).toBeVisible();
     await hostFixture(page);
     await page.goto(new URL("/playground", address).href);

@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { css } from "../../styled-system/css";
-import { Button, muted } from "../components/ui";
+import { Button, caption, control, fieldLabel } from "../components/ui";
 
+/**
+ * The primary way in: the host sends a plain address, the guest pastes the key here.
+ * It is never hidden behind a disclosure while a working key is missing.
+ */
 export function GuestKeyForm({
   shown,
-  secondary,
   checking,
   blocked = false,
   value,
@@ -14,7 +17,6 @@ export function GuestKeyForm({
   onConnect,
 }: {
   shown: boolean;
-  secondary: boolean;
   checking: boolean;
   blocked?: boolean;
   value: string;
@@ -24,7 +26,6 @@ export function GuestKeyForm({
   onConnect: () => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
-  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     if (shown && focusOnShow) input.current?.focus({ preventScroll: true });
   }, [shown, focusOnShow]);
@@ -33,7 +34,7 @@ export function GuestKeyForm({
       input.current?.focus({ preventScroll: true });
   }, [shown, focusWhenIdle]);
   if (!shown) return null;
-  const form = (
+  return (
     <form
       className={css({ my: "3" })}
       onSubmit={(event) => {
@@ -44,7 +45,10 @@ export function GuestKeyForm({
         }
       }}
     >
-      <label htmlFor="guest-key" className={css({ display: "block", fontWeight: 650, mb: "2" })}>
+      <label
+        htmlFor="guest-key"
+        className={`${fieldLabel} ${css({ display: "block", mb: "1.5" })}`}
+      >
         Access key
       </label>
       <div className={css({ display: "flex", alignItems: "center", gap: "2", flexWrap: "wrap" })}>
@@ -58,52 +62,20 @@ export function GuestKeyForm({
           maxLength={256}
           required
           value={value}
-          onFocus={() => setExpanded(true)}
           onChange={(event) => onChange(event.target.value)}
           readOnly={checking}
           aria-busy={checking}
           aria-describedby="guest-disclosure guest-key-help"
-          className={css({
-            w: "full",
-            minW: 0,
-            minH: "44px",
-            bg: "canvas",
-            border: "1px solid token(colors.line)",
-            borderRadius: "7px",
-            px: "3",
-            py: "2",
-            flex: "1 1 180px",
-            _readOnly: { opacity: 0.65 },
-          })}
+          className={`${control} ${css({ flex: "1 1 180px", w: "auto", _readOnly: { opacity: 0.65 } })}`}
         />
         <Button type="submit" variant="primary" disabled={checking || blocked || !value}>
           Connect
         </Button>
       </div>
-      <p id="guest-key-help" className={`${muted} ${css({ mt: "2" })}`}>
-        Use the key supplied by this host. Connecting successfully with a different key clears your
-        conversation and draft. A failed check keeps them. Your key stays in this tab only;
-        reloading loses it.
+      <p id="guest-key-help" className={`${caption} ${css({ mt: "1.5" })}`}>
+        Paste the key your host sent you. It stays in this tab only. Connecting with a different key
+        clears your conversation; a failed attempt keeps it.
       </p>
     </form>
-  );
-  return (
-    <details
-      open={expanded || !secondary}
-      className={
-        secondary ? css({ borderTop: "1px solid token(colors.line)", pt: "3", mt: "4" }) : undefined
-      }
-      onToggle={(event) => {
-        if (secondary) setExpanded(event.currentTarget.open);
-      }}
-    >
-      <summary
-        hidden={!secondary}
-        className={css({ cursor: "pointer", fontWeight: 650, py: "2", minH: "44px" })}
-      >
-        Have an access key?
-      </summary>
-      {form}
-    </details>
   );
 }

@@ -100,10 +100,28 @@ it.each(["unavailable", "error", "unsupported"] as const)(
     const html = renderToStaticMarkup(<GuestChat />);
     expect(html).toMatch(/<input[^>]*id="guest-key"[^>]*type="password"/);
     expect(html).not.toContain('id="request-access-name"');
-    expect(html).toMatch(/<details[^>]*open=""/);
+    // No disclosure hides the key form: it leads the body, and every disclosure
+    // starts closed. The header's session menu is a disclosure too, but it holds
+    // facts and connection controls, never the way in.
+    expect(html.slice(html.indexOf("<main"))).toContain('id="guest-key"');
+    expect(html.indexOf('id="guest-key"')).toBeLessThan(
+      html.indexOf("No key? Ask the host for access"),
+    );
+    expect(html).not.toMatch(/<details[^>]*open=""/);
     expect(html).not.toContain("Message composer");
   },
 );
+
+it("leads with the access key and demotes requesting access to a closed disclosure", () => {
+  const html = renderToStaticMarkup(<GuestChat />);
+  const key = html.indexOf('id="guest-key"');
+  const ask = html.indexOf("No key? Ask the host for access");
+  expect(key).toBeGreaterThan(-1);
+  expect(ask).toBeGreaterThan(key);
+  // The request panel keeps working behind the summary, but nothing is open by default.
+  expect(html.indexOf('id="request-access-name"')).toBeGreaterThan(ask);
+  expect(html).not.toMatch(/<details[^>]*open=""/);
+});
 
 it("unconfirmed cancellation of a pending request does not assert that a key was issued", () => {
   state.submission = { name: "Guest", model: "model:small" };

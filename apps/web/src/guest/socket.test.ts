@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import { readChatStream } from "../lib/api";
-import { guestSocket } from "./socket";
+import { readChatStream, readInferStream, type InferRecord } from "../lib/api";
+import { guestInferSocket, guestSocket } from "./socket";
 
 class Socket {
   static instances: Socket[] = [];
@@ -182,4 +182,46 @@ it("cancelled and oversized submissions open no network connection", async () =>
     guestSocket("key", "x".repeat(262_145), new AbortController().signal),
   ).rejects.toThrow("Invalid client request");
   expect(Socket.instances).toEqual([]);
+});
+
+it("sends an infer envelope with the key first and relays infer records unchanged", async () => {
+  const controller = new AbortController();
+  const response = guestInferSocket(
+    "private-key",
+    "pebby:latest",
+    { board: [[0, 1]] },
+    controller.signal,
+  );
+  const socket = Socket.instances.at(-1)!;
+  expect(socket.url.href).toBe("wss://fixture.example/guest/v1/chat-stream");
+  expect(socket.url.href).not.toContain("private-key");
+  socket.onopen!();
+  expect(socket.sent).toHaveLength(1);
+  expect(JSON.parse(socket.sent[0])).toEqual({
+    key: "private-key",
+    infer: { model: "pebby:latest", input: { board: [[0, 1]] } },
+  });
+  expect(Object.keys(JSON.parse(socket.sent[0]))[0]).toBe("key");
+  socket.frame({ event: { pong: 1 }, done: false });
+  const records: InferRecord[] = [];
+  const reading = readInferStream(await response, (record) => records.push(record));
+  await Promise.resolve();
+  socket.frame({ done: true });
+  await reading;
+  expect(records).toEqual([{ event: { pong: 1 }, done: false }, { done: true }]);
+  expect(socket.closes).toBe(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("rejects an infer input that JSON cannot carry without opening a socket", async () => {
+  const before = Socket.instances.length;
+  const signal = new AbortController().signal;
+  const outcomes: string[] = [];
+  for (const input of [1n, "x".repeat(262_200)])
+    await guestInferSocket("private-key", "pebby:latest", input, signal).then(
+      () => outcomes.push("resolved"),
+      (error: Error) => outcomes.push(error.message),
+    );
+  expect(outcomes).toEqual(["Invalid client request.", "Invalid client request."]);
+  expect(Socket.instances).toHaveLength(before);
 });

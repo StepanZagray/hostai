@@ -62,11 +62,14 @@ public final class AccessGrantStore implements AutoCloseable {
     private static final Pattern ID = Pattern.compile(UUID_SYNTAX);
     private static final Pattern TOKEN = Pattern.compile("hga1\\.(" + UUID_SYNTAX + ")\\.([A-Za-z0-9_-]{43})");
     private static final Pattern HASH = Pattern.compile("[0-9a-f]{64}");
+    private static final Pattern SECRET = Pattern.compile("[A-Za-z0-9_-]{43}");
     private static final Pattern TEMP = Pattern.compile("\\.grants-[A-Za-z0-9-]{1,64}\\.tmp");
     private static final Set<String> LEGACY_ROW_FIELDS = Set.of(
             "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash");
     private static final Set<String> ROW_FIELDS = Set.of(
             "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel");
+    private static final Set<String> RECOVERABLE_ROW_FIELDS = Set.of(
+            "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel", "secret");
     // Some POSIX systems release a process's locks when ANY descriptor for that file closes.
     // Reject duplicate JVM opens before opening a second descriptor for the lock file.
     private static final Set<DirectoryIdentity> OPEN_DIRECTORIES = ConcurrentHashMap.newKeySet();
@@ -94,15 +97,25 @@ public final class AccessGrantStore implements AutoCloseable {
     private boolean poisoned;
     private boolean closed;
 
+    /**
+     * {@code recoverable} reports only whether storage still holds the key material, so the host
+     * can read the credential back; it never carries the credential itself. Grants read from an
+     * older file and grants committed from a client secret are permanently non-recoverable.
+     */
     public record Grant(UUID id, String label, String model, Instant createdAt,
-                        Instant expiresAt, Instant revokedAt, String channel) {
+                        Instant expiresAt, Instant revokedAt, String channel, boolean recoverable) {
         public Grant {
             validateChannel(channel);
         }
 
         public Grant(UUID id, String label, String model, Instant createdAt,
+                     Instant expiresAt, Instant revokedAt, String channel) {
+            this(id, label, model, createdAt, expiresAt, revokedAt, channel, false);
+        }
+
+        public Grant(UUID id, String label, String model, Instant createdAt,
                      Instant expiresAt, Instant revokedAt) {
-            this(id, label, model, createdAt, expiresAt, revokedAt, "local");
+            this(id, label, model, createdAt, expiresAt, revokedAt, "local", false);
         }
     }
 
@@ -118,13 +131,24 @@ public final class AccessGrantStore implements AutoCloseable {
         private StorageException(String message) { super(message); }
     }
 
+    /** Never given a {@code toString}: the secret must not reach a log line or an exception. */
     private static final class StoredGrant {
         private final Grant grant;
         private final byte[] hash;
+        /** Retained 32-byte key material, or null for a hash-only row that cannot be read back. */
+        private final byte[] secret;
 
-        private StoredGrant(Grant grant, byte[] hash) {
+        private StoredGrant(Grant grant, byte[] hash, byte[] secret) {
+            // Retained key material must always reproduce the digest that authenticates this row,
+            // so writing either one can never change which credential the row accepts.
+            if (secret != null && !MessageDigest.isEqual(digest(secret), hash)) throw invalidStorage();
             this.grant = grant;
             this.hash = hash;
+            this.secret = secret;
+        }
+
+        private void erase() {
+            if (secret != null) Arrays.fill(secret, (byte) 0);
         }
     }
 
@@ -213,9 +237,8 @@ public final class AccessGrantStore implements AutoCloseable {
         byte[] secret = new byte[32];
         random.nextBytes(secret);
         try {
-            Grant grant = commit(label, model, lifetime, channel, digest(secret));
-            return new IssuedGrant(grant, "hga1." + grant.id() + "."
-                    + Base64.getUrlEncoder().withoutPadding().encodeToString(secret));
+            Grant grant = commit(label, model, lifetime, channel, digest(secret), secret);
+            return new IssuedGrant(grant, token(grant.id(), secret));
         } finally {
             Arrays.fill(secret, (byte) 0);
         }
@@ -227,17 +250,38 @@ public final class AccessGrantStore implements AutoCloseable {
      * only its length can be checked here. Client possession is tested later by {@link #authenticate}.
      * A client can already disclose its own bearer permission; a commitment does not prevent that.
      * Returns only metadata for a fresh grant, after its private digest has been durably committed.
+     * The host never learns the secret, so the grant is stored hash-only and is not recoverable.
      */
     synchronized Grant createCommitted(String label, String model, Duration lifetime, String channel, byte[] secretHash) {
         requireUsable();
         if (secretHash == null || secretHash.length != 32) {
             throw new IllegalArgumentException("Grant commitment must contain exactly 32 bytes.");
         }
-        return commit(label, model, lifetime, channel, secretHash.clone());
+        return commit(label, model, lifetime, channel, secretHash.clone(), null);
     }
 
-    /** Both callers hold the store monitor and supply an exclusively owned digest. */
-    private Grant commit(String label, String model, Duration lifetime, String channel, byte[] secretHash) {
+    /**
+     * The stored credential of a host-recoverable grant that is neither revoked nor expired.
+     * Empty for an unknown, ended, or hash-only grant; the caller decides what to tell the host.
+     */
+    synchronized Optional<String> token(UUID id) {
+        requireUsable();
+        Instant now = clock.instant();
+        return find(id).filter(row -> row.secret != null && row.grant.revokedAt() == null
+                        && now.isBefore(row.grant.expiresAt()))
+                .map(row -> token(row.grant.id(), row.secret));
+    }
+
+    private static String token(UUID id, byte[] secret) {
+        return "hga1." + id + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
+    }
+
+    /**
+     * Both callers hold the store monitor and supply an exclusively owned digest. A non-null
+     * secret is copied into storage and makes the grant recoverable; it must hash to the digest.
+     */
+    private Grant commit(String label, String model, Duration lifetime, String channel,
+                         byte[] secretHash, byte[] secret) {
         validateLabel(label);
         validateModel(model);
         validateLifetime(lifetime);
@@ -252,9 +296,9 @@ public final class AccessGrantStore implements AutoCloseable {
         }
         UUID id;
         do { id = UUID.randomUUID(); } while (find(id).isPresent());
-        Grant grant = new Grant(id, label, model, now, expires, null, channel);
+        Grant grant = new Grant(id, label, model, now, expires, null, channel, secret != null);
         List<StoredGrant> next = new ArrayList<>(records);
-        next.addFirst(new StoredGrant(grant, secretHash));
+        next.addFirst(new StoredGrant(grant, secretHash, secret == null ? null : secret.clone()));
         next.sort(Comparator.comparing((StoredGrant row) -> row.grant.createdAt()).reversed());
         List<StoredGrant> committed = List.copyOf(next);
         persist(committed);
@@ -303,13 +347,18 @@ public final class AccessGrantStore implements AutoCloseable {
         if (old.grant.revokedAt() != null) return old.grant;
         Instant now = clock.instant();
         if (now.isBefore(old.grant.createdAt())) now = old.grant.createdAt();
+        // Revocation is an event, so it drops the key material: a revoked key is never handed out
+        // again. The hash stays, so authenticate still recognises the key and refuses it by policy
+        // rather than treating it as unknown. Expiry is time-based and keeps its material until
+        // cleanup removes the row.
         Grant revoked = new Grant(old.grant.id(), old.grant.label(), old.grant.model(),
-                old.grant.createdAt(), old.grant.expiresAt(), now, old.grant.channel());
+                old.grant.createdAt(), old.grant.expiresAt(), now, old.grant.channel(), false);
         List<StoredGrant> next = new ArrayList<>(records);
-        next.set(next.indexOf(old), new StoredGrant(revoked, old.hash));
+        next.set(next.indexOf(old), new StoredGrant(revoked, old.hash, null));
         List<StoredGrant> committed = List.copyOf(next);
         persist(committed);
         records = committed;
+        old.erase(); // Durable first: a failed commit must not destroy a still-stored key.
         return revoked;
     }
 
@@ -323,16 +372,18 @@ public final class AccessGrantStore implements AutoCloseable {
         requireUsable();
         Instant now = clock.instant();
         List<StoredGrant> next = new ArrayList<>();
-        List<Grant> removed = new ArrayList<>();
+        List<StoredGrant> removed = new ArrayList<>();
         for (StoredGrant row : records) {
-            if (row.grant.revokedAt() != null || !now.isBefore(row.grant.expiresAt())) removed.add(row.grant);
+            if (row.grant.revokedAt() != null || !now.isBefore(row.grant.expiresAt())) removed.add(row);
             else next.add(row);
         }
         if (removed.isEmpty()) return List.of();
         List<StoredGrant> committed = List.copyOf(next);
         persist(committed);
         records = committed;
-        return List.copyOf(removed);
+        // No row shares key material, so removed rows can be erased once the removal is durable.
+        removed.forEach(StoredGrant::erase);
+        return removed.stream().map(row -> row.grant).toList();
     }
 
     private Optional<StoredGrant> find(UUID id) {
@@ -393,11 +444,13 @@ public final class AccessGrantStore implements AutoCloseable {
         if (!root.get("version").isInt()
                 || !root.get("grants").isArray() || root.get("grants").size() > MAX_GRANTS) throw invalidStorage();
         int version = root.get("version").intValue();
-        if (version != 1 && version != 2) throw invalidStorage();
+        if (version < 1 || version > 3) throw invalidStorage();
         List<StoredGrant> result = new ArrayList<>();
         Set<UUID> ids = new HashSet<>();
         for (JsonNode row : root.get("grants")) {
-            requireFields(row, version == 1 ? LEGACY_ROW_FIELDS : ROW_FIELDS);
+            // Only a version 3 row may carry key material, and only as a complete row.
+            boolean recoverable = version == 3 && hasSecret(row);
+            if (version != 3) requireFields(row, version == 1 ? LEGACY_ROW_FIELDS : ROW_FIELDS);
             String channel = version == 1 ? "local" : string(row, "channel");
             validateChannel(channel);
             String idText = string(row, "id");
@@ -415,25 +468,53 @@ public final class AccessGrantStore implements AutoCloseable {
             if (revoked != null && revoked.isBefore(created)) throw invalidStorage();
             String hash = string(row, "hash");
             if (!HASH.matcher(hash).matches()) throw invalidStorage();
-            result.add(new StoredGrant(new Grant(id, label, model, created, expires, revoked, channel),
-                    HexFormat.of().parseHex(hash)));
+            byte[] digest = HexFormat.of().parseHex(hash);
+            byte[] secret = recoverable ? secret(row, digest) : null;
+            result.add(new StoredGrant(new Grant(id, label, model, created, expires, revoked, channel, recoverable),
+                    digest, secret));
         }
         result.sort(Comparator.comparing((StoredGrant row) -> row.grant.createdAt()).reversed());
         return List.copyOf(result);
     }
 
     private static byte[] encode(List<StoredGrant> records) {
-        var root = JSON.createObjectNode().put("version", 2);
+        var root = JSON.createObjectNode().put("version", 3);
         var rows = root.putArray("grants");
         for (StoredGrant row : records) {
             Grant grant = row.grant;
-            rows.addObject().put("id", grant.id().toString()).put("label", grant.label())
+            // The hash stays authoritative for authentication on every row, recoverable or not.
+            var object = rows.addObject().put("id", grant.id().toString()).put("label", grant.label())
                     .put("model", grant.model()).put("createdAt", grant.createdAt().toString())
                     .put("expiresAt", grant.expiresAt().toString())
                     .put("revokedAt", grant.revokedAt() == null ? null : grant.revokedAt().toString())
-                    .put("hash", HexFormat.of().formatHex(row.hash)).put("channel", grant.channel());
+                    .put("hash", HexFormat.of().formatHex(row.secret == null ? row.hash : digest(row.secret)))
+                    .put("channel", grant.channel());
+            if (row.secret != null) {
+                object.put("secret", Base64.getUrlEncoder().withoutPadding().encodeToString(row.secret));
+            }
         }
         return JSON.writeValueAsBytes(root);
+    }
+
+    /** A version 3 row is either a complete hash-only row or a complete row with key material. */
+    private static boolean hasSecret(JsonNode row) {
+        if (row == null || !row.isObject()) throw invalidStorage();
+        Set<String> present = new HashSet<>(row.propertyNames());
+        if (present.equals(ROW_FIELDS)) return false;
+        if (present.equals(RECOVERABLE_ROW_FIELDS)) return true;
+        throw invalidStorage();
+    }
+
+    /** Stored key material must be canonical and must reproduce the row's committed digest. */
+    private static byte[] secret(JsonNode row, byte[] hash) {
+        String encoded = string(row, "secret");
+        if (!SECRET.matcher(encoded).matches()) throw invalidStorage();
+        byte[] secret = Base64.getUrlDecoder().decode(encoded);
+        // Enforce zero padding bits, so one secret has exactly one stored spelling.
+        if (secret.length != 32 || !Base64.getUrlEncoder().withoutPadding()
+                .encodeToString(secret).equals(encoded)) throw invalidStorage();
+        if (!MessageDigest.isEqual(digest(secret), hash)) throw invalidStorage();
+        return secret;
     }
 
     private static void requireFields(JsonNode node, Set<String> fields) {
@@ -541,6 +622,7 @@ public final class AccessGrantStore implements AutoCloseable {
     @Override public synchronized void close() {
         if (closed) return;
         closed = true;
+        records.forEach(StoredGrant::erase); // Retained key material does not outlive the store.
         records = List.of();
         if (!releaseResources()) throw new StorageException("Access grant storage could not close cleanly.");
     }

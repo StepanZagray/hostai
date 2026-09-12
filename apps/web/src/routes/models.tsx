@@ -2,14 +2,25 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
 import { RuntimeCommand } from "../components/runtime-command";
 import { ModelDownloads } from "../components/model-downloads";
-import { ArrowRight, Box, Search, RefreshCw, Terminal } from "lucide-react";
+import { ArrowRight, Search, RefreshCw } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
 import { formatBytes } from "../lib/api";
-import { chatUnavailableReason } from "../lib/model-admission";
-import { Badge, Button, EmptyState, PageHeading, button, muted, panel } from "../components/ui";
+import { interfaceUnavailableReason, modelInterface } from "../lib/model-admission";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  PageHeading,
+  button,
+  caption,
+  control,
+  mono,
+  panel,
+} from "../components/ui";
 
 export const Route = createFileRoute("/models")({ component: Models });
+
 function Models() {
   const { models, loading, refreshing, refresh, errors, status } = useHost();
   const [search, setSearch] = useState("");
@@ -18,7 +29,7 @@ function Models() {
     <>
       <PageHeading
         title="Your model library"
-        description="Browse your runtime’s models and see which ones are available to try."
+        description="Models installed in your runtime, with chat or their own interface."
         action={
           <Button disabled={refreshing} onClick={() => void refresh()}>
             <RefreshCw />
@@ -29,38 +40,43 @@ function Models() {
       <ModelDownloads />
       <div
         className={css({
-          mb: "6",
+          mb: "3",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: "4",
+          gap: "3",
           flexWrap: "wrap",
         })}
       >
-        <label
+        <div
           className={css({
             display: "flex",
             alignItems: "center",
-            gap: "3",
-            bg: "surface",
-            border: "1px solid token(colors.line)",
-            borderRadius: "7px",
-            px: "3",
-            width: { base: "full", sm: "320px" },
-            color: "muted",
+            position: "relative",
+            width: { base: "full", sm: "300px" },
+            minW: 0,
           })}
         >
-          <Search size={17} />
+          <Search
+            size={15}
+            aria-hidden="true"
+            className={css({
+              position: "absolute",
+              left: "2.5",
+              color: "muted",
+              pointerEvents: "none",
+            })}
+          />
           <input
             aria-label="Search models"
             disabled={loading}
-            placeholder="Search your models…"
+            placeholder="Filter by name…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className={css({ minH: "44px", w: "full", bg: "transparent", outlineOffset: "-2px" })}
+            className={`${control} ${css({ pl: "8" })}`}
           />
-        </label>
-        <span className={muted}>
+        </div>
+        <span className={`${caption} ${mono} ${css({ fontVariantNumeric: "tabular-nums" })}`}>
           {loading
             ? "Checking runtime models…"
             : errors.models
@@ -68,24 +84,18 @@ function Models() {
               : `${models.length} discovered ${models.length === 1 ? "model" : "models"}`}
         </span>
       </div>
-      <section className={panel} aria-busy={loading}>
+      <section className={`${panel} ${css({ overflow: "hidden" })}`} aria-busy={loading}>
         {loading ? (
-          <EmptyState
-            icon={<Box size={22} />}
-            title="Looking for your models"
-            description="Checking your local runtime…"
-          />
+          <EmptyState title="Looking for your models" description="Checking your local runtime…" />
         ) : errors.models ? (
           <EmptyState
-            icon={<Box size={26} />}
             title="Model discovery unavailable"
-            description="Your installed models could not be checked. Check Ollama and retry the refresh."
+            description="Your installed models could not be listed. Check Ollama, then refresh."
           />
         ) : !models.length ? (
           <EmptyState
-            icon={<Box size={26} />}
             title="No installed models yet"
-            description="Installed models appear here after Ollama finishes. You can start and track a download above."
+            description="Models appear here once Ollama finishes a download. Start one above."
             action={
               status?.ollamaConnected ? (
                 <a href="#starter-model" className={button({ variant: "primary" })}>
@@ -102,116 +112,135 @@ function Models() {
           />
         ) : !filtered.length ? (
           <EmptyState
-            icon={<Search size={22} />}
             title="No matching models"
-            description={`No installed model matches “${search}”. Try a different name.`}
+            description={`Nothing installed matches “${search}”.`}
             action={<Button onClick={() => setSearch("")}>Clear search</Button>}
           />
         ) : (
-          <div
-            className={css({
-              display: "grid",
-              gridTemplateColumns: { base: "1fr", lg: "1fr 1fr" },
-            })}
-          >
-            {filtered.map((model) => (
-              <article
-                key={model.name}
-                className={css({
-                  p: "6",
-                  borderBottom: "1px solid token(colors.line)",
-                  borderRight: "1px solid token(colors.line)",
-                })}
-              >
-                <div className={css({ display: "flex", justifyContent: "space-between", mb: "5" })}>
-                  <span
+          <ul>
+            {filtered.map((model) => {
+              const reason = interfaceUnavailableReason(model);
+              return (
+                <li
+                  key={model.name}
+                  className={css({
+                    px: { base: "3.5", md: "4" },
+                    py: "3",
+                    display: "flex",
+                    gap: { base: "2.5", md: "4" },
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    flexWrap: "wrap",
+                    minW: 0,
+                    borderTop: "1px solid token(colors.lineSoft)",
+                    _first: { borderTop: "none" },
+                  })}
+                >
+                  <div
                     className={css({
-                      bg: "accentSoft",
-                      color: "accent",
-                      p: "3",
-                      borderRadius: "9px",
+                      flex: "1 1 240px",
+                      minW: 0,
+                      display: "grid",
+                      gap: "1",
+                      alignContent: "start",
                     })}
                   >
-                    <Box size={22} />
-                  </span>
-                  <Badge tone={chatUnavailableReason(model) === null ? "good" : "warning"}>
-                    {chatUnavailableReason(model) === null
-                      ? "Available to try"
-                      : "Unavailable for chat"}
-                  </Badge>
-                </div>
-                <h2
-                  className={css({
-                    fontFamily: "mono",
-                    fontSize: "16px",
-                    fontWeight: 600,
-                    overflowWrap: "anywhere",
-                    mb: "2",
-                  })}
-                >
-                  {model.name}
-                </h2>
-                <p className={muted}>{model.parameterSize || "Unknown parameter size"}</p>
-                <div
-                  className={css({
-                    display: "flex",
-                    gap: "5",
-                    my: "5",
-                    fontSize: "xs",
-                    color: "muted",
-                  })}
-                >
-                  <span>{formatBytes(model.sizeBytes)}</span>
-                  <span>{model.quantization || "Quantization unavailable"}</span>
-                </div>
-                {chatUnavailableReason(model) !== null ? (
-                  <p className={css({ color: "warning", fontSize: "sm" })}>
-                    {chatUnavailableReason(model)}
-                  </p>
-                ) : (
-                  <div className={css({ display: "flex", gap: "2", flexWrap: "wrap" })}>
-                    <Link
-                      to="/playground"
-                      search={{ model: model.name }}
-                      className={button({ variant: "secondary" })}
+                    <div
+                      className={css({
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "2.5",
+                        flexWrap: "wrap",
+                        minW: 0,
+                      })}
                     >
-                      Try in playground <ArrowRight size={14} />
-                    </Link>
-                    <Link
-                      to="/sharing"
-                      search={{ model: model.name }}
-                      className={button({ variant: "ghost" })}
-                    >
-                      Set up client access
-                    </Link>
+                      <h2
+                        className={css({
+                          fontFamily: "mono",
+                          fontSize: "sm",
+                          fontWeight: 600,
+                          lineHeight: 1.4,
+                          overflowWrap: "anywhere",
+                          minW: 0,
+                        })}
+                      >
+                        {model.name}
+                      </h2>
+                      <Badge tone={reason === null ? "good" : "warning"}>
+                        {reason === null
+                          ? "Available to try"
+                          : modelInterface(model) === "unsupported"
+                            ? "No supported interface"
+                            : "Unavailable for chat"}
+                      </Badge>
+                    </div>
+                    <p className={`${caption} ${mono}`}>
+                      {[
+                        model.parameterSize || "Unknown size",
+                        model.sizeBytes > 0
+                          ? formatBytes(model.sizeBytes)
+                          : "No weight size reported",
+                        model.quantization || "Quantization unknown",
+                      ].join(" · ")}
+                    </p>
+                    {reason !== null && (
+                      <p className={css({ color: "amber", fontSize: "xs", lineHeight: 1.55 })}>
+                        {reason}
+                      </p>
+                    )}
                   </div>
-                )}
-              </article>
-            ))}
-          </div>
+                  {reason === null && (
+                    <div
+                      className={css({
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "2",
+                        flexWrap: "wrap",
+                      })}
+                    >
+                      <Link
+                        to="/playground"
+                        search={{ model: model.name }}
+                        className={button({ size: "sm" })}
+                      >
+                        Try in playground <ArrowRight size={13} />
+                      </Link>
+                      <Link
+                        to="/sharing"
+                        search={{ model: model.name }}
+                        className={button({ variant: "ghost", size: "sm" })}
+                      >
+                        Set up guest access
+                      </Link>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </section>
       <aside
         aria-label="Add a model from your terminal"
         className={css({
-          mt: "6",
-          p: "5",
-          border: "1px dashed #c9d7e0",
-          borderRadius: "10px",
-          display: "flex",
-          alignItems: { base: "start", lg: "center" },
-          gap: "4",
-          flexDirection: { base: "column", lg: "row" },
+          mt: "5",
+          p: { base: "3.5", md: "4" },
+          bg: "paper",
+          border: "1px solid token(colors.line)",
+          borderRadius: "lg",
+          minW: 0,
         })}
       >
-        <Terminal size={21} className={css({ color: "accent" })} />
-        <div className={css({ flex: 1, minW: "0", w: "full" })}>
-          <h2 className={css({ fontSize: "sm", fontWeight: 700, mb: "1" })}>
-            Add a model from your terminal
-          </h2>
+        <h2 className={css({ fontSize: "sm", fontWeight: 600, mb: "2.5" })}>
+          Add a model from your terminal
+        </h2>
+        <div className={css({ maxW: "640px", minW: 0 })}>
           <RuntimeCommand endpoint={status?.ollamaUrl} loading={loading} action="pull" />
         </div>
       </aside>
+      <p className={`${caption} ${css({ mt: "4" })}`}>
+        Model files live in Ollama. HostAI reads the library and never deletes anything.
+      </p>
     </>
   );
 }

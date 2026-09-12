@@ -3,8 +3,12 @@
   "private": true,
   "engines": { "node": ">=24" },
   "packageManager": "pnpm@11.17.0",
+  "bin": { "hostai": "scripts/hostai.mjs" },
   "scripts": {
-    "dev": "pnpm --filter @hostai/web dev",
+    "cli": "node scripts/hostai.mjs",
+    "test:cli": "node --test scripts/hostai.test.mjs",
+    "dev": "node scripts/workspace.mjs browser --dev",
+    "dev:web": "pnpm --filter @hostai/web dev",
     "build": "pnpm --filter @hostai/web build",
     "check": "pnpm --filter @hostai/web check",
     "test": "pnpm --filter @hostai/web test",

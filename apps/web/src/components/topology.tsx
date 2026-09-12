@@ -1,116 +1,108 @@
-import { ArrowRight, Box, Globe2, Laptop, Route } from "lucide-react";
+import { Box, Laptop, Route } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
-import { Badge, PanelHeading, panel } from "./ui";
+import { Badge, Section, caption, type Tone } from "./ui";
 
+/**
+ * The request path drawn as a vertical signal chain: browser, gateway,
+ * runtime. Each hop is a well tile on a shared hairline, with its live state
+ * spelled out beside it.
+ */
 export function Topology() {
   const { status } = useHost();
-  const nodes = [
+  const nodes: {
+    name: string;
+    detail: string;
+    icon: typeof Laptop;
+    ready: boolean;
+    tone?: Tone;
+  }[] = [
     { name: "This workspace", detail: "Browser client", icon: Laptop, ready: true },
     {
       name: "HostAI gateway",
-      detail: status ? "Connected" : "Status unavailable",
+      detail: status ? "Connected" : "Unavailable",
       icon: Route,
       ready: !!status,
+      tone: status ? "good" : "warning",
     },
     {
       name: "Ollama runtime",
-      detail: !status
-        ? "Status unavailable"
-        : status.ollamaConnected
-          ? "Ready for requests"
-          : "Waiting for runtime",
+      detail: !status ? "Unknown" : status.ollamaConnected ? "Ready for requests" : "Not connected",
       icon: Box,
       ready: !!status?.ollamaConnected,
+      tone: !status ? "neutral" : status.ollamaConnected ? "good" : "warning",
     },
   ];
   return (
-    <section className={panel} aria-label="Inference connection path">
-      <PanelHeading title="Your inference path" action={<Badge>On this machine</Badge>} />
-      <div
+    <Section
+      aria-label="Inference connection path"
+      title="Request path"
+      aside={<Badge>On this machine</Badge>}
+    >
+      <ol
         className={css({
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: { base: "1", sm: "3" },
-          px: { base: "3", sm: "7" },
-          pb: "7",
-          pt: "3",
+          display: "grid",
+          "& > li": {
+            position: "relative",
+            display: "grid",
+            gridTemplateColumns: "30px minmax(0, 1fr)",
+            alignItems: "center",
+            columnGap: "3",
+            py: "2.5",
+          },
+          "& > li::before": {
+            content: '""',
+            position: "absolute",
+            left: "14.5px",
+            top: 0,
+            bottom: 0,
+            w: "1px",
+            bg: "lineStrong",
+          },
+          "& > li:first-child::before": { top: "50%" },
+          "& > li:last-child::before": { bottom: "50%" },
         })}
       >
-        {nodes.map(({ name, detail, icon: Icon, ready }, i) => (
-          <div key={name} className={css({ display: "contents" })}>
-            {i > 0 && (
-              <div
-                className={css({
-                  flex: 1,
-                  borderTop: "1px dashed token(colors.line)",
-                  position: "relative",
-                  top: "-23px",
-                  minW: "6px",
-                })}
-              >
-                <ArrowRight
-                  size={13}
-                  className={css({ position: "absolute", right: 0, top: "-7px", color: "muted" })}
-                />
-              </div>
-            )}
-            <div
+        {nodes.map(({ name, detail, icon: Icon, ready, tone }) => (
+          <li key={name}>
+            <span
+              data-ready={ready}
+              className={css({
+                position: "relative",
+                w: "30px",
+                h: "30px",
+                borderRadius: "sm",
+                display: "grid",
+                placeItems: "center",
+                border: "1px solid token(colors.line)",
+                bg: "well",
+                color: "muted",
+                "&[data-ready=true]": { borderColor: "lineStrong", color: "ink" },
+              })}
+            >
+              <Icon size={15} strokeWidth={1.75} />
+            </span>
+            <span
               className={css({
                 display: "flex",
                 alignItems: "center",
-                flexDirection: "column",
-                gap: "2",
-                textAlign: "center",
-                width: { base: "85px", sm: "132px" },
+                justifyContent: "space-between",
+                columnGap: "3",
+                rowGap: "1",
+                flexWrap: "wrap",
+                minW: 0,
               })}
             >
-              <div
-                data-ready={ready}
-                className={css({
-                  w: "56px",
-                  h: "56px",
-                  borderRadius: "13px",
-                  display: "grid",
-                  placeItems: "center",
-                  border: "1px solid token(colors.line)",
-                  bg: "canvas",
-                  color: "muted",
-                  mb: "1",
-                  "&[data-ready=true]": {
-                    bg: "accentSoft",
-                    borderColor: "#c4dfe6",
-                    color: "accent",
-                  },
-                })}
-              >
-                <Icon size={24} strokeWidth={1.5} />
-              </div>
-              <span className={css({ fontWeight: 700, fontSize: { base: "10px", sm: "xs" } })}>
-                {name}
-              </span>
-              <span className={css({ color: "muted", fontSize: "10px" })}>{detail}</span>
-            </div>
-          </div>
+              <span className={css({ fontSize: "sm", fontWeight: 600, color: "ink" })}>{name}</span>
+              {tone ? (
+                <Badge tone={tone}>{detail}</Badge>
+              ) : (
+                <span className={`${caption} ${css({ textAlign: "right" })}`}>{detail}</span>
+              )}
+            </span>
+          </li>
         ))}
-      </div>
-      <div
-        className={css({
-          borderTop: "1px solid token(colors.line)",
-          bg: "canvas",
-          px: "5",
-          py: "3",
-          display: "flex",
-          gap: "2",
-          alignItems: "center",
-          fontSize: "11px",
-          color: "muted",
-        })}
-      >
-        <Globe2 size={14} />
-        <span>This owner workspace stays local. Set up guest sharing in Client access.</span>
-      </div>
-    </section>
+      </ol>
+    </Section>
   );
 }

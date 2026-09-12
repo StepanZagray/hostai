@@ -7,30 +7,28 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.core.io.buffer.DataBufferLimitException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Scheduler;
+import tools.jackson.databind.JsonNode;
 
-@Component
-public class OllamaGateway {
+/** The built-in adapter for Ollama's /api/version, /api/tags and /api/chat. Never a model UI. */
+public final class OllamaRuntime implements InferenceRuntime {
+    public static final String ID = "ollama";
     private final WebClient client;
     private final Scheduler scheduler;
     private final Duration metadataTimeout;
     private final Duration idleTimeout;
     private final Duration generationTimeout;
 
-    public OllamaGateway(WebClient ollamaClient, Scheduler inferenceScheduler,
-                         @Value("${hostai.metadata-timeout:3s}") Duration metadataTimeout,
-                         @Value("${hostai.stream-idle-timeout:60s}") Duration idleTimeout,
-                         @Value("${hostai.generation-timeout:10m}") Duration generationTimeout) {
+    public OllamaRuntime(WebClient ollamaClient, Scheduler inferenceScheduler, Duration metadataTimeout,
+                         Duration idleTimeout, Duration generationTimeout) {
         this.client = ollamaClient;
         this.scheduler = inferenceScheduler;
         this.metadataTimeout = metadataTimeout;
@@ -38,6 +36,9 @@ public class OllamaGateway {
         this.generationTimeout = generationTimeout;
     }
 
+    @Override public String id() { return ID; }
+
+    @Override
     public Mono<Boolean> connected() {
         return client.get().uri("/api/version").retrieve().bodyToMono(Version.class)
                 .timeout(metadataTimeout)
@@ -45,6 +46,7 @@ public class OllamaGateway {
                 .defaultIfEmpty(false).onErrorReturn(false);
     }
 
+    @Override
     public Mono<Api.Models> models() {
         return client.get().uri("/api/tags").retrieve().bodyToMono(Tags.class)
                 .timeout(metadataTimeout).publishOn(scheduler)
@@ -69,6 +71,15 @@ public class OllamaGateway {
                 .onErrorReturn(new Api.Models(List.of(), false));
     }
 
+    @Override
+    public Flux<Api.InferRecord> infer(String model, JsonNode input) {
+        return Flux.error(new GatewayException(HttpStatus.BAD_REQUEST, "This model only supports chat."));
+    }
+
+    @Override
+    public Mono<byte[]> asset(String relativePath) { return Mono.empty(); }
+
+    @Override
     public Flux<Api.ChatChunk> chat(Api.ChatRequest request) {
         return Flux.defer(() -> {
             AtomicBoolean terminalSeen = new AtomicBoolean();

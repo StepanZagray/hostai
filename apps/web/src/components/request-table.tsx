@@ -1,4 +1,3 @@
-import { Activity } from "lucide-react";
 import { css } from "../../styled-system/css";
 import type { RequestRecord } from "../lib/api";
 import { Badge, EmptyState } from "./ui";
@@ -15,21 +14,12 @@ export function RequestTable({
   if (loading || error)
     return (
       <EmptyState
-        icon={<Activity size={22} />}
         title={loading ? "Loading request activity" : "Request activity unavailable"}
-        description={
-          loading ? "Checking your gateway…" : "Refresh to try loading request history again."
-        }
+        description={loading ? "Checking your gateway…" : "Refresh to load the history again."}
       />
     );
   if (!requests.length)
-    return (
-      <EmptyState
-        icon={<Activity size={22} />}
-        title="A quiet workspace"
-        description="Your requests will appear here as you use the playground. Prompt contents are never included in this log."
-      />
-    );
+    return <EmptyState title="No requests yet" description="Generations you run appear here." />;
   return (
     <div className={css({ overflowX: "auto" })}>
       <table
@@ -37,9 +27,25 @@ export function RequestTable({
           w: "full",
           textAlign: "left",
           fontSize: "xs",
+          lineHeight: 1.4,
           whiteSpace: "nowrap",
-          "& th": { color: "muted", fontWeight: 500, bg: "canvas", py: "3", px: "5" },
-          "& td": { py: "4", px: "5", borderTop: "1px solid token(colors.line)" },
+          borderCollapse: "collapse",
+          "& th": {
+            textStyle: "legend",
+            color: "muted",
+            py: "2",
+            px: { base: "3.5", md: "4" },
+            borderTop: "1px solid token(colors.line)",
+            borderBottom: "1px solid token(colors.line)",
+            bg: "well",
+          },
+          "& td": {
+            py: "2.5",
+            px: { base: "3.5", md: "4" },
+            color: "ink",
+            borderBottom: "1px solid token(colors.lineSoft)",
+          },
+          "& tr:last-child td": { borderBottom: "none" },
         })}
       >
         <thead>
@@ -54,7 +60,7 @@ export function RequestTable({
         <tbody>
           {requests.map((r) => (
             <tr key={r.id}>
-              <td className={css({ fontFamily: "mono", fontSize: "11px" })}>{r.model}</td>
+              <td className={css({ fontFamily: "mono" })}>{r.model}</td>
               <td>
                 <Badge
                   tone={
@@ -64,9 +70,19 @@ export function RequestTable({
                   {r.status}
                 </Badge>
               </td>
-              <td>{r.durationMs === null ? "—" : `${(r.durationMs / 1000).toFixed(1)}s`}</td>
-              <td>{r.outputTokens ?? "—"}</td>
-              <td>
+              <td className={css({ fontFamily: "mono", fontVariantNumeric: "tabular-nums" })}>
+                {r.durationMs === null ? "—" : `${(r.durationMs / 1000).toFixed(1)}s`}
+              </td>
+              <td className={css({ fontFamily: "mono", fontVariantNumeric: "tabular-nums" })}>
+                {r.outputTokens ?? "—"}
+              </td>
+              <td
+                className={css({
+                  fontFamily: "mono",
+                  fontVariantNumeric: "tabular-nums",
+                  color: "muted",
+                })}
+              >
                 {new Date(r.startedAt).toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",

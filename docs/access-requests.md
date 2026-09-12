@@ -1,25 +1,35 @@
 # Guest access requests
 
 Hosts can explicitly approve guests from an in-app request inbox for
-internet guest access; manual invitations remain available. It does not add
-accounts, verified identities, end-to-end encryption or production hosting.
+internet guest access. This is the secondary way in: the primary one is an access
+key the host creates and sends, and the inbox exists for a guest who does not have
+one. It does not add accounts, verified identities, end-to-end encryption or
+production hosting.
 
 ## Host consent and guest flow
 
-A host first starts client access for an installed model, then explicitly starts
-Cloudflare internet sharing. After the public connection is verified, the host
-can separately choose **Allow access requests**. Request intake starts off after
-every gateway restart and every new tunnel attempt. Send the guest link privately
-to the intended visitor. A link alone never grants chat permission.
+A host first presses **Start hosting**, which serves an installed model and starts
+the Cloudflare tunnel as one action. After the public connection is verified, the
+host can separately choose **Allow access requests**. Request intake starts off
+after every gateway restart and every new tunnel attempt. Send the public guest
+page address privately to the intended visitor. That address carries no credential
+and never grants chat permission by itself.
 
-The guest page discovers whether this host accepts requests. On public pages without
-a key, requesting access is the primary path; **Have an access key?** opens the
-manual form. If requests are unavailable, unsupported or fail to load, the key form
-is shown directly. Discovery never steals keyboard focus or submits either form.
-Changing intake availability preserves a key already being entered.
+The **Access key** input is the primary action on the guest page: it is always
+rendered, always expanded, and focused on load, on both HTTP and HTTPS origins.
+The page separately discovers whether this host accepts requests. When it does and
+no request exists yet, requesting access waits below the key form inside a closed
+disclosure summarised **No key? Ask the host for access**. Once a request is
+actually under way its panel renders expanded and is never hidden, so its code,
+status, timer and cancellation stay reachable. If requests are unavailable,
+unsupported or fail to load, only the key form is offered and the page says an
+existing key still works. The request flow is absent entirely on a non-HTTPS
+origin, because the gateway serves no request routes there. Discovery never steals
+keyboard focus or submits either form. Changing intake availability preserves a key
+already being entered.
 
 An unsent name stays editable through failed host-detail refreshes or closed intake,
-and survives connecting with a manual key and disconnecting chat. It lives only in
+and survives connecting with an access key and disconnecting chat. It lives only in
 this tab's memory; reloading or closing the tab clears it. Refreshing details never
 submits it. Submission requires current accepting-host details and an explicit action.
 The form checks the inbox's name restrictions before generating credentials and
@@ -43,11 +53,12 @@ existing conversation and draft. Credentials stay in memory only. **Disconnect**
 clears the active conversation and chat draft, while retaining this tab's access request
 and its credentials so the guest can cancel or explicitly connect again. Reloading
 or closing the tab loses all of them. An approved permission still lasts until expiry or revocation even if
-the guest loses its credential, just like a manually created invitation that was
-never copied.
+the guest loses its credential. Unlike a host-created key, it cannot be looked up
+and sent again: the host never held that secret, so the only remedy is to revoke
+the key and approve a fresh request.
 
 **Stop requests** closes the inbox, leaving approved keys and the tunnel usable.
-**Stop internet sharing** closes public access. **Revoke** in Access keys ends that
+**Stop hosting** closes public access and local serving together. **Revoke** in Access keys ends that
 key's permission and active generation. An explicit guest cancellation racing with
 approval either prevents issuance or durably revokes the newly approved key before
 reporting cancellation. Closing a tab does not automatically cancel a request.
@@ -82,7 +93,9 @@ The supported guest client generates two independent random 256-bit secrets: one
 for requesting/polling/cancelling, and one for the eventual access key. It sends
 only SHA-256 of the access secret for approval. The host stores the request bearer
 hash in a bounded in-memory inbox and commits the access-secret hash to the existing
-private grant store when the owner approves. Neither secret appears in a URL,
+private grant store when the owner approves. That grant is therefore stored
+hash-only and reports `recoverable: false`, so the host can never display it, even
+though host-created keys in the same store are now recoverable. Neither secret appears in a URL,
 cookie, browser storage or owner response.
 
 The server assigns the grant UUID. An approved guest recovers that UUID through
@@ -135,7 +148,7 @@ that grant before returning failure.
 These are bounded admission controls, not comprehensive denial-of-service
 protection. Unknown clients can exhaust admission for new requests, while existing
 request holders retain separate polling and cancellation budgets. A host can
-stop request intake and continue using private invitations.
+stop request intake and continue issuing access keys directly.
 
 ## API
 
@@ -150,8 +163,8 @@ bounded owner request metadata. It never contains secrets or commitments.
 | `/api/sharing/requests/<UUID>/approve` | `{ "code": "ABC123", "expiresInHours": 24 }` |
 | `/api/sharing/requests/<UUID>/reject` | `{ "code": "ABC123" }` |
 
-Guest request routes exist only on the verified internet listener. Local preview
-returns 404. They reject cross-origin browser requests and credential queries.
+Guest request routes exist only on the verified internet listener. The local
+listener returns 404. They reject cross-origin browser requests and credential queries.
 
 | Guest route | Authentication / body |
 | --- | --- |

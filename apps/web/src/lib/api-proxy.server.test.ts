@@ -1,16 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { proxy } from "./api-proxy.server";
+import { modelUiPolicy, proxy } from "./api-proxy.server";
 import { readChatStream } from "./api";
 
 const origin = "http://127.0.0.1:3000";
-function chat(body: BodyInit = "{}", headers: HeadersInit = {}, signal?: AbortSignal) {
-  return new Request(`${origin}/api/chat`, {
+function post(
+  path: string,
+  body: BodyInit = "{}",
+  headers: HeadersInit = {},
+  signal?: AbortSignal,
+) {
+  return new Request(`${origin}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...headers },
     body,
     signal,
     ...(body instanceof ReadableStream ? { duplex: "half" } : {}),
   });
+}
+function chat(body: BodyInit = "{}", headers: HeadersInit = {}, signal?: AbortSignal) {
+  return post("/api/chat", body, headers, signal);
+}
+function infer(body: BodyInit = "{}", headers: HeadersInit = {}, signal?: AbortSignal) {
+  return post("/api/infer", body, headers, signal);
 }
 function backend(response = new Response("{}")) {
   const fetch = vi.fn().mockResolvedValue(response);
@@ -74,7 +85,7 @@ describe("same-origin API proxy", () => {
     },
   );
   it.each<HeadersInit>([{}, { "Sec-Fetch-Site": "none" }])(
-    "allows non-browser owner request clients: %j",
+    "allows non-browser owner request guests: %j",
     async (headers) => {
       const fetch = backend();
       await (await proxy({ request: ownerRequest(ownerRequestPaths[0], headers) })).text();
@@ -386,6 +397,7 @@ describe("owner management proxy", () => {
     "/api/sharing/grants",
     "/api/sharing/grants/cleanup",
     `/api/sharing/grants/${id}/revoke`,
+    `/api/sharing/grants/${id}/key`,
   ])("forwards %s with JSON negotiation", async (path) => {
     const fetch = backend();
     await (await proxy({ request: mutation(path, { Origin: origin }) })).text();
@@ -396,6 +408,8 @@ describe("owner management proxy", () => {
     "/api/model-downloads/not-a-job/cancel",
     "/guest/v1/chat",
     "/api/sharing/grants/not-a-uuid/revoke",
+    "/api/sharing/grants/not-a-uuid/key",
+    `/api/sharing/grants/${id}/key/extra`,
     `/api/sharing/grants/${id}/delete`,
     `/api/model-downloads/${id}/delete`,
     `/api/model-downloads/${id}/cancel/extra`,
@@ -443,5 +457,127 @@ describe("owner management proxy", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect((await response).status).toBe(504);
     expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("structured inference proxy", () => {
+  it("forwards POST /api/infer with NDJSON negotiation and streams the body through", async () => {
+    const fetch = backend(
+      new Response('{"event":{"n":1},"done":false}\n{"done":true}\n', {
+        headers: { "Content-Type": "application/x-ndjson" },
+      }),
+    );
+    const body = JSON.stringify({ model: "pebby:1", input: { n: 1 } });
+    const response = await proxy({ request: infer(body, { Origin: origin }) });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("application/x-ndjson");
+    expect(await response.text()).toBe('{"event":{"n":1},"done":false}\n{"done":true}\n');
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0].pathname).toBe("/api/infer");
+    expect(fetch.mock.calls[0][1].method).toBe("POST");
+    expect(fetch.mock.calls[0][1].headers.Accept).toBe("application/x-ndjson");
+    expect(new TextDecoder().decode(fetch.mock.calls[0][1].body)).toBe(body);
+  });
+  it("gives /api/infer the same ten-minute deadline as chat", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url, init) => {
+        signal = init.signal;
+        return new Promise((_resolve, reject) => {
+          signal!.addEventListener("abort", () => reject(signal!.reason), { once: true });
+        });
+      }),
+    );
+    const response = proxy({ request: infer() });
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(signal?.aborted).toBe(true);
+    expect((await response).status).toBe(504);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+  it("rejects cross-origin, non-JSON and GET /api/infer without upstream work", async () => {
+    const fetch = backend();
+    expect((await proxy({ request: infer("{}", { Origin: "https://example.com" }) })).status).toBe(
+      403,
+    );
+    expect((await proxy({ request: infer("{}", { "Sec-Fetch-Site": "cross-site" }) })).status).toBe(
+      403,
+    );
+    expect((await proxy({ request: infer("{}", { "Content-Type": "text/plain" }) })).status).toBe(
+      415,
+    );
+    expect((await proxy({ request: new Request(`${origin}/api/infer`) })).status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("model UI asset proxy", () => {
+  const asset = (path: string, method = "GET") => new Request(`${origin}${path}`, { method });
+  it("forwards a valid asset path and applies the model-UI headers", async () => {
+    const fetch = backend(
+      new Response("<!doctype html><title>UI</title>", {
+        headers: { "Content-Type": "text/html; charset=utf-8", "X-Frame-Options": "DENY" },
+      }),
+    );
+    const response = await proxy({ request: asset("/api/model-ui/pebby/ui/index.html") });
+    expect(response.status).toBe(200);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0].pathname).toBe("/api/model-ui/pebby/ui/index.html");
+    expect(fetch.mock.calls[0][1].method).toBe("GET");
+    expect(fetch.mock.calls[0][1].headers.Accept).toBe("*/*");
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    const policy = response.headers.get("content-security-policy");
+    expect(policy).toBe(modelUiPolicy(origin));
+    expect(policy).toContain(`frame-ancestors 'self' ${origin}`);
+    expect(policy).toContain("connect-src 'none'");
+    expect(response.headers.get("x-frame-options")).toBeNull();
+    expect(await response.text()).toBe("<!doctype html><title>UI</title>");
+  });
+  it("defaults the content type when upstream omits it", async () => {
+    backend(new Response(new Uint8Array([0, 1, 2]), { headers: {} }));
+    const response = await proxy({ request: asset("/api/model-ui/pebby/ui/app.wasm") });
+    // The Response constructor sets no content-type for a byte body.
+    expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([0, 1, 2]));
+  });
+  it("preserves an upstream 404 for a missing asset", async () => {
+    backend(Response.json({ detail: "Not found." }, { status: 404 }));
+    const response = await proxy({ request: asset("/api/model-ui/pebby/ui/missing.js") });
+    expect(response.status).toBe(404);
+    expect(response.headers.get("content-security-policy")).toBe(modelUiPolicy(origin));
+    expect(await response.json()).toEqual({ detail: "Not found." });
+  });
+  it("accepts up to eight path segments", async () => {
+    const fetch = backend();
+    await (await proxy({ request: asset("/api/model-ui/pebby/a/b/c/d/e/f/g/h.html") })).text();
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+  // The WHATWG URL parser resolves literal "." and ".." segments before the proxy sees the
+  // pathname, so those cases cannot reach the allowlist; the percent-encoded form stays encoded
+  // and exercises the proxy's own check.
+  it.each([
+    asset("/api/model-ui"),
+    asset("/api/model-ui/"),
+    asset("/api/model-ui/pebby"),
+    asset("/api/model-ui/pebby/"),
+    asset("/api/model-ui/Pebby/ui/index.html"),
+    asset("/api/model-ui/-pebby/ui/index.html"),
+    asset(`/api/model-ui/${"a".repeat(33)}/ui/index.html`),
+    asset("/api/model-ui/pebby/ui//index.html"),
+    asset("/api/model-ui/pebby/%2e%2e/index.html"),
+    asset("/api/model-ui/pebby/ui/index%2ehtml"),
+    asset("/api/model-ui/pebby/ui/in dex.html"),
+    asset("/api/model-ui/pebby/a/b/c/d/e/f/g/h/i.html"),
+    asset("/api/model-ui/pebby/ui/index.html", "POST"),
+  ])("rejects $url without upstream work", async (request) => {
+    const fetch = backend();
+    expect((await proxy({ request })).status).toBe(404);
+    expect(fetch).not.toHaveBeenCalled();
   });
 });

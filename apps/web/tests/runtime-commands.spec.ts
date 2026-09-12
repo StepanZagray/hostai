@@ -23,7 +23,7 @@ async function runtimeFixture(page: Page, endpoint: unknown) {
 
 const sections = [
   ["/connection", "region", "Get your host ready"],
-  ["/", "region", "From zero to first token"],
+  ["/", "region", "Host setup"],
   ["/models", "complementary", "Add a model from your terminal"],
 ] as const;
 
@@ -117,7 +117,7 @@ test("malformed runtime metadata never becomes a copyable command", async ({ pag
 test("a ready overview avoids redundant start and download commands", async ({ page }) => {
   await hostFixture(page);
   await page.goto("/");
-  const section = page.getByRole("region", { name: "From zero to first token" });
+  const section = page.getByRole("region", { name: "Host setup" });
   await expect(section).toContainText("Ollama is already connected");
   await expect(section).toContainText("Your library has a model available to try");
   await expect(section.locator("pre")).toHaveCount(0);

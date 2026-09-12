@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Globe2, Laptop, RefreshCw, ShieldCheck } from "lucide-react";
+import { Check, RefreshCw } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { RuntimeCommand } from "../components/runtime-command";
 import { Topology } from "../components/topology";
@@ -8,27 +8,29 @@ import {
   Badge,
   Button,
   CodeBlock,
+  DataList,
   PageHeading,
-  PanelHeading,
-  muted,
-  panel,
+  Section,
   button,
+  caption,
+  muted,
 } from "../components/ui";
 import { useHost } from "../lib/host-context";
-import { chatUnavailableReason } from "../lib/model-admission";
+import { interfaceUnavailableReason } from "../lib/model-admission";
 
 export const Route = createFileRoute("/connection")({ component: Connection });
+
 function Connection() {
   const { status, models, errors, loading, refreshing, refresh } = useHost();
   const ready =
-    !!status?.ollamaConnected && models.some((model) => chatUnavailableReason(model) === null);
+    !!status?.ollamaConnected && models.some((model) => interfaceUnavailableReason(model) === null);
   const [workspaceUrl, setWorkspaceUrl] = useState("");
   useEffect(() => setWorkspaceUrl(window.location.origin), []);
   return (
     <>
       <PageHeading
         title="Connection & setup"
-        description="One local workspace. Open it on your desktop or in your browser."
+        description="One workspace, served from this machine to your desktop app and your browser."
         action={
           <Button disabled={refreshing} onClick={() => void refresh()}>
             <RefreshCw />
@@ -36,193 +38,192 @@ function Connection() {
           </Button>
         }
       />
-      <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Get your host ready">
-        <PanelHeading
-          title="Get your host ready"
-          description="This workspace is already open. Complete the missing steps, then check the connection."
-        />
-        <div
+      <Section
+        aria-label="Get your host ready"
+        title="Get your host ready"
+        description="Four steps from a cold machine to a first answer."
+        className={css({ mb: "5" })}
+      >
+        <ol
           className={css({
-            px: "5",
-            pb: "6",
             display: "grid",
             gridTemplateColumns: { base: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" },
-            gap: "6",
+            rowGap: "5",
+            columnGap: "8",
           })}
         >
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
-              1. Start the Java gateway
-            </h3>
+          <Step index={1} title="Start the Java gateway" done={!loading && !!status}>
             {loading ? (
               <p className={muted}>Checking your gateway…</p>
             ) : status ? (
               <p className={muted}>Your gateway is already running. Keep this workspace open.</p>
             ) : (
               <>
-                <p className={`${muted} ${css({ mb: "3" })}`}>
-                  Start only the missing gateway from the project directory with Java 26. If it is
-                  already running, check its terminal for errors before retrying.
+                <p className={`${muted} ${css({ mb: "2" })}`}>
+                  Run this from the project directory with Java 26. If it is already running, check
+                  its terminal for errors.
                 </p>
                 <CodeBlock code="pnpm backend:dev" />
               </>
             )}
-          </div>
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>2. Start Ollama</h3>
+          </Step>
+          <Step index={2} title="Start Ollama" done={!!status?.ollamaConnected}>
             {status?.ollamaConnected ? (
-              <p className={muted}>Ollama is already connected. No restart is needed.</p>
+              <p className={muted}>Ollama is already connected.</p>
             ) : (
               <RuntimeCommand endpoint={status?.ollamaUrl} loading={loading} action="serve" />
             )}
-          </div>
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
-              3. Choose a small first model
-            </h3>
+          </Step>
+          <Step index={3} title="Install a model" done={!loading && ready}>
             {loading ? (
               <p className={muted}>Checking your model library…</p>
             ) : ready ? (
-              <p className={muted}>
-                Your library has a model available to try. Choose it in the next step.
-              </p>
+              <p className={muted}>Your library has a model available to try.</p>
             ) : errors.models && status?.ollamaConnected ? (
               <p className={muted}>
-                Model discovery failed. Check the connection again before downloading another model.
+                Model discovery failed. Check the connection again before downloading anything.
               </p>
             ) : status?.ollamaConnected && models.length > 0 ? (
               <>
-                <p className={`${muted} ${css({ mb: "3" })}`}>
-                  Your discovered models are not available for chat. Review their reasons before
-                  downloading another model.
+                <p className={`${muted} ${css({ mb: "2" })}`}>
+                  None of your installed models can chat. Review why before downloading another.
                 </p>
-                <Link to="/models" className={button({ variant: "secondary" })}>
+                <Link to="/models" className={button()}>
                   Review model library
                 </Link>
               </>
             ) : (
               <>
-                <p className={`${muted} ${css({ mb: "3" })}`}>
-                  Open the model library to choose a model and track its download. Check its disk
-                  and memory requirements before starting.
+                <p className={`${muted} ${css({ mb: "2" })}`}>
+                  Pick a model in the library and track its download there. Check its disk and
+                  memory requirements first.
                 </p>
-                <Link to="/models" className={button({ variant: "secondary" })}>
+                <Link to="/models" className={button()}>
                   Download a local model
                 </Link>
               </>
             )}
-          </div>
-          <div>
-            <h3 className={css({ fontSize: "sm", fontWeight: 700, mb: "2" })}>
-              4. Choose a model and chat
-            </h3>
-            <p className={`${muted} ${css({ mb: "3" })}`}>
+          </Step>
+          <Step index={4} title="Send a prompt">
+            <p className={`${muted} ${css({ mb: "2" })}`}>
               {ready
-                ? "Open your library, select a model, and send a first prompt to test it."
-                : "Once Ollama is connected and a model is available, continue to your library."}
+                ? "Installed does not mean tested. Try the model before you rely on it."
+                : "Available once Ollama is connected and a model is installed."}
             </p>
             {ready && (
               <Link to="/models" className={button({ variant: "primary" })}>
                 Try a local model
               </Link>
             )}
-          </div>
-        </div>
-      </section>
+          </Step>
+        </ol>
+      </Section>
       <div
         className={css({
           display: "grid",
-          gridTemplateColumns: { base: "1fr", xl: "1.3fr 1fr" },
-          gap: "6",
-          mb: "6",
+          gridTemplateColumns: { base: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" },
+          gap: "5",
+          mb: "5",
         })}
       >
         <Topology />
-        <section className={panel} aria-label="Local connection details">
-          <PanelHeading
-            title="Host connection"
-            action={
-              <Badge tone={status ? "good" : "warning"}>
-                {status ? "Gateway connected" : "Gateway unavailable"}
-              </Badge>
-            }
+        <Section
+          aria-label="Local connection details"
+          title="Host connection"
+          aside={
+            <Badge tone={status ? "good" : "warning"}>
+              {status ? "Gateway connected" : "Gateway unavailable"}
+            </Badge>
+          }
+        >
+          <DataList
+            items={[
+              { term: "Inference runtime", value: status?.ollamaUrl ?? "Unavailable" },
+              { term: "Gateway version", value: status?.version ?? "—" },
+              { term: "Java runtime", value: status?.javaVersion ?? "—" },
+              { term: "Reachable from", value: "This machine only" },
+            ]}
           />
-          <dl
-            className={css({
-              px: "5",
-              pb: "5",
-              fontSize: "xs",
-              "& > div": {
-                display: "flex",
-                justifyContent: "space-between",
-                gap: "3",
-                py: "3",
-                borderBottom: "1px solid token(colors.line)",
-                flexWrap: "wrap",
-              },
-              "& dt": { color: "muted" },
-              "& dd": { fontFamily: "mono", overflowWrap: "anywhere" },
-            })}
-          >
-            <div>
-              <dt>Inference runtime</dt>
-              <dd>{status?.ollamaUrl ?? "Unavailable"}</dd>
-            </div>
-            <div>
-              <dt>Gateway version</dt>
-              <dd>{status?.version ?? "—"}</dd>
-            </div>
-            <div>
-              <dt>Java runtime</dt>
-              <dd>{status?.javaVersion ?? "—"}</dd>
-            </div>
-            <div>
-              <dt>Access</dt>
-              <dd>Local machine only</dd>
-            </div>
-          </dl>
-        </section>
+        </Section>
       </div>
       <div
         className={css({
           display: "grid",
-          gridTemplateColumns: { base: "1fr", lg: "1fr 1fr" },
-          gap: "6",
-          mt: "6",
+          gridTemplateColumns: { base: "minmax(0, 1fr)", lg: "repeat(2, minmax(0, 1fr))" },
+          gap: "5",
         })}
       >
-        <section className={`${panel} ${css({ p: "5" })}`}>
-          <Laptop size={22} className={css({ color: "accent", mb: "3" })} />
-          <h2 className={css({ fontWeight: 750, mb: "2" })}>Open this workspace in a browser</h2>
-          <p className={`${muted} ${css({ mb: "4" })}`}>
-            Open this address on this same machine. The existing workspace serves both interfaces;
-            you do not need to run another launcher or gateway.
+        <Section title="Open this workspace in a browser">
+          <p className={`${muted} ${css({ mb: "3" })}`}>
+            The running workspace serves both interfaces. Open this address on this machine — no
+            second launcher or gateway.
           </p>
           {workspaceUrl && <CodeBlock code={workspaceUrl} copyLabel="Copy workspace address" />}
-        </section>
-        <section className={`${panel} ${css({ p: "5" })}`}>
-          <ShieldCheck size={22} className={css({ color: "accent", mb: "3" })} />
-          <h2 className={css({ fontWeight: 750, mb: "2" })}>Sharing and remote clients</h2>
-          <p className={muted}>
-            Create expiring keys for a separate guest chat page. Client access offers local preview
-            and optional temporary internet sharing through Cloudflare, with separate keys and a
-            connection check. Connections are by invitation only: send a client link directly to
-            someone you trust. Copying this owner workspace address does not give clients access.
+          <p className={`${caption} ${css({ mt: "2" })}`}>
+            A localhost address is reachable only from this machine.
           </p>
-          <Link
-            to="/sharing"
-            search={{ model: undefined }}
-            className={button({ variant: "secondary" })}
-          >
-            Set up client access
+        </Section>
+        <Section title="Let someone else use a model">
+          <p className={`${muted} ${css({ mb: "3" })}`}>
+            Guest access serves one model on a separate page, behind expiring keys you can revoke.
+            Local by default; a temporary Cloudflare link is opt-in. Sharing this workspace address
+            grants nothing.
+          </p>
+          <Link to="/sharing" search={{ model: undefined }} className={button()}>
+            Set up guest access
           </Link>
-        </section>
+        </Section>
       </div>
-      <p
-        className={`${muted} ${css({ mt: "5", display: "flex", gap: "2", alignItems: "center" })}`}
-      >
-        <Globe2 size={15} />A localhost address is accessible only from this machine.
-      </p>
     </>
+  );
+}
+
+/**
+ * One numbered step of the setup sequence. The marker is a small mono numeral
+ * in a hairline circle, lit green with a check once that step is met.
+ */
+function Step({
+  index,
+  title,
+  done = false,
+  children,
+}: {
+  index: number;
+  title: string;
+  done?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <li className={css({ display: "flex", gap: "3", minW: 0 })}>
+      <span
+        aria-hidden="true"
+        data-done={done}
+        className={css({
+          flexShrink: 0,
+          border: "1px solid token(colors.lineStrong)",
+          borderRadius: "full",
+          w: "22px",
+          h: "22px",
+          display: "grid",
+          placeItems: "center",
+          color: "muted",
+          fontFamily: "mono",
+          fontSize: "2xs",
+          "&[data-done=true]": {
+            bg: "liveSoft",
+            borderColor: "liveSoft",
+            color: "live",
+          },
+        })}
+      >
+        {done ? <Check size={12} strokeWidth={2.5} /> : index}
+      </span>
+      <div className={css({ minW: 0, flex: 1 })}>
+        <h3 className={css({ fontSize: "sm", fontWeight: 600, lineHeight: "22px", mb: "1.5" })}>
+          {title}
+        </h3>
+        {children}
+      </div>
+    </li>
   );
 }

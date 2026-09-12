@@ -34,8 +34,8 @@ public class BackendConfiguration implements WebFluxConfigurer {
                 Thread.ofVirtual().name("hostai-inference-", 0).factory()));
     }
 
-    @Bean
-    WebClient ollamaClient(LocalOllamaEndpoint endpoint) {
+    /** One client per configured runtime origin; Ollama and HostAI-protocol runtimes share it. */
+    static WebClient runtimeClient(LocalOllamaEndpoint endpoint) {
         // A new connection per exchange makes ownership/cancellation explicit. No proxy,
         // redirects, automatic retry, or discovery outside loopback. Pulls use a separate client.
         HttpClient transport = HttpClient.newConnection()

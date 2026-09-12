@@ -1,5 +1,119 @@
 # Autonomous improvement log
 
+## A runtime can bring its own interface
+
+HostAI had one interface, chat, and one runtime, Ollama, and every model and
+request passed through a gateway class written for it, `OllamaGateway`. A world
+model that predicts a board from an action does not fit a transcript, and
+teaching the gateway a "kind" per model would have made HostAI responsible for
+knowing what every runtime's inputs and outputs mean. This cycle takes the other
+route. A runtime is any loopback HTTP process; on every catalog read the gateway
+asks each configured origin for `GET /hostai/manifest`, and a `200` JSON reply
+selects the small HostAI runtime protocol (manifest, `POST /hostai/infer`, static
+UI files) while anything else is treated as Ollama. `RuntimeCatalog` merges the
+origins behind one `InferenceRuntime` interface with `OllamaRuntime` and
+`HostAiRuntime` implementations; the hard-coded `OllamaGateway` class is removed.
+`HOSTAI_RUNTIME_URLS` lists the origins, and an empty value keeps the single
+`HOSTAI_OLLAMA_URL`.
+
+Inference for these runtimes is opaque. `POST /api/infer` takes `{model, input}`
+with any JSON `input` and streams `{event, done, error?}` records. The gateway
+enforces the 256 KiB body limit, the two shared inference slots, request history,
+sharing and access keys, and forwards frames unchanged. There are no model kinds
+and no payload schema: the runtime and its own page agree on the format, and
+HostAI never reads it.
+
+A runtime that declares `ui` in its manifest gets its page rendered in place of
+the chat panel, in Playground and on the guest page, inside an `iframe` with
+`sandbox="allow-scripts"`. The gateway proxies only the directory containing the
+manifest entry (`/api/model-ui/{runtime}/{path}` for owners,
+`/guest/v1/model-ui/…` for guests while access is running), sets the content type
+from an extension allowlist, and adds `no-store`, `nosniff`, `no-referrer` and a
+Content-Security-Policy with `connect-src 'none'`, so the frame has an opaque
+origin, no network and no storage. Its only channel to HostAI is
+`hostai-bridge.js`, which the gateway serves itself and which exposes
+`window.hostai` over `postMessage` with strict source checks; the host page runs
+the inference on the frame's behalf and relays events, completion and errors.
+Owners see the runtime's bounded 400 message; guests see fixed text, and the
+guest page never hands the frame its key. The owner chose to run the runtime, so
+its page is the owner's own code, but it still runs with less privilege than the
+host page. The frame keeps its own state and HostAI does not persist it.
+
+Pebby, a grid-world model with an eight-by-eight board and four arrow actions, is
+the reference consumer: its `serve.py` speaks the protocol directly and its
+integration script drives a real gateway build.
+
+## An instrument panel for a machine you own
+
+The previous redesign had produced a competent but generic dashboard: a dark
+navigation rail beside white cards, a teal accent, four metric tiles and pill
+badges. This cycle replaced that visual identity with one drawn from the
+product's own world. HostAI is a panel for hardware the owner runs, so the
+interface now reads like one: warm graphite ink on stone paper, hairline rules
+instead of shadows, and small status lights that carry every state. The palette
+is a single token set (`paper`, `panel`, `well`, `ink`, `live`, `amber`, `stop`)
+resolved through CSS variables, so light and dark remain one system and no
+component branches on colour scheme. Instrument Sans replaces Manrope for the
+interface and IBM Plex Mono replaces Geist Mono for every machine value: model
+tags, addresses, versions, counts, codes and timestamps. Both are bundled
+locally, so the guest page's `font-src 'self'` policy still holds.
+
+The signature is the request path. The header now shows browser, gateway, Ollama
+and model readiness as a row of lights that are wired to the same host snapshot
+every page uses, so the owner always sees which hop is live without opening the
+Connection page. The rail shares the page background and ends in a stamped plate
+with the gateway version and the runtime's loopback address; the wordmark carries
+the gateway's power light. Status pills became a light beside a mono legend, the
+metric tiles became one readout strip with hairline dividers, request tables and
+key lists became ledger rows, and both conversations became transcripts: a user
+prompt sits in a ruled well under a "You" legend and the answer follows under the
+model's tag. Composers are quiet panels with the hint on the left and Send on the
+right. Primary actions are ink; colour is reserved for state.
+
+Every string, landmark, id and element type the browser and unit suites assert
+was preserved, with two deliberate test edits: the guest computed-style check
+now expects Instrument Sans, and the header strip is a labelled group of spans
+rather than a list after a page-wide `listitem` count caught the list. The
+Electron window background follows the active colour scheme, an opt-in capture
+spec photographs every surface in both schemes at 1440 and 320 pixels, and the
+chosen values are recorded in `apps/web/.interface-design/system.md`.
+
+## Interface redesign and a single guest vocabulary
+
+The workspace was rebuilt around a token-driven design system instead of one flat
+light palette. `panda.config.ts` now resolves every colour through CSS variables,
+so light and dark are the same token set under `prefers-color-scheme` plus an
+explicit `data-theme` override. A boot script in the document head applies a
+stored choice before first paint; the guest bundle reads the same preference from
+its module entry because its Content-Security-Policy forbids inline scripts, and
+it never writes storage unless a guest picks a theme. New primitives — `Section`,
+`Field`, `Note`, `Disclosure`, `DataList` — replaced ad-hoc panel markup, and an
+explicit type scale ends the mix of token sizes and one-off pixel values that the
+previous 14px root had forced.
+
+Copy was the larger problem. Every panel ended in two to four sentences of prose,
+and one page could stack six consecutive muted paragraphs above its controls. The
+rewrite keeps each disclosed fact — Cloudflare terminating TLS and seeing messages
+and access keys, unverified host and guest identities, one-time invite links, key
+expiry and retention limits, irreversible cleanup — but states each one once, at
+the control it affects, and moves the rest behind `Disclosure` summaries. Marketing
+filler ("Make yourself at host.", "A small setup. A lot of possibilities.", "Built
+to run on your terms.") and the reflexive "X does not do Y" clarifications were
+removed outright. The sidebar's promo card and placeholder user identity are gone;
+the rail now reports gateway and runtime state instead.
+
+The host and guest surfaces had used two vocabularies for the same person. Host
+pages said *client*, the shared page and the request inbox said *guest*. Everything
+is now *guest*, with *invite link* for the one-time URL and *key* for the stored
+permission. Structural changes follow the same intent: Overview replaced its hero
+and duplicated setup panel with a status bar, metrics and one setup checklist; the
+model library became a scannable list; Playground and guest chat became full-height
+conversations with anchored composers; guest access kept its five regions but each
+now leads with state instead of prose.
+
+Touch targets stayed at the project's 44px on the guest-facing pages, and the
+44px assertion in `sharing.spec.ts` was extended to selects and inputs.
+
 ## Explain guest actions that cannot run yet
 
 Two findings from the verified Claude Opus 5 High guest review remained: Enter
@@ -283,14 +397,14 @@ the device-clock issue raised by the advisor. Verification is recorded below.
 ## Retain the sharing draft through a model test
 
 A host-name draft now belongs to the owner workspace tab, so Test model in
-playground and returning to Client access preserve the edit. Explicit discard
+playground and returning to Guest access preserve the edit. Explicit discard
 restores the last reported server name and returns keyboard focus to the field.
 A matching successful Start acknowledges the submitted draft; a failed response,
 a lost response, or a status poll showing another running name cannot discard it.
 The draft remains separate from server state and from all access credentials.
 Reload and closing the tab clear it, and no browser storage is used.
 
-Client access derives test evidence from the chosen model name's retained
+Guest access derives test evidence from the chosen model name's retained
 conversation using the same completed/nonempty predicate as Playground. Switching
 models, empty/failed output and clearing history cannot leave a stale tested flag.
 The observation is advisory: it neither gates Start nor proves memory fit, current
@@ -302,9 +416,9 @@ rule to clear on any running status was not adopted: another window or an uncert
 write can report a different running name, and the browser test preserves the draft
 through that case. Verification and screenshots are recorded in verification.
 
-## Preserve the intended model when enabling client access
+## Preserve the intended model when enabling guest access
 
-Client access now follows the model in its URL and updates that URL when the host
+Guest access now follows the model in its URL and updates that URL when the host
 changes the picker. Without an explicit model link, the form resumes the gateway's
 last model and host name; a fresh gateway requires a model choice. Stopping a
 non-default model no longer prepares a different model under the default host name.
@@ -999,7 +1113,7 @@ raw rebound Hosts and asset traversal, and old keys after a publication change.
 An existing owner Host test was outside Opus's review scope; it was not absent.
 
 The reviewer flagged the still-bound listener after Stop. This is deliberate:
-Stop client access ends authorization/work, while the guest page remains available
+Stop guest access ends authorization/work, while the guest page remains available
 for reconnect feedback. Owner link controls depend on active state and clear on
 stop/revoke. Gateway shutdown closes the listener. The existing stream parser
 already terminates at the first done record, addressing the terminal-record race

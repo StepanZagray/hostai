@@ -2,6 +2,10 @@ const MAX_BODY_BYTES = 256 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
 // Give Java's ten-minute generation deadline time to deliver its terminal error.
 const CHAT_TIMEOUT_MS = 610_000;
+const MODEL_UI_PREFIX = "/api/model-ui/";
+const MODEL_UI_RUNTIME = /^[a-z0-9][a-z0-9-]{0,31}$/;
+const MODEL_UI_SEGMENT = /^[A-Za-z0-9._-]+$/;
+const MODEL_UI_MAX_SEGMENTS = 8;
 
 class RequestError extends Error {
   constructor(
@@ -10,6 +14,26 @@ class RequestError extends Error {
   ) {
     super(message);
   }
+}
+
+export function modelUiPolicy(origin: string): string {
+  return (
+    `default-src 'none'; script-src 'self' ${origin}; ` +
+    `style-src 'self' 'unsafe-inline' ${origin}; img-src 'self' data: blob: ${origin}; ` +
+    `font-src 'self' ${origin}; connect-src 'none'; base-uri 'none'; form-action 'none'; ` +
+    `frame-ancestors 'self' ${origin}`
+  );
+}
+
+// Checked on the raw pathname: percent-encoded characters never match the segment class.
+function isModelUiPath(pathname: string): boolean {
+  if (!pathname.startsWith(MODEL_UI_PREFIX)) return false;
+  const [runtime, ...segments] = pathname.slice(MODEL_UI_PREFIX.length).split("/");
+  if (!MODEL_UI_RUNTIME.test(runtime)) return false;
+  if (segments.length < 1 || segments.length > MODEL_UI_MAX_SEGMENTS) return false;
+  return segments.every(
+    (segment) => MODEL_UI_SEGMENT.test(segment) && segment !== "." && segment !== "..",
+  );
 }
 
 async function readBody(request: Request, signal: AbortSignal): Promise<Uint8Array<ArrayBuffer>> {
@@ -50,9 +74,52 @@ async function readBody(request: Request, signal: AbortSignal): Promise<Uint8Arr
   }
 }
 
+function relay(
+  upstream: Response,
+  headers: Headers,
+  abort: AbortController,
+  cleanup: () => void,
+): Response {
+  const reader = upstream.body?.getReader();
+  if (!reader) {
+    cleanup();
+    return new Response(null, { status: upstream.status, headers });
+  }
+  const release = () => {
+    cleanup();
+    reader.releaseLock();
+  };
+  const stream = new ReadableStream({
+    async pull(controller) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) {
+          release();
+          controller.close();
+        } else controller.enqueue(value);
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    async cancel() {
+      abort.abort();
+      try {
+        await reader.cancel().catch(() => {});
+      } finally {
+        release();
+      }
+    },
+  });
+  return new Response(stream, { status: upstream.status, headers });
+}
+
 export async function proxy({ request }: { request: Request }) {
   const url = new URL(request.url);
   const isChat = url.pathname === "/api/chat";
+  const isInfer = url.pathname === "/api/infer";
+  const isStreaming = isChat || isInfer;
+  const isModelUi = isModelUiPath(url.pathname);
   const isDownload = url.pathname === "/api/model-downloads";
   const isCancel =
     /^\/api\/model-downloads\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/cancel$/i.test(
@@ -73,16 +140,17 @@ export async function proxy({ request }: { request: Request }) {
       "/api/sharing/internet/start",
       "/api/sharing/internet/stop",
     ].includes(url.pathname) ||
-    /^\/api\/sharing\/grants\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/revoke$/i.test(
+    /^\/api\/sharing\/grants\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:revoke|key)$/i.test(
       url.pathname,
     );
   const allowed =
     request.method === "GET"
       ? ["/api/status", "/api/models", "/api/requests"].includes(url.pathname) ||
         isDownload ||
-        isSharingRead
+        isSharingRead ||
+        isModelUi
       : request.method === "POST" &&
-        (isChat || isDownload || isCancel || isSharingMutation || isAccessRequestMutation);
+        (isStreaming || isDownload || isCancel || isSharingMutation || isAccessRequestMutation);
   if (!allowed) return Response.json({ detail: "Endpoint not found." }, { status: 404 });
   if (request.method === "POST") {
     const origin = request.headers.get("origin");
@@ -121,19 +189,35 @@ export async function proxy({ request }: { request: Request }) {
     const body = request.method === "POST" ? await readBody(request, abort.signal) : undefined;
     abort.signal.throwIfAborted();
     clearTimeout(timer);
-    timer = setTimeout(timeout, isChat ? CHAT_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+    timer = setTimeout(timeout, isStreaming ? CHAT_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
     const upstream = await fetch(
       new URL(url.pathname, process.env.HOSTAI_BACKEND_URL || "http://127.0.0.1:8080"),
       {
         method: request.method,
         body,
         signal: abort.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Accept: isChat ? "application/x-ndjson" : "application/json",
-        },
+        headers: isModelUi
+          ? { Accept: "*/*" }
+          : {
+              "Content-Type": "application/json",
+              Accept: isStreaming ? "application/x-ndjson" : "application/json",
+            },
       },
     );
+    if (isModelUi) {
+      return relay(
+        upstream,
+        new Headers({
+          "Content-Type": upstream.headers.get("content-type") || "application/octet-stream",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+          "Referrer-Policy": "no-referrer",
+          "Content-Security-Policy": modelUiPolicy(url.origin),
+        }),
+        abort,
+        cleanup,
+      );
+    }
     const headers = new Headers({
       "Content-Type": upstream.headers.get("content-type") || "application/json",
       "Cache-Control": "no-store",
@@ -142,38 +226,7 @@ export async function proxy({ request }: { request: Request }) {
     });
     const retryAfter = upstream.headers.get("retry-after");
     if (retryAfter) headers.set("Retry-After", retryAfter);
-    const reader = upstream.body?.getReader();
-    if (!reader) {
-      cleanup();
-      return new Response(null, { status: upstream.status, headers });
-    }
-    const release = () => {
-      cleanup();
-      reader.releaseLock();
-    };
-    const stream = new ReadableStream({
-      async pull(controller) {
-        try {
-          const { done, value } = await reader.read();
-          if (done) {
-            release();
-            controller.close();
-          } else controller.enqueue(value);
-        } catch (error) {
-          release();
-          controller.error(error);
-        }
-      },
-      async cancel() {
-        abort.abort();
-        try {
-          await reader.cancel().catch(() => {});
-        } finally {
-          release();
-        }
-      },
-    });
-    return new Response(stream, { status: upstream.status, headers });
+    return relay(upstream, headers, abort, cleanup);
   } catch (error) {
     cleanup();
     if (error instanceof RequestError)

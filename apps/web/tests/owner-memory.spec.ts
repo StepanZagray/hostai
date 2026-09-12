@@ -39,7 +39,7 @@ test("each model retains its conversation, draft and settings through navigation
   await composer.fill("Draft B");
   await page.getByRole("link", { name: "Models", exact: true }).click();
   await page
-    .getByRole("article")
+    .getByRole("listitem")
     .filter({ has: page.getByRole("heading", { name: a, exact: true }) })
     .getByRole("link", { name: "Try in playground" })
     .click();
@@ -54,7 +54,7 @@ test("each model retains its conversation, draft and settings through navigation
   await page.setViewportSize({ width: 320, height: 850 });
   await expect(composer).toHaveValue("Draft A");
   await page.evaluate(() => document.fonts.ready.then(() => undefined));
-  const description = page.getByRole("heading", { level: 1 }).locator("..").locator("p");
+  const description = page.getByText(`Answer from ${a}`, { exact: true });
   await expect
     .poll(() =>
       description.evaluate((element) => {

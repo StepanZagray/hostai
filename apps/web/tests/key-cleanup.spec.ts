@@ -2,15 +2,23 @@ import { expect, test, type Page } from "@playwright/test";
 import {
   accessFixture,
   grant,
+  keyToken,
   publishLocal,
   publishInternet,
-  publicOrigin,
 } from "./support/sharing-fixture";
 
 const cleanupButton = (page: Page) =>
   page.getByRole("button", { name: "Remove expired and revoked keys", exact: true });
 const cleanupGroup = (page: Page) =>
   page.getByRole("group", { name: "Key storage cleanup", exact: true });
+/** A stored key stays masked until the host asks for it, so reading one takes a click. */
+const keyField = (page: Page, label: string) =>
+  page.getByRole("textbox", { name: `Access key for ${label}, visible`, exact: true });
+const maskedKey = (page: Page, label: string) =>
+  page.getByRole("group", { name: `Access key for ${label}`, exact: true }).locator("p");
+const masked = "•".repeat(24);
+const showKey = (page: Page, label: string) =>
+  page.getByRole("button", { name: `Show key ${label}`, exact: true });
 function mixedKeys() {
   return [
     { ...grant("local"), id: crypto.randomUUID(), label: "Active local guest" },
@@ -86,10 +94,10 @@ test("cleanup frees a full key store and enables an explicitly requested new inv
   }));
   await page.goto("/sharing");
   await page.getByLabel("Key label", { exact: true }).fill("Next invited guest");
-  const create = page.getByRole("button", { name: "Create client link", exact: true });
+  const create = page.getByRole("button", { name: "Create key", exact: true });
   await expect(create).toBeDisabled();
-  await expect(page.getByRole("region", { name: "Create client key", exact: true })).toContainText(
-    "Remove expired and revoked keys in Access keys below",
+  await expect(page.getByRole("region", { name: "Access keys", exact: true })).toContainText(
+    "All 100 key slots are in use, including expired and revoked keys. Remove expired and revoked keys below; keys that still grant access must be revoked first.",
   );
   await cleanupButton(page).click();
   await expect(cleanupGroup(page).getByRole("status")).toContainText("Removed 100");
@@ -97,11 +105,21 @@ test("cleanup frees a full key store and enables an explicitly requested new inv
   expect(fixture.calls).toEqual(["/api/sharing/grants/cleanup"]);
   await expect(page.getByLabel("Key label", { exact: true })).toHaveValue("Next invited guest");
   await create.click();
-  await expect(page.getByRole("button", { name: "Copy client link", exact: true })).toBeEnabled();
-  expect(fixture.calls).toEqual(["/api/sharing/grants/cleanup", "/api/sharing/grants"]);
+  await expect(maskedKey(page, "Next invited guest")).toHaveText(masked);
+  await expect(keyField(page, "Next invited guest")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Copy key Next invited guest", exact: true }),
+  ).toBeEnabled();
+  await showKey(page, "Next invited guest").click();
+  await expect(keyField(page, "Next invited guest")).toHaveValue(keyToken());
+  expect(fixture.calls).toEqual([
+    "/api/sharing/grants/cleanup",
+    "/api/sharing/grants",
+    `/api/sharing/grants/${grant().id}/key`,
+  ]);
 });
 
-test("stopped sharing can be cleaned without starting client access or internet sharing", async ({
+test("stopped sharing can be cleaned without starting guest access or internet sharing", async ({
   page,
 }) => {
   const fixture = await accessFixture(page);
@@ -164,23 +182,37 @@ test("a lost cleanup reply refreshes saved keys without claiming success or retr
   expect(fixture.calls).toEqual(["/api/sharing/grants/cleanup"]);
 });
 
-test("cleanup keeps a valid one-time internet invitation available", async ({ page }) => {
+test("cleanup never disturbs a key created moments earlier, which stays readable", async ({
+  page,
+}) => {
   const fixture = await accessFixture(page);
   publishInternet(fixture);
   fixture.cleanup.enabled = true;
   fixture.state.grants = [mixedKeys()[3]];
   await page.goto("/sharing");
-  await page.getByLabel("Key label", { exact: true }).fill("Keep this invite");
-  await page.getByLabel("Key channel").selectOption("internet");
-  await page.getByRole("button", { name: "Create client link", exact: true }).click();
+  await page.getByLabel("Key label", { exact: true }).fill("Keep this key");
+  await page.getByRole("button", { name: "Create key", exact: true }).click();
+  const field = keyField(page, "Keep this key");
+  await expect(maskedKey(page, "Keep this key")).toHaveText(masked);
+  await expect(field).toHaveCount(0);
+  await showKey(page, "Keep this key").click();
+  await expect(field).toHaveValue(keyToken());
   await cleanupButton(page).click();
   await expect(cleanupGroup(page).getByRole("status")).toContainText("Removed 1");
-  await page.getByRole("button", { name: "Show link for manual copy", exact: true }).click();
-  await expect(
-    page.getByRole("textbox", { name: "Client link for manual copy", exact: true }),
-  ).toHaveValue(`${publicOrigin}/#access=fixture-secret`);
+  await expect(field).toHaveValue(keyToken());
+  await page.getByRole("button", { name: "Hide key Keep this key", exact: true }).click();
+  await expect(field).toHaveCount(0);
+  await expect(maskedKey(page, "Keep this key")).toHaveText(masked);
+  await showKey(page, "Keep this key").click();
+  await expect(field).toHaveValue(keyToken());
   expect(fixture.state.grants).toHaveLength(1);
-  expect(fixture.state.grants[0].label).toBe("Keep this invite");
+  expect(fixture.state.grants[0].label).toBe("Keep this key");
+  expect(fixture.calls).toEqual([
+    "/api/sharing/grants",
+    `/api/sharing/grants/${grant().id}/key`,
+    "/api/sharing/grants/cleanup",
+    `/api/sharing/grants/${grant().id}/key`,
+  ]);
 });
 
 for (const unsupported of [true, false]) {
@@ -244,7 +276,7 @@ test("storage failure disables cleanup without claiming that saved records were 
   await page.route("**/api/sharing/grants/cleanup", async (route) => {
     fixture.state.state = "unavailable";
     fixture.state.error =
-      "Client access is stopped because key storage failed; local chat still works.";
+      "Guest access is stopped because key storage failed; local chat still works.";
     fixture.state.grants = [];
     await route.fulfill({ status: 503, json: { detail: "Key storage is unavailable." } });
   });

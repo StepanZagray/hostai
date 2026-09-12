@@ -42,6 +42,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -80,11 +81,17 @@ class AccessGrantStoreTest {
             String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(secret));
             var root = JSON.readTree(Files.readAllBytes(data(directory)));
             assertThat(root.propertyNames()).containsExactlyInAnyOrder("version", "grants");
-            assertThat(root.get("version").intValue()).isEqualTo(2);
+            assertThat(root.get("version").intValue()).isEqualTo(3);
             assertThat(root.get("grants").get(1).get("hash").stringValue()).isEqualTo(hash);
             assertThat(root.get("grants").get(1).get("channel").stringValue()).isEqualTo("local");
+            assertThat(root.get("grants").get(1).get("secret").stringValue()).isEqualTo(encodedSecret);
             assertThat(root.get("grants").get(1).propertyNames()).containsExactlyInAnyOrder(
-                    "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel");
+                    "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel", "secret");
+            // A host-issued key is durable and readable back; the hash still drives authentication.
+            assertThat(first.grant().recoverable()).isTrue();
+            assertThat(store.token(first.grant().id())).contains(first.token());
+            assertThat(store.token(second.grant().id())).contains(second.token());
+            assertThat(store.token(UUID.randomUUID())).isEmpty();
             assertThat(first.toString()).contains("[REDACTED]").doesNotContain(first.token(), encodedSecret, hash);
             assertThat(first.grant().toString()).doesNotContain(encodedSecret, hash);
             assertThat(store.list().toString()).doesNotContain(encodedSecret, hash);
@@ -92,7 +99,12 @@ class AccessGrantStoreTest {
             assertThat(store.toString()).doesNotContain(encodedSecret, hash);
             try (var files = Files.list(directory)) {
                 for (Path file : files.toList()) {
-                    assertThat(Files.readString(file)).doesNotContain(first.token(), encodedSecret, second.token());
+                    // Recoverable key material is confined to the private data file and is never
+                    // written as an assembled bearer token.
+                    String content = Files.readString(file);
+                    assertThat(content).doesNotContain(first.token(), second.token());
+                    if (file.equals(data(directory))) assertThat(content).contains(encodedSecret);
+                    else assertThat(content).doesNotContain(encodedSecret);
                     assertMode(file, "rw-------");
                     assertThat(Files.getOwner(file)).isEqualTo(Files.getOwner(directory));
                 }
@@ -143,12 +155,16 @@ class AccessGrantStoreTest {
             assertThat(Files.getLastModifiedTime(data(directory))).isEqualTo(modified);
             var root = JSON.readTree(committed);
             assertThat(root.propertyNames()).containsExactlyInAnyOrder("version", "grants");
-            assertThat(root.get("version").intValue()).isEqualTo(2);
+            assertThat(root.get("version").intValue()).isEqualTo(3);
             var row = root.get("grants").get(0);
+            // A client-chosen secret is never disclosed to the host, so its row stays hash-only.
             assertThat(row.propertyNames()).containsExactlyInAnyOrder(
                     "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel");
             assertThat(row.get("hash").stringValue()).isEqualTo(encodedHash);
             assertThat(row.get("channel").stringValue()).isEqualTo(channel);
+            assertThat(grant.recoverable()).isFalse();
+            assertThat(store.token(grant.id())).isEmpty();
+            assertThat(store.token(other.grant().id())).contains(other.token());
             assertThat(grant.toString()).doesNotContain(encodedSecret, encodedHash);
             assertThat(store.list().toString()).doesNotContain(encodedSecret, encodedHash);
             assertThat(store.authenticate(token).toString()).doesNotContain(encodedSecret, encodedHash);
@@ -279,7 +295,7 @@ class AccessGrantStoreTest {
         try (var store = AccessGrantStore.open(directory, clock)) {
             assertThat(store.list()).isEmpty();
             bytes = Files.readAllBytes(data(directory));
-            assertThat(JSON.readTree(bytes).get("version").intValue()).isEqualTo(2);
+            assertThat(JSON.readTree(bytes).get("version").intValue()).isEqualTo(3);
             assertThat(JSON.readTree(bytes).get("grants").isArray()).isTrue();
             assertThat(JSON.readTree(bytes).get("grants").size()).isZero();
         }
@@ -325,7 +341,7 @@ class AccessGrantStoreTest {
             assertThat(internet.grant().channel()).isEqualTo("internet");
             assertThat(store.authenticate(internet.token())).contains(internet.grant());
             var root = JSON.readTree(Files.readAllBytes(data(directory)));
-            assertThat(root.get("version").intValue()).isEqualTo(2);
+            assertThat(root.get("version").intValue()).isEqualTo(3);
             assertThat(root.get("grants").size()).isEqualTo(4);
             assertThat(root.get("grants").get(0).get("channel").stringValue()).isEqualTo("internet");
             for (int i = 0; i < legacy.size(); i++) {
@@ -334,10 +350,17 @@ class AccessGrantStoreTest {
                 migrated.remove("channel");
                 assertThat(migrated).isEqualTo(legacyRows.get(i));
             }
-            for (var issued : Stream.concat(legacy.stream(), Stream.of(internet)).toList()) {
+            for (var issued : legacy) {
                 assertThat(Files.readString(data(directory)))
                         .doesNotContain(issued.token(), issued.token().substring(42));
             }
+            // A migrated row is never promoted to recoverable; only the new key is readable back.
+            assertThat(Files.readString(data(directory))).doesNotContain(internet.token())
+                    .contains(internet.token().substring(42));
+            assertThat(store.list().stream().filter(AccessGrantStore.Grant::recoverable).toList())
+                    .containsExactly(internet.grant());
+            assertThat(store.token(internet.grant().id())).contains(internet.token());
+            for (var issued : legacy) assertThat(store.token(issued.grant().id())).isEmpty();
             assertMode(data(directory), "rw-------");
             assertOnlyFinalFiles(directory);
         }
@@ -354,7 +377,8 @@ class AccessGrantStoreTest {
             revoked = store.revoke(internet.grant().id());
             assertThat(revoked).isEqualTo(new Grant(internet.grant().id(), internet.grant().label(),
                     internet.grant().model(), internet.grant().createdAt(), internet.grant().expiresAt(),
-                    clock.now, "internet"));
+                    clock.now, "internet", false));
+            assertThat(store.token(internet.grant().id())).isEmpty();
             assertThat(store.authenticate(internet.token())).isEmpty();
             committed = Files.readAllBytes(data(directory));
         }
@@ -382,7 +406,7 @@ class AccessGrantStoreTest {
             revoked = store.revoke(legacy.get(0).grant().id());
             assertThat(revoked.channel()).isEqualTo("local");
             var root = JSON.readTree(Files.readAllBytes(data(directory)));
-            assertThat(root.get("version").intValue()).isEqualTo(2);
+            assertThat(root.get("version").intValue()).isEqualTo(3);
             var expectedRows = JSON.readTree(before).get("grants");
             for (int i = 0; i < legacy.size(); i++) {
                 var expected = (ObjectNode) expectedRows.get(i).deepCopy();
@@ -408,7 +432,7 @@ class AccessGrantStoreTest {
             local = store.create("Same", "model", MINUTE);
             var explicitLocal = store.create("Same", "model", MINUTE, "local");
             assertThat(local.grant()).isEqualTo(new Grant(local.grant().id(), "Same", "model",
-                    START, START.plus(MINUTE), null));
+                    START, START.plus(MINUTE), null, "local", true));
             assertThat(local.grant().channel()).isEqualTo("local");
             assertThat(explicitLocal.grant().channel()).isEqualTo("local");
             expected = List.of(explicitLocal.grant(), local.grant(), internet.grant());
@@ -556,7 +580,7 @@ class AccessGrantStoreTest {
             assertThat(store.list()).isEqualTo(retained.stream().map(IssuedGrant::grant).toList());
             committed = Files.readAllBytes(data(directory));
             var root = JSON.readTree(committed);
-            assertThat(root.get("version").intValue()).isEqualTo(2);
+            assertThat(root.get("version").intValue()).isEqualTo(3);
             assertThat(root.get("grants").size()).isEqualTo(2);
             assertOnlyFinalFiles(directory);
             assertMode(data(directory), "rw-------");
@@ -880,7 +904,7 @@ class AccessGrantStoreTest {
     static Stream<String> invalidDocuments() {
         return Stream.of("", " ", "{", "null", "[]", "{}", "{\"version\":1}",
                 "{\"version\":1,\"grants\":[],\"extra\":true}",
-                "{\"version\":3,\"grants\":[]}", "{\"version\":0,\"grants\":[]}",
+                "{\"version\":4,\"grants\":[]}", "{\"version\":0,\"grants\":[]}",
                 "{\"version\":4294967297,\"grants\":[]}", "{\"version\":1.0,\"grants\":[]}",
                 "{\"version\":\"1\",\"grants\":[]}", "{\"version\":null,\"grants\":[]}",
                 "{\"version\":1,\"version\":1,\"grants\":[]}",
@@ -889,7 +913,8 @@ class AccessGrantStoreTest {
                 "{\"version\":1,\"grants\":[null]}", "{\"version\":1,\"grants\":[{}]}",
                 "{\"version\":1,\"grants\":[[[[[[]]]]]]}",
                 "{\"version\":1,\"grants\":[]} {}", "{\"version\":1,\"grants\":[]} trailing")
-                .flatMap(document -> Stream.of(document, document.replace("\"version\":1", "\"version\":2")))
+                .flatMap(document -> Stream.of(document, document.replace("\"version\":1", "\"version\":2"),
+                        document.replace("\"version\":1", "\"version\":3")))
                 .distinct();
     }
 
@@ -923,7 +948,7 @@ class AccessGrantStoreTest {
                 Arguments.of("expiresAt", START.plus(Duration.ofDays(7)).plusNanos(1).toString()),
                 Arguments.of("expiresAt", null), Arguments.of("revokedAt", START.minusNanos(1).toString()),
                 Arguments.of("revokedAt", "bad"))
-                .flatMap(invalid -> Stream.of(1, 2)
+                .flatMap(invalid -> Stream.of(1, 2, 3)
                         .map(version -> Arguments.of(version, invalid.get()[0], invalid.get()[1])));
     }
 
@@ -937,7 +962,7 @@ class AccessGrantStoreTest {
     }
 
     static Stream<Arguments> invalidRowShapes() {
-        return Stream.of(1, 2).flatMap(version ->
+        return Stream.of(1, 2, 3).flatMap(version ->
                 Stream.of("missing", "extra", "wrong-type", "duplicate-key", "duplicate-id", "too-many")
                         .map(kind -> Arguments.of(version, kind)));
     }
@@ -1130,7 +1155,8 @@ class AccessGrantStoreTest {
             });
             assertSanitized(failure, directory);
             assertThat(failure.getMessage()).contains("disabled").doesNotContain(HexFormat.of().formatHex(hash),
-                    Base64.getUrlEncoder().withoutPadding().encodeToString(secret));
+                    Base64.getUrlEncoder().withoutPadding().encodeToString(secret),
+                    oldToken, oldToken.substring(42));
             assertThat(store.authenticate(oldToken)).isEmpty();
             assertThatThrownBy(store::list).isInstanceOf(StorageException.class).hasMessageContaining("disabled");
             Files.delete(data(directory));
@@ -1245,11 +1271,13 @@ class AccessGrantStoreTest {
                 int snapshots = 0;
                 do {
                     var root = JSON.readTree(Files.readAllBytes(data(directory)));
-                    assertThat(root.get("version").intValue()).isEqualTo(2);
+                    assertThat(root.get("version").intValue()).isEqualTo(3);
                     assertThat(root.get("grants").isArray()).isTrue();
                     var ids = new HashSet<String>();
                     for (var row : root.get("grants")) {
-                        assertThat(row.size()).isEqualTo(8);
+                        assertThat(row.size()).isIn(8, 9);
+                        // Key material is never persisted on a revoked row.
+                        if (row.size() == 9) assertThat(row.get("revokedAt").isNull()).isTrue();
                         assertThat(row.get("channel").stringValue()).isIn("local", "internet");
                         assertThat(row.get("hash").stringValue()).matches("[0-9a-f]{64}");
                         assertThat(ids.add(row.get("id").stringValue())).isTrue();
@@ -1274,6 +1302,209 @@ class AccessGrantStoreTest {
         try (var reopened = AccessGrantStore.open(directory, clock)) {
             assertThat(reopened.list()).hasSize(30).allMatch(grant -> grant.revokedAt() != null);
         }
+    }
+
+    @Test
+    void aFullStoreOfRecoverableKeysStaysWithinTheDocumentAndParserBounds() throws Exception {
+        Path directory = temporary.resolve("full-recoverable");
+        var tokens = new ArrayList<String>();
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            for (int i = 0; i < 100; i++) {
+                tokens.add(store.create("Visitor " + "\u00e9".repeat(70) + i, "org/model-name:q4_k_m",
+                        Duration.ofDays(7), i % 2 == 0 ? "local" : "internet").token());
+            }
+            assertThat(store.list()).hasSize(100).allMatch(Grant::recoverable);
+            assertThat(Files.readAllBytes(data(directory)).length).isLessThan(MAX_BYTES);
+        }
+        // Reopening applies the strict document, nesting, name and token-count limits.
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.list()).hasSize(100).allMatch(Grant::recoverable);
+            for (String token : tokens) assertThat(reopened.authenticate(token)).isPresent();
+            for (var grant : reopened.list()) assertThat(reopened.token(grant.id())).isPresent();
+        }
+    }
+
+    @Test
+    void versionThreeRoundTripsRecoverableKeysAcrossReopenWithoutRenderingThemAsText() throws Exception {
+        Path directory = temporary.resolve("recoverable");
+        IssuedGrant issued;
+        IssuedGrant expiring;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            issued = store.create("Recoverable", "model", Duration.ofDays(7), "internet");
+            expiring = store.create("Short", "model", MINUTE);
+        }
+        String encodedSecret = issued.token().substring(42);
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            // The reassembled credential is byte-for-byte the one issuance returned.
+            assertThat(reopened.token(issued.grant().id())).contains(issued.token());
+            assertThat(reopened.token(expiring.grant().id())).contains(expiring.token());
+            assertThat(reopened.authenticate(issued.token())).contains(issued.grant());
+            assertThat(reopened.list()).allMatch(Grant::recoverable);
+            assertThat(reopened.toString()).doesNotContain(encodedSecret, issued.token());
+            assertThat(reopened.list().toString()).doesNotContain(encodedSecret, issued.token());
+            assertThat(reopened.authenticate(issued.token()).toString()).doesNotContain(encodedSecret);
+            clock.now = START.plus(MINUTE);
+            assertThat(reopened.token(expiring.grant().id())).isEmpty(); // Expiry equality ends recovery.
+            assertThat(reopened.token(issued.grant().id())).contains(issued.token());
+            assertThat(reopened.revoke(issued.grant().id()).recoverable()).isFalse();
+            assertThat(reopened.token(issued.grant().id())).isEmpty();
+        }
+        try (var again = AccessGrantStore.open(directory, clock)) {
+            assertThat(again.token(issued.grant().id())).isEmpty();
+            assertThat(again.authenticate(issued.token())).isEmpty();
+            assertThat(again.list()).filteredOn(Grant::recoverable).singleElement()
+                    .satisfies(grant -> assertThat(grant.id()).isEqualTo(expiring.grant().id()));
+        }
+    }
+
+    @Test
+    void revocationDropsStoredKeyMaterialButKeepsTheHashThatRefusesTheKey() throws Exception {
+        Path directory = temporary.resolve("revoked-secret");
+        IssuedGrant issued;
+        IssuedGrant kept;
+        Grant revoked;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            issued = store.create("Revoked visitor", "model", Duration.ofDays(7), "internet");
+            kept = store.create("Kept visitor", "model", Duration.ofDays(7));
+            String encodedSecret = issued.token().substring(42);
+            String hash = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(Base64.getUrlDecoder().decode(encodedSecret)));
+            assertThat(Files.readString(data(directory))).contains(encodedSecret);
+            revoked = store.revoke(issued.grant().id());
+            assertThat(revoked.recoverable()).isFalse();
+            assertThat(revoked.revokedAt()).isEqualTo(START);
+            var row = row(directory, issued.grant().id());
+            assertThat(row.propertyNames()).containsExactlyInAnyOrder(
+                    "id", "label", "model", "createdAt", "expiresAt", "revokedAt", "hash", "channel");
+            assertThat(row.get("hash").stringValue()).isEqualTo(hash);
+            assertThat(Files.readString(data(directory))).doesNotContain(encodedSecret, issued.token());
+            assertThat(store.token(issued.grant().id())).isEmpty();
+            // The key is still recognised by its hash and refused by policy, not treated as unknown.
+            assertThat(store.authenticate(issued.token())).isEmpty();
+            assertThat(store.list()).filteredOn(Grant::recoverable).containsExactly(kept.grant());
+            assertThat(store.revoke(issued.grant().id())).isEqualTo(revoked); // Idempotent.
+            // An unrevoked key is untouched by another key's revocation.
+            assertThat(store.token(kept.grant().id())).contains(kept.token());
+            assertThat(row(directory, kept.grant().id()).propertyNames()).contains("secret");
+        }
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            assertThat(reopened.list()).containsExactly(kept.grant(), revoked);
+            assertThat(reopened.token(issued.grant().id())).isEmpty();
+            assertThat(reopened.authenticate(issued.token())).isEmpty();
+            assertThat(reopened.token(kept.grant().id())).contains(kept.token());
+        }
+    }
+
+    @Test
+    void versionTwoFileStillLoadsAndAuthenticatesButIsNeverRecoverable() throws Exception {
+        Path directory = temporary.resolve("version-two");
+        IssuedGrant original;
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            original = store.create("Version two", "model", Duration.ofDays(7));
+        }
+        // Exactly what an older gateway left behind: a channel, a hash, and no key material.
+        changeDocument(directory, root -> {
+            root.put("version", 2);
+            ((ObjectNode) root.get("grants").get(0)).remove("secret");
+        });
+        byte[] before = Files.readAllBytes(data(directory));
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            Grant grant = store.list().getFirst();
+            assertThat(grant.recoverable()).isFalse();
+            assertThat(store.authenticate(original.token())).contains(grant);
+            assertThat(store.token(grant.id())).isEmpty();
+            assertThat(Files.readAllBytes(data(directory))).isEqualTo(before); // Reading never migrates.
+            var added = store.create("New", "model", MINUTE);
+            var root = JSON.readTree(Files.readAllBytes(data(directory)));
+            assertThat(root.get("version").intValue()).isEqualTo(3);
+            assertThat(root.get("grants").get(0).propertyNames()).contains("secret");
+            // Rewriting the document cannot invent key material the old file never stored.
+            assertThat(root.get("grants").get(1).propertyNames()).doesNotContain("secret");
+            assertThat(store.token(added.grant().id())).contains(added.token());
+            assertThat(store.token(grant.id())).isEmpty();
+            assertThat(store.authenticate(original.token())).contains(grant);
+        }
+        try (var reopened = AccessGrantStore.open(directory, clock)) {
+            Grant restored = reopened.list().getLast();
+            assertThat(restored.id()).isEqualTo(original.grant().id());
+            assertThat(restored.recoverable()).isFalse();
+            assertThat(reopened.authenticate(original.token())).contains(restored);
+            assertThat(reopened.token(restored.id())).isEmpty();
+        }
+    }
+
+    @Test
+    void storedKeysStopBeingReadableOnceClientCommittedRevokedOrExpired() throws Exception {
+        Path directory = temporary.resolve("unreadable");
+        byte[] hash = MessageDigest.getInstance("SHA-256").digest(clientSecret());
+        try (var store = AccessGrantStore.open(directory, clock)) {
+            var active = store.create("Active", "model", MINUTE.multipliedBy(10));
+            var revoked = store.create("Revoked", "model", MINUTE.multipliedBy(10));
+            var expiring = store.create("Expiring", "model", MINUTE);
+            var committed = store.createCommitted("Committed", "model", MINUTE.multipliedBy(10), "internet", hash);
+            store.revoke(revoked.grant().id());
+            clock.now = START.plus(MINUTE);
+            assertThat(store.token(active.grant().id())).contains(active.token());
+            assertThat(store.token(revoked.grant().id())).isEmpty();
+            assertThat(store.token(expiring.grant().id())).isEmpty();
+            assertThat(store.token(committed.id())).isEmpty();
+            assertThat(committed.recoverable()).isFalse();
+            assertThat(store.list()).filteredOn(Grant::recoverable).hasSize(2); // Active and expiring.
+            assertThat(store.cleanup()).hasSize(2);
+            assertThat(store.list()).filteredOn(Grant::recoverable).hasSize(1);
+            assertThat(store.token(active.grant().id())).contains(active.token());
+            assertThat(store.token(revoked.grant().id())).isEmpty();
+            assertThat(store.token(committed.id())).isEmpty();
+        }
+    }
+
+    @ParameterizedTest @ValueSource(strings = {"short", "long", "symbol", "padded", "non-canonical",
+            "mismatched", "number", "null", "array", "duplicate"})
+    void versionThreeRejectsMalformedOrUnmatchedKeyMaterialWithoutRepair(String kind) throws Exception {
+        Path directory = withGrant("secret-shape", 3);
+        String stored = JSON.readTree(Files.readAllBytes(data(directory)))
+                .get("grants").get(0).get("secret").stringValue();
+        if (kind.equals("duplicate")) {
+            Files.writeString(data(directory), Files.readString(data(directory))
+                    .replace("\"secret\":\"" + stored + "\"",
+                            "\"secret\":\"" + stored + "\",\"secret\":\"" + stored + "\""));
+        } else {
+            changeDocument(directory, root -> {
+                var row = (ObjectNode) root.get("grants").get(0);
+                switch (kind) {
+                    case "short" -> row.put("secret", stored.substring(0, 42));
+                    case "long" -> row.put("secret", stored + "A");
+                    case "symbol" -> row.put("secret", stored.substring(0, 42) + "+");
+                    case "padded" -> row.put("secret", stored.substring(0, 42) + "=");
+                    case "non-canonical" -> row.put("secret", stored.substring(0, 42) + alias(stored.charAt(42)));
+                    case "mismatched" -> row.put("secret",
+                            Base64.getUrlEncoder().withoutPadding().encodeToString(clientSecret()));
+                    case "number" -> row.put("secret", 1);
+                    case "null" -> row.putNull("secret");
+                    case "array" -> row.putArray("secret").add(stored);
+                    default -> throw new AssertionError(kind);
+                }
+            });
+        }
+        byte[] before = Files.readAllBytes(data(directory));
+        assertSanitized(assertThrows(StorageException.class, () -> AccessGrantStore.open(directory, clock)), directory);
+        assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+    }
+
+    @ParameterizedTest @ValueSource(ints = {1, 2})
+    void olderVersionsRejectKeyMaterialTheyCouldNeverHaveWritten(int version) throws Exception {
+        Path directory = withGrant("older-secret", version);
+        changeDocument(directory, root -> ((ObjectNode) root.get("grants").get(0))
+                .put("secret", Base64.getUrlEncoder().withoutPadding().encodeToString(clientSecret())));
+        byte[] before = Files.readAllBytes(data(directory));
+        assertSanitized(assertThrows(StorageException.class, () -> AccessGrantStore.open(directory, clock)), directory);
+        assertThat(Files.readAllBytes(data(directory))).isEqualTo(before);
+    }
+
+    /** A second spelling of the same 32 bytes: only the trailing padding bits differ. */
+    private static char alias(char last) {
+        String alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        return alphabet.charAt(alphabet.indexOf(last) ^ 1);
     }
 
     /** Generates the old exact schema independently of the current store writer, using test-only secrets. */
@@ -1322,10 +1553,12 @@ class AccessGrantStoreTest {
         try (var store = AccessGrantStore.open(directory, clock)) {
             store.create("Valid", "model", MINUTE);
         }
-        if (version == 1) {
+        if (version != 3) {
             changeDocument(directory, root -> {
-                root.put("version", 1);
-                ((ObjectNode) root.get("grants").get(0)).remove("channel");
+                root.put("version", version);
+                var row = (ObjectNode) root.get("grants").get(0);
+                row.remove("secret"); // No older document ever carried key material.
+                if (version == 1) row.remove("channel");
             });
         }
         return directory;
@@ -1339,6 +1572,13 @@ class AccessGrantStoreTest {
 
     private static String clientToken(UUID id, byte[] secret) {
         return "hga1." + id + "." + Base64.getUrlEncoder().withoutPadding().encodeToString(secret);
+    }
+
+    private static JsonNode row(Path directory, UUID id) throws Exception {
+        for (JsonNode row : JSON.readTree(Files.readAllBytes(data(directory))).get("grants")) {
+            if (row.get("id").stringValue().equals(id.toString())) return row;
+        }
+        throw new AssertionError("No stored row for " + id);
     }
 
     private static Path data(Path directory) { return directory.resolve("grants.json"); }

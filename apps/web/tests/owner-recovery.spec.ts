@@ -43,7 +43,7 @@ for (const [failure, width] of [
     const composer = page.getByRole("textbox", { name: "Message", exact: true });
     const send = page.getByRole("button", { name: "Send message", exact: true });
     await expect(page.getByText("Available to try", { exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Set up client access" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "Set up guest access" })).toHaveCount(0);
     await composer.fill("Completed question");
     await send.click();
     await expect(page.getByText("Model answered a prompt", { exact: true })).toBeVisible();
@@ -120,11 +120,11 @@ test("a completed test leads to the same model's client settings without enablin
   expect(chatCalls).toBe(0);
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Test this model");
   await page.getByRole("button", { name: "Send message", exact: true }).click();
-  const next = page.getByRole("link", { name: "Set up client access" });
+  const next = page.getByRole("link", { name: "Set up guest access" });
   await expect(next).toBeVisible();
   await page.screenshot({ path: "test-results/owner-model-tested.png", fullPage: true });
   await next.click();
-  await expect(page.getByRole("combobox", { name: "Model for clients", exact: true })).toHaveValue(
+  await expect(page.getByRole("combobox", { name: "Model for guests", exact: true })).toHaveValue(
     other,
   );
   expect(chatCalls).toBe(1);
@@ -171,7 +171,7 @@ for (const status of [429, 503]) {
     await page.clock.setFixedTime(new Date(Date.now() - 48 * 3_600_000));
     await page.evaluate(() => document.fonts.ready.then(() => undefined));
     await page.clock.runFor(50);
-    const description = page.getByRole("heading", { level: 1 }).locator("..").locator("p");
+    const description = page.getByText(/The host asked you to wait/);
     await expect
       .poll(() =>
         description.evaluate((element) => {
@@ -190,7 +190,7 @@ for (const status of [429, 503]) {
     await page.getByRole("link", { name: "Models", exact: true }).click();
     await page.clock.runFor(2000);
     await page
-      .getByRole("article")
+      .getByRole("listitem")
       .filter({ has: page.getByRole("heading", { name: other, exact: true }) })
       .getByRole("link", { name: "Try in playground", exact: true })
       .click();

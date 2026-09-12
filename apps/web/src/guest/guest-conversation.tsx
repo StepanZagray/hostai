@@ -1,13 +1,21 @@
 import { css } from "../../styled-system/css";
 import { Answer } from "../components/answer";
-import { Button, CopyButton, muted } from "../components/ui";
+import { Button, CopyButton, caption, legend, muted } from "../components/ui";
 import type { ConversationTurn } from "../lib/conversation";
 import { useConversationScroll } from "../lib/use-conversation-scroll";
 
 export function GuestConversation({ turns }: { turns: ConversationTurn[] }) {
   const scroll = useConversationScroll(turns);
   return (
-    <>
+    // The transcript takes whatever height the panel has left and scrolls inside it,
+    // so a full-page guest view has no dead band under the conversation.
+    <div
+      className={css({
+        position: "relative",
+        flex: "1 1 auto",
+        minH: "180px",
+      })}
+    >
       <div
         key={scroll.viewportKey}
         ref={scroll.viewportRef}
@@ -19,105 +27,144 @@ export function GuestConversation({ turns }: { turns: ConversationTurn[] }) {
         onKeyDown={scroll.onKeyDown}
         onTouchStart={scroll.onTouchStart}
         onTouchMove={scroll.onTouchMove}
-        className={`${css({
+        className={css({
+          position: "absolute",
+          inset: 0,
           minW: 0,
           overflowY: "auto",
           overflowX: "hidden",
           overscrollBehaviorY: "contain",
-          p: { base: "4", md: "6" },
-          _focusVisible: { outline: "2px solid token(colors.accent)", outlineOffset: "-2px" },
-        })} ${turns.length ? css({ height: "clamp(240px, 48dvh, 560px)" }) : css({ minH: "160px" })}`}
+          px: { base: "3.5", md: "5" },
+          py: { base: "3.5", md: "4" },
+          _focusVisible: { outline: "2px solid token(colors.ink)", outlineOffset: "-2px" },
+        })}
       >
         <div ref={scroll.contentRef}>
           {!turns.length && (
-            <div className={css({ py: "8", maxW: "420px" })}>
-              <h3 className={css({ fontWeight: 750, fontSize: "lg", mb: "2" })}>
-                Space for a question
-              </h3>
-              <p className={muted}>
-                After connecting, ask a question or work through an idea with the host's model.
-              </p>
-            </div>
+            <p className={`${muted} ${css({ maxW: "44ch" })}`}>
+              Nothing sent yet. Your messages go to whoever runs this host.
+            </p>
           )}
-          {turns.map((turn, index) => (
-            <article
-              key={turn.id}
-              aria-label={`Exchange ${index + 1}`}
-              className={css({ minW: 0, mb: "6", "&:last-child": { mb: 0 } })}
-            >
-              <div
-                className={css({ bg: "accentSoft", borderRadius: "8px", p: "4", mb: "4", minW: 0 })}
-              >
-                <h3 className={css({ color: "accent", fontSize: "xs", fontWeight: 750, mb: "2" })}>
-                  You
-                </h3>
-                <p
-                  className={css({
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                    lineHeight: 1.8,
-                  })}
-                >
-                  {turn.prompt}
-                </p>
-              </div>
-              <h3
+          {turns.map((turn, index) => {
+            const incomplete = turn.state === "failed" || turn.state === "cancelled";
+            const copyable = turn.state !== "streaming" && !!turn.response.trim();
+            return (
+              <article
+                key={turn.id}
+                aria-label={`Exchange ${index + 1}`}
                 className={css({
-                  fontSize: "sm",
-                  fontWeight: 750,
-                  mb: "2",
-                  overflowWrap: "anywhere",
+                  minW: 0,
+                  "&:not(:first-child)": {
+                    mt: "5",
+                    pt: "5",
+                    borderTop: "1px solid token(colors.lineSoft)",
+                  },
                 })}
               >
-                Model response{" "}
-                <span
+                <div
                   className={css({
-                    fontFamily: "mono",
-                    color: "muted",
-                    fontSize: "xs",
-                    fontWeight: 400,
+                    bg: "well",
+                    borderLeft: "2px solid token(colors.lineStrong)",
+                    borderRadius: "sm",
+                    px: "3",
+                    py: "2.5",
+                    mb: "3.5",
+                    minW: 0,
                   })}
                 >
-                  / {turn.model}
-                </span>
-              </h3>
-              {turn.omittedTurns ? (
-                <p className={muted}>
-                  {turn.omittedTurns} older exchanges were omitted to fit request limits.
-                </p>
-              ) : null}
-              {turn.response.trim() ? (
-                <Answer text={turn.response} />
-              ) : (
-                <p className={muted}>
-                  {turn.state === "streaming" ? "Waiting for the host…" : "No response received."}
-                </p>
-              )}
-              {(turn.state === "failed" || turn.state === "cancelled") && (
-                <>
+                  <h3 className={`${legend} ${css({ mb: "1" })}`}>You</h3>
                   <p
-                    className={css({ color: "warning", fontSize: "xs", lineHeight: 1.7, mt: "3" })}
+                    className={css({
+                      whiteSpace: "pre-wrap",
+                      overflowWrap: "anywhere",
+                      fontSize: "sm",
+                      lineHeight: 1.7,
+                      color: "ink",
+                    })}
+                  >
+                    {turn.prompt}
+                  </p>
+                </div>
+                <h3 className={`${legend} ${css({ mb: "1.5", overflowWrap: "anywhere" })}`}>
+                  Model response{" "}
+                  <span
+                    className={css({
+                      textTransform: "none",
+                      letterSpacing: "normal",
+                      fontWeight: 400,
+                      color: "inkSoft",
+                    })}
+                  >
+                    / {turn.model}
+                  </span>
+                </h3>
+                {turn.omittedTurns ? (
+                  <p className={`${caption} ${css({ mb: "2" })}`}>
+                    {turn.omittedTurns} older exchanges were omitted to fit request limits.
+                  </p>
+                ) : null}
+                {turn.response.trim() ? (
+                  <Answer text={turn.response} />
+                ) : (
+                  <p className={muted}>
+                    {turn.state === "streaming" ? "Waiting for the host…" : "No response received."}
+                  </p>
+                )}
+                {incomplete && (
+                  <p
+                    className={css({ color: "amber", fontSize: "xs", lineHeight: 1.55, mt: "2.5" })}
                   >
                     Incomplete exchange · This prompt and response are excluded from later context.
                   </p>
-                  <CopyButton text={turn.prompt} label="Copy question" />
-                </>
-              )}
-              {turn.state !== "streaming" && turn.response.trim() && (
-                <CopyButton
-                  text={turn.response}
-                  label={turn.state === "completed" ? "Copy response" : "Copy partial response"}
-                />
-              )}
-            </article>
-          ))}
+                )}
+                {(incomplete || copyable) && (
+                  <div
+                    className={css({
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "1",
+                      flexWrap: "wrap",
+                      mt: "1.5",
+                      ml: "-2.5",
+                    })}
+                  >
+                    {incomplete && <CopyButton text={turn.prompt} label="Copy question" />}
+                    {copyable && (
+                      <CopyButton
+                        text={turn.response}
+                        label={
+                          turn.state === "completed" ? "Copy response" : "Copy partial response"
+                        }
+                      />
+                    )}
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </div>
       {!scroll.following && (
-        <div className={css({ px: "4", pb: "3" })}>
-          <Button onClick={scroll.jumpToLatest}>Jump to latest</Button>
+        <div
+          className={css({
+            position: "absolute",
+            bottom: "3",
+            left: 0,
+            right: 0,
+            display: "flex",
+            justifyContent: "center",
+            pointerEvents: "none",
+          })}
+        >
+          <Button
+            size="sm"
+            onClick={scroll.jumpToLatest}
+            className={css({ pointerEvents: "auto", bg: "panel", boxShadow: "pop" })}
+          >
+            Jump to latest
+          </Button>
         </div>
       )}
-    </>
+    </div>
   );
 }

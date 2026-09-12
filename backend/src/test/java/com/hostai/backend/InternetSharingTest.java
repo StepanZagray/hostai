@@ -38,7 +38,7 @@ class InternetSharingTest {
     Scheduler scheduler;
     ValidatorFactory validators;
     InferenceRegistry registry;
-    OllamaGateway gateway;
+    RuntimeCatalog gateway;
     SharingService sharing;
     InternetSharing internet;
     AtomicBoolean reachable = new AtomicBoolean(true);
@@ -54,8 +54,7 @@ class InternetSharingTest {
         scheduler = Schedulers.newBoundedElastic(2, 100, "internet-sharing-test");
         validators = Validation.buildDefaultValidatorFactory();
         registry = new InferenceRegistry();
-        var config = new BackendConfiguration();
-        gateway = new OllamaGateway(config.ollamaClient(LocalOllamaEndpoint.parse(runtime.origin())), scheduler,
+        gateway = RuntimeCatalog.single(BackendConfiguration.runtimeClient(LocalOllamaEndpoint.parse(runtime.origin())), scheduler,
                 WAIT, Duration.ofSeconds(30), Duration.ofSeconds(60));
         executable = temporary.resolve("fake-cloudflared");
         Files.writeString(executable, "#!/bin/sh\nprintf '%s\\n' 'https://fixture-only.trycloudflare.com'\nexec /bin/sleep 600\n");
@@ -78,15 +77,19 @@ class InternetSharingTest {
 
     @Test void localKeysNeverGainInternetAccessAndInternetKeysNeverWorkLocally() {
         var local = sharing.create("Local visitor", 1);
-        assertThatThrownBy(() -> sharing.create("Remote visitor", 1, "internet")).isInstanceOf(GatewayException.class);
+        // A key is stored permission, not a published address: it predates any tunnel.
+        var early = sharing.create("Early remote visitor", 1, "internet");
+        assertThat(early.grant().channel()).isEqualTo("internet");
         start();
         var remote = sharing.create("Remote visitor", 1, "internet");
-        assertThat(remote.inviteUrl()).startsWith(PUBLIC + "/#access=");
         assertThat(local.grant().channel()).isEqualTo("local");
         assertThat(remote.grant().channel()).isEqualTo("internet");
         var permit = ingress.get().permit();
         assertThatThrownBy(() -> sharing.authenticate(local.token(), permit)).isInstanceOfSatisfying(GatewayException.class,
                 error -> assertThat(error.status()).isEqualTo(HttpStatus.UNAUTHORIZED));
+        assertThatThrownBy(() -> sharing.authenticate(early.token())).isInstanceOfSatisfying(GatewayException.class,
+                error -> assertThat(error.status()).isEqualTo(HttpStatus.UNAUTHORIZED));
+        assertThat(sharing.authenticate(early.token(), permit).channel()).isEqualTo("internet");
         assertThatThrownBy(() -> sharing.authenticate(remote.token())).isInstanceOfSatisfying(GatewayException.class,
                 error -> assertThat(error.status()).isEqualTo(HttpStatus.UNAUTHORIZED));
         assertThat(sharing.session(remote.token(), permit).block(WAIT).scope()).isEqualTo("temporary-internet");
@@ -184,7 +187,10 @@ class InternetSharingTest {
         await().atMost(WAIT).untilAsserted(() -> assertThat(internet.status().state()).isEqualTo("off"));
         assertThat(interrupted).isTrue();
         assertThat(internet.status().publicUrl()).isNull();
-        assertThatThrownBy(() -> sharing.create("Visitor", 1, "internet")).isInstanceOf(GatewayException.class);
+        // Storing a key never depends on a tunnel, and a stored key grants nothing while off.
+        var visitor = sharing.create("Visitor", 1, "internet");
+        assertThatThrownBy(() -> sharing.authenticate(visitor.token())).isInstanceOfSatisfying(GatewayException.class,
+                error -> assertThat(error.status()).isEqualTo(HttpStatus.UNAUTHORIZED));
         assertThat(sharing.status().state()).isEqualTo("local");
     }
 
@@ -245,7 +251,10 @@ class InternetSharingTest {
         assertThat(internet.status().publicUrl()).isNull();
         assertThat(Files.readAllLines(starts)).containsExactly("start");
         assertThat(sharing.status().state()).isEqualTo("local");
-        assertThatThrownBy(() -> sharing.create("Visitor", 1, "internet")).isInstanceOf(GatewayException.class);
+        // Storing a key never depends on a tunnel, and a stored key grants nothing while off.
+        var visitor = sharing.create("Visitor", 1, "internet");
+        assertThatThrownBy(() -> sharing.authenticate(visitor.token())).isInstanceOfSatisfying(GatewayException.class,
+                error -> assertThat(error.status()).isEqualTo(HttpStatus.UNAUTHORIZED));
         // A new attempt only follows an explicit owner request.
         sharing.startInternet();
         await().atMost(WAIT).untilAsserted(() -> assertThat(internet.status().state()).isEqualTo("failed"));

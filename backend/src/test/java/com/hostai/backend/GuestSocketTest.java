@@ -76,7 +76,7 @@ class GuestSocketTest {
         scheduler = Schedulers.newBoundedElastic(2, 100, "guest-socket-test");
         validators = Validation.buildDefaultValidatorFactory();
         registry = new InferenceRegistry();
-        var gateway = new OllamaGateway(new BackendConfiguration().ollamaClient(LocalOllamaEndpoint.parse(runtime.origin())),
+        var gateway = RuntimeCatalog.single(BackendConfiguration.runtimeClient(LocalOllamaEndpoint.parse(runtime.origin())),
                 scheduler, WAIT, Duration.ofSeconds(60), Duration.ofMinutes(2));
         var internet = org.mockito.Mockito.mock(InternetSharing.class);
         org.mockito.Mockito.when(internet.publicOrigin()).thenReturn(PUBLIC);

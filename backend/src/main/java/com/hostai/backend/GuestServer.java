@@ -38,6 +38,7 @@ import static org.springframework.web.reactive.function.server.RequestPredicates
 
 /** A separate HTTP handler graph: owner controllers and their proxy cannot be routed here. */
 final class GuestServer implements AutoCloseable {
+    static final String MODEL_UI_PREFIX = "/guest/v1/model-ui/";
     private static final Set<String> REQUEST_PATHS = Set.of("/guest/v1/hello", "/guest/v1/requests",
             "/guest/v1/requests/self", "/guest/v1/requests/self/cancel");
     private final DisposableServer listener;
@@ -93,16 +94,35 @@ final class GuestServer implements AutoCloseable {
                             "Public chat requires WebSocket transport at /guest/v1/chat-stream."));
                     String token = bearer(request);
                     sharing.authenticate(token, permit(request)); // Reject credentials before accepting a potentially large upload.
-                    if (request.headers().header(HttpHeaders.CONTENT_TYPE).size() != 1
-                            || !request.headers().contentType().map(type -> type.getType().equalsIgnoreCase("application")
-                                    && type.getSubtype().equalsIgnoreCase("json")).orElse(false))
-                        return Mono.error(new GatewayException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "JSON is required."));
+                    requireJson(request);
                     return request.bodyToMono(Api.ChatRequest.class).timeout(Duration.ofSeconds(10))
                             .switchIfEmpty(Mono.error(new GatewayException(HttpStatus.BAD_REQUEST, "A chat request is required.")))
                             .flatMap(body -> {
                                 return ServerResponse.ok().contentType(MediaType.APPLICATION_NDJSON)
                                         .body(sharing.chat(token, body, permit(request)), Api.ChatChunk.class);
                             });
+                })
+                .andRoute(POST("/guest/v1/infer"), request -> {
+                    if (internet != null) return Mono.error(new GatewayException(HttpStatus.CONFLICT,
+                            "Public inference requires WebSocket transport at /guest/v1/chat-stream."));
+                    String token = bearer(request);
+                    sharing.authenticate(token, permit(request));
+                    requireJson(request);
+                    return request.bodyToMono(Api.InferRequest.class).timeout(Duration.ofSeconds(10))
+                            .switchIfEmpty(Mono.error(new GatewayException(HttpStatus.BAD_REQUEST, "An inference request is required.")))
+                            .flatMap(body -> ServerResponse.ok().contentType(MediaType.APPLICATION_NDJSON)
+                                    .body(sharing.infer(token, body, permit(request)), Api.InferRecord.class));
+                })
+                .andRoute(GET(MODEL_UI_PREFIX + "{runtime}/**"), request -> {
+                    // No key: the sandboxed frame loads these plainly. Access must be running for this runtime.
+                    String runtime = request.pathVariable("runtime");
+                    String raw = request.requestPath().value();
+                    String prefix = MODEL_UI_PREFIX + runtime + "/";
+                    if (request.uri().getRawQuery() != null || !raw.startsWith(prefix)
+                            || !ModelUiAssets.RUNTIME_ID.matcher(runtime).matches()) return Mono.error(ModelUiAssets.notFound());
+                    String path = raw.substring(prefix.length());
+                    return sharing.uiRuntime(runtime).flatMap(found -> ModelUiAssets.serve(found, path))
+                            .flatMap(asset -> ServerResponse.ok().contentType(asset.type()).bodyValue(asset.bytes()));
                 });
         GuestSocket sockets = new GuestSocket(sharing, json, scheduler);
         HandlerStrategies strategies = HandlerStrategies.builder()
@@ -118,13 +138,17 @@ final class GuestServer implements AutoCloseable {
                     headers.set("X-Content-Type-Options", "nosniff");
                     headers.set("Referrer-Policy", "no-referrer");
                     headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
-                    headers.set("X-Frame-Options", "DENY");
-                    headers.set("Cross-Origin-Resource-Policy", "same-origin");
                     headers.set("X-Accel-Buffering", "no");
-                    headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; "
-                            + "font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
-                            + "frame-ancestors 'none'; form-action 'self'");
                     var request = exchange.getRequest();
+                    boolean modelUi = request.getPath().value().startsWith(MODEL_UI_PREFIX);
+                    if (!modelUi) {
+                        // The host page frames model UIs from its own origin and nothing else.
+                        headers.set("X-Frame-Options", "DENY");
+                        headers.set("Cross-Origin-Resource-Policy", "same-origin");
+                        headers.set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; "
+                                + "font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; "
+                                + "frame-ancestors 'none'; form-action 'self'; frame-src 'self'");
+                    }
                     String host = request.getURI().getHost();
                     List<String> tags = request.getHeaders().getOrEmpty(PublicIngress.HEADER);
                     boolean requestRoute = REQUEST_PATHS.contains(request.getPath().value());
@@ -134,11 +158,14 @@ final class GuestServer implements AutoCloseable {
                         if (host == null || !List.of("127.0.0.1", "localhost", "[::1]").contains(host) || !tags.isEmpty())
                             return problem(exchange, new GatewayException(HttpStatus.FORBIDDEN, "Local preview access only."), json);
                         exchange.getAttributes().put("hostai.guestPermit", PublicIngress.Permit.LOCAL);
+                        // The browser-facing origin of this listener is whatever loopback authority it was asked for.
+                        if (modelUi) ModelUiAssets.headers(headers, "http://" + request.getHeaders().getFirst(HttpHeaders.HOST));
                     } else {
                         // Channel identity is listener-owned. Forwarded headers never select a channel or construct URLs.
                         if (!internet.accepts(request.getURI(), tags))
                             return problem(exchange, new GatewayException(HttpStatus.FORBIDDEN, "This internet-sharing route is unavailable."), json);
                         headers.set("Strict-Transport-Security", "max-age=86400");
+                        if (modelUi) ModelUiAssets.headers(headers, internet.origin().toString());
                         if (sockets.matches(request.getPath().value()))
                             return Mono.defer(() -> sockets.upgrade(exchange, internet)).subscribeOn(scheduler);
                         if (requestRoute) {
@@ -188,6 +215,13 @@ final class GuestServer implements AutoCloseable {
         if (decoded.length != 32 || !java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(decoded).equals(value.substring(5)))
             throw SharingService.unauthorized();
         return value;
+    }
+
+    private static void requireJson(ServerRequest request) {
+        if (request.headers().header(HttpHeaders.CONTENT_TYPE).size() != 1
+                || !request.headers().contentType().map(type -> type.getType().equalsIgnoreCase("application")
+                        && type.getSubtype().equalsIgnoreCase("json")).orElse(false))
+            throw new GatewayException(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "JSON is required.");
     }
 
     private static <T> Mono<T> requestBody(ServerRequest request, JsonMapper json, Class<T> type) {

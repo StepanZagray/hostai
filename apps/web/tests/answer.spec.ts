@@ -63,7 +63,9 @@ test("formatted answers copy original text and code while prompts remain literal
   });
   await page.getByRole("button", { name: "Copy response", exact: true }).click();
   await expect(
-    page.getByRole("status").filter({ hasText: "Select and copy the text manually" }),
+    page
+      .getByRole("status")
+      .filter({ hasText: "Copy failed — select the text and copy it manually" }),
   ).toBeVisible();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Follow up");
   await page.getByRole("button", { name: "Send message" }).click();

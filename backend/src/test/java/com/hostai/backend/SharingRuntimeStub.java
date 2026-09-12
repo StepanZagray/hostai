@@ -22,7 +22,10 @@ final class SharingRuntimeStub implements AutoCloseable {
                     connections.incrementAndGet();
                     connection.onDispose().doFinally(ignored -> connections.decrementAndGet()).subscribe();
                 })
-                .route(routes -> routes.get("/api/version", (request, response) ->
+                .route(routes -> routes
+                    // This fixture speaks Ollama only; the protocol probe is an expected 404.
+                    .get("/hostai/manifest", (request, response) -> response.status(404).send())
+                    .get("/api/version", (request, response) ->
                         response.header("Content-Type", "application/json").sendString(Mono.just("{\"version\":\"fixture\"}")))
                     .get("/api/tags", (request, response) -> {
                         metadata.incrementAndGet();

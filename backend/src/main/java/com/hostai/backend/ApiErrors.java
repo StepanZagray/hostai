@@ -63,7 +63,8 @@ public class ApiErrors extends ResponseEntityExceptionHandler {
             cause = cause.getCause();
         }
         String kind = exchange.getRequest().getPath().value().startsWith("/api/model-downloads")
-                ? "model download" : exchange.getRequest().getPath().value().startsWith("/api/sharing") ? "sharing" : "chat";
+                ? "model download" : exchange.getRequest().getPath().value().startsWith("/api/sharing") ? "sharing"
+                : exchange.getRequest().getPath().value().startsWith("/api/infer") ? "inference" : "chat";
         return createResponseEntity(ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST,
                 "Invalid " + kind + " request. Check the required fields and documented input limits."),
                 headers, HttpStatus.BAD_REQUEST, exchange);

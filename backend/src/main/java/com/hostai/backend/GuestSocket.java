@@ -60,16 +60,17 @@ final class GuestSocket {
     Mono<Void> chat(WebSocketSession session, PublicIngress.Permit permit) {
         return Mono.using(() -> receive(session), input -> {
             AtomicBoolean started = new AtomicBoolean();
+            AtomicBoolean infer = new AtomicBoolean();
             Flux<Object> records = input.first.asMono().timeout(Duration.ofSeconds(5)).takeUntilOther(permit.ended())
                     .switchIfEmpty(Mono.error(PublicIngress.unavailable())).publishOn(scheduler)
-                    .flatMapMany(bytes -> decode(bytes, permit))
-                    .takeUntil(Api.ChatChunk::done)
-                    .doOnNext(ignored -> started.set(true)).cast(Object.class)
+                    .flatMapMany(bytes -> decode(bytes, permit, infer))
+                    .takeUntil(GuestSocket::done)
+                    .doOnNext(ignored -> started.set(true))
                     .onErrorResume(error -> {
                         var failure = GuestServer.failure(error);
-                        return Flux.just(started.get() ? Api.ChatChunk.error(failure.detail())
-                                : new Error("error", failure.status().value(),
-                                        failure.retryAfter() > 0 ? failure.retryAfter() : null));
+                        if (!started.get()) return Flux.just(new Error("error", failure.status().value(),
+                                failure.retryAfter() > 0 ? failure.retryAfter() : null));
+                        return Flux.just(infer.get() ? Api.InferRecord.error(failure.detail()) : Api.ChatChunk.error(failure.detail()));
                     });
             return session.send(records.takeUntilOther(input.closed.asMono())
                     .map(record -> session.textMessage(json.writeValueAsString(record))))
@@ -77,19 +78,30 @@ final class GuestSocket {
         }, Input::dispose);
     }
 
-    private Flux<Api.ChatChunk> decode(byte[] bytes, PublicIngress.Permit permit) {
+    private static boolean done(Object record) {
+        return record instanceof Api.ChatChunk chunk ? chunk.done()
+                : record instanceof Api.InferRecord infer && infer.done();
+    }
+
+    /** Exactly {@code key} plus either {@code request} (chat) or {@code infer} (opaque inference). */
+    private Flux<Object> decode(byte[] bytes, PublicIngress.Permit permit, AtomicBoolean infer) {
         try {
             var envelope = json.readTree(bytes);
             if (envelope == null || !envelope.isObject() || envelope.size() != 2
-                    || !envelope.hasNonNull("key") || !envelope.get("key").isString()
-                    || !envelope.hasNonNull("request") || !envelope.get("request").isObject()) throw invalid();
+                    || !envelope.hasNonNull("key") || !envelope.get("key").isString()) throw invalid();
+            boolean inference = envelope.hasNonNull("infer");
+            var body = envelope.get(inference ? "infer" : "request");
+            if (body == null || !body.isObject()) throw invalid();
             String key = envelope.get("key").asString();
             if (key.isEmpty() || key.length() > 256) throw invalid();
             sharing.authenticate(key, permit); // No model lookup for unauthenticated uploads.
-            var body = envelope.get("request");
             if (json.writeValueAsBytes(body).length > BackendConfiguration.MAX_BODY_BYTES)
                 throw new GatewayException(HttpStatus.PAYLOAD_TOO_LARGE, "The request exceeds 262144 bytes.");
-            return sharing.chat(key, json.treeToValue(body, Api.ChatRequest.class), permit);
+            if (inference) {
+                infer.set(true);
+                return sharing.infer(key, json.treeToValue(body, Api.InferRequest.class), permit).cast(Object.class);
+            }
+            return sharing.chat(key, json.treeToValue(body, Api.ChatRequest.class), permit).cast(Object.class);
         } catch (JacksonException error) {
             return Flux.error(invalid());
         }

@@ -36,7 +36,16 @@ describe("independent host refresh", () => {
     fixture(failed.map((name) => `/api/${name}`));
     const snapshot = await readHostSnapshot(new AbortController().signal);
     expect(snapshot.status).toEqual(failed.includes("status") ? null : status);
-    expect(snapshot.models).toEqual(failed.includes("models") ? [] : models);
+    // Older gateways omit `ui`; the snapshot always carries it as null.
+    expect(snapshot.models).toEqual(
+      failed.includes("models")
+        ? []
+        : models.map((model) => ({
+            ...model,
+            ui: null,
+            capabilities: { chat: true, infer: false },
+          })),
+    );
     expect(snapshot.requests).toEqual(failed.includes("requests") ? [] : requests);
     for (const name of ["status", "models", "requests"] as const)
       expect(snapshot.errors[name] !== null).toBe(failed.includes(name));

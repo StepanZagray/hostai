@@ -1,69 +1,58 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
-import {
-  Activity,
-  ArrowRight,
-  Box,
-  Check,
-  ChevronRight,
-  Cpu,
-  RefreshCw,
-  Terminal,
-  Zap,
-} from "lucide-react";
+import { ArrowRight, Check, RefreshCw } from "lucide-react";
 import { css } from "../../styled-system/css";
 import { useHost } from "../lib/host-context";
-import { chatUnavailableReason } from "../lib/model-admission";
+import { interfaceUnavailableReason } from "../lib/model-admission";
 import {
   Badge,
   Button,
   PageHeading,
-  PanelHeading,
+  Readout,
+  Section,
   button,
-  eyebrow,
   muted,
   panel,
+  type Tone,
 } from "../components/ui";
 import { RuntimeCommand } from "../components/runtime-command";
-import { Topology } from "../components/topology";
 import { RequestTable } from "../components/request-table";
 
 export const Route = createFileRoute("/")({ component: Overview });
 
 function Overview() {
   const { status, models, requests, loading, refreshing, errors, refresh } = useHost();
-  const eligibleModels = models.filter((model) => chatUnavailableReason(model) === null);
-  const ready = !!status?.ollamaConnected && eligibleModels.length > 0;
-  const metrics = [
+  const eligibleModels = models.filter((model) => interfaceUnavailableReason(model) === null);
+  const runtimeReady = !!status?.ollamaConnected;
+  const ready = runtimeReady && eligibleModels.length > 0;
+  const tone: Tone = loading ? "busy" : ready ? "good" : "warning";
+  const readings: { label: string; value: string; sub: string; tone?: Tone }[] = [
     {
-      label: "Discovered models",
-      value: loading ? "…" : !errors.models ? String(models.length).padStart(2, "0") : "—",
+      label: "Models",
+      value: loading ? "…" : errors.models ? "—" : String(models.length),
       sub: errors.models ? "Discovery unavailable" : `${eligibleModels.length} available to try`,
-      icon: Box,
+      tone: errors.models ? "warning" : "neutral",
     },
     {
-      label: "Active requests",
-      value: status ? `${status.activeRequests} / ${status.maxConcurrentRequests}` : "—",
+      label: "In flight",
+      value: status ? `${status.activeRequests}/${status.maxConcurrentRequests}` : "—",
       sub: "Concurrent generation slots",
-      icon: Zap,
     },
     {
-      label: "Total requests",
+      label: "Requests",
       value: status ? String(status.totalRequests) : "—",
       sub: "Since the gateway started",
-      icon: Activity,
     },
     {
-      label: "Host runtime",
-      value: status ? `Java ${status.javaVersion.split(".")[0]}` : "—",
-      sub: status ? `Gateway v${status.version}` : "Waiting for the gateway",
-      icon: Cpu,
+      label: "Gateway",
+      value: status ? `v${status.version}` : "—",
+      sub: status ? `Java ${status.javaVersion.split(".")[0]}` : "Waiting for the gateway",
     },
   ];
   return (
     <>
       <PageHeading
-        title="Host overview"
-        description="Your models, connections, and activity. All in one place."
+        title="Overview"
+        description="Your runtime, models and recent generations."
         action={
           <Button onClick={() => void refresh()} disabled={refreshing}>
             <RefreshCw />
@@ -71,254 +60,164 @@ function Overview() {
           </Button>
         }
       />
+
       <section
-        className={css({
-          bg: "surface",
-          border: "1px solid token(colors.line)",
-          borderRadius: "12px",
-          p: { base: "5", md: "7" },
-          mb: "6",
+        aria-label="Host status"
+        className={`${panel} ${css({
+          px: { base: "3.5", md: "4" },
+          py: "3.5",
+          mb: "4",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          gap: "6",
-          position: "relative",
-          overflow: "hidden",
-        })}
+          gap: "4",
+          flexWrap: "wrap",
+        })}`}
       >
-        <div className={css({ maxW: "490px", position: "relative", zIndex: 1 })}>
-          <div className={css({ display: "flex", gap: "3", alignItems: "center", mb: "4" })}>
-            <span className={eyebrow}>PERSONAL INFERENCE</span>
-            <Badge tone={ready ? "good" : "warning"}>
-              {loading ? "Checking host" : ready ? "Ready to run" : "Setup required"}
-            </Badge>
-          </div>
-          <h2
-            className={css({
-              fontSize: { base: "24px", lg: "30px" },
-              fontWeight: 750,
-              letterSpacing: "-0.045em",
-              mb: "3",
-            })}
-          >
-            {ready ? "Your next idea runs here." : "Make yourself at host."}
-          </h2>
-          <p className={muted}>
-            {ready
-              ? "Your local models are connected. Open the playground and give them something to work on."
-              : "Bring your local models into one workspace. Connect your runtime, try a prompt, and see what your machine can do."}
+        <div className={css({ display: "grid", gap: "1.5", minW: 0 })}>
+          <Badge tone={tone}>
+            {loading ? "Checking host" : ready ? "Ready to run" : "Setup required"}
+          </Badge>
+          <p className={css({ fontSize: "md", fontWeight: 500, minW: 0 })}>
+            {loading
+              ? "Reading gateway status."
+              : ready
+                ? `${eligibleModels.length} ${eligibleModels.length === 1 ? "model" : "models"} on this machine can answer a prompt.`
+                : !runtimeReady
+                  ? "Ollama is not connected to the gateway."
+                  : "No installed model can answer a prompt yet."}
           </p>
-          <div
-            className={css({
-              display: "flex",
-              alignItems: "center",
-              gap: "3",
-              mt: "5",
-              flexWrap: "wrap",
-            })}
-          >
+        </div>
+        <div className={css({ display: "flex", gap: "2", flexWrap: "wrap" })}>
+          {ready ? (
+            <>
+              <Link to="/playground" className={button({ variant: "primary" })}>
+                Open playground
+                <ArrowRight size={15} />
+              </Link>
+              <Link to="/models" className={button()}>
+                Models
+              </Link>
+            </>
+          ) : (
             <Link
-              to={ready ? "/playground" : "/connection"}
+              to={runtimeReady ? "/models" : "/connection"}
               className={button({ variant: "primary" })}
             >
-              {ready ? "Open playground" : "Connect your runtime"}
+              {runtimeReady ? "Download a model" : "Connect your runtime"}
               <ArrowRight size={15} />
             </Link>
-            <Link to="/models" className={button({ variant: "ghost" })}>
-              Explore models
-              <ChevronRight size={15} />
-            </Link>
-          </div>
-        </div>
-        <div
-          aria-hidden="true"
-          className={css({
-            display: { base: "none", xl: "grid" },
-            placeItems: "center",
-            w: "200px",
-            h: "165px",
-            flexShrink: 0,
-            bgImage: "radial-gradient(#c5d9df 1px, transparent 1px)",
-            bgSize: "12px 12px",
-          })}
-        >
-          <div
-            className={css({
-              bg: "surface",
-              border: "1px solid #c4dfe6",
-              p: "5",
-              borderRadius: "20px",
-              boxShadow: "0 8px 30px #096f860c",
-              position: "relative",
-            })}
-          >
-            <Cpu size={58} strokeWidth={1.1} className={css({ color: "accent" })} />
-            <span
-              className={css({
-                position: "absolute",
-                right: "-7px",
-                bottom: "-7px",
-                border: "4px solid white",
-                bg: "accent",
-                color: "white",
-                borderRadius: "50%",
-                p: "1.5",
-              })}
-            >
-              <Check size={15} />
-            </span>
-          </div>
+          )}
         </div>
       </section>
+
       <section
         aria-label="Host metrics"
         aria-busy={loading}
-        className={css({
+        className={`${panel} ${css({
           display: "grid",
-          gridTemplateColumns: { base: "1fr 1fr", xl: "repeat(4, 1fr)" },
-          gap: "4",
-          mb: "6",
-        })}
+          gridTemplateColumns: { base: "1fr 1fr", lg: "repeat(4, 1fr)" },
+          mb: "5",
+          overflow: "hidden",
+          "& > div": {
+            px: { base: "3.5", md: "4" },
+            py: "3.5",
+            borderTop: "1px solid token(colors.lineSoft)",
+            borderLeft: "1px solid token(colors.lineSoft)",
+          },
+          "& > div:nth-child(-n + 2)": { borderTop: "none" },
+          "& > div:nth-child(odd)": { borderLeft: "none" },
+          lg: {
+            "& > div": { borderTop: "none", borderLeft: "1px solid token(colors.lineSoft)" },
+            "& > div:first-child": { borderLeft: "none" },
+          },
+        })}`}
       >
-        {metrics.map(({ label, value, sub, icon: Icon }) => (
-          <div key={label} className={`${panel} ${css({ p: { base: "4", md: "5" } })}`}>
-            <div
-              className={css({
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                mb: "4",
-                gap: "2",
-              })}
-            >
-              <span className={css({ fontSize: "xs", fontWeight: 600, color: "muted" })}>
-                {label}
-              </span>
-              <Icon size={16} className={css({ color: "muted" })} />
-            </div>
-            <p
-              className={css({
-                fontFamily: "mono",
-                fontSize: { base: "23px", lg: "27px" },
-                fontWeight: 450,
-                letterSpacing: "-0.06em",
-                mb: "2",
-                fontVariantNumeric: "tabular-nums",
-              })}
-            >
-              {value}
-            </p>
-            <p className={css({ color: "muted", fontSize: "10px", lineHeight: 1.6 })}>{sub}</p>
-          </div>
+        {readings.map(({ label, value, sub, tone }) => (
+          <Readout key={label} label={label} value={value} sub={sub} tone={tone} />
         ))}
       </section>
-      <div
-        className={css({
-          display: "grid",
-          gridTemplateColumns: { base: "1fr", xl: "1.2fr 1fr" },
-          gap: "6",
-          mb: "6",
-        })}
-      >
-        <Topology />
-        <section className={panel} aria-label="From zero to first token">
-          <PanelHeading
-            title="From zero to first token"
-            description="A small setup. A lot of possibilities."
-          />
-          <div
-            className={css({
-              px: "5",
-              pb: "5",
-              display: "flex",
-              flexDirection: "column",
-              gap: "4",
-            })}
-          >
+
+      <div className={css({ display: "grid", gap: "5" })}>
+        <Section
+          aria-label="Host setup"
+          title="Host setup"
+          description={
+            ready ? "Both prerequisites are met." : "Two prerequisites before your first prompt."
+          }
+        >
+          <ol className={css({ display: "grid", gap: "4" })}>
             {[
               {
-                title: "Start your Ollama runtime",
+                title: "Run Ollama",
                 action: "serve" as const,
-                complete: "Ollama is already connected. No restart is needed.",
-                done: !!status?.ollamaConnected,
+                complete: "Ollama is already connected.",
+                done: runtimeReady,
               },
               {
-                title: "Download a model that fits your hardware",
+                title: "Install a model",
                 action: "pull" as const,
                 complete: "Your library has a model available to try.",
                 done: eligibleModels.length > 0,
               },
-            ].map((step, i) => (
-              <div key={step.title}>
-                <div
+            ].map((step, index) => (
+              <li key={step.title} className={css({ display: "flex", gap: "3", minW: 0 })}>
+                <span
+                  aria-hidden="true"
+                  data-done={step.done}
                   className={css({
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "2",
-                    mb: "2",
-                    fontSize: "xs",
-                    fontWeight: 600,
+                    flexShrink: 0,
+                    border: "1px solid token(colors.lineStrong)",
+                    borderRadius: "full",
+                    w: "22px",
+                    h: "22px",
+                    display: "grid",
+                    placeItems: "center",
+                    color: "muted",
+                    fontFamily: "mono",
+                    fontSize: "2xs",
+                    "&[data-done=true]": {
+                      bg: "liveSoft",
+                      borderColor: "liveSoft",
+                      color: "live",
+                    },
                   })}
                 >
-                  <span
-                    className={css({
-                      border: "1px solid token(colors.line)",
-                      borderRadius: "50%",
-                      w: "20px",
-                      h: "20px",
-                      display: "grid",
-                      placeItems: "center",
-                      color: "accent",
-                      fontSize: "10px",
-                    })}
-                  >
-                    {step.done ? <Check size={12} /> : i + 1}
-                  </span>
-                  {step.title}
+                  {step.done ? <Check size={12} strokeWidth={2.5} /> : index + 1}
+                </span>
+                <div className={css({ minW: 0, flex: 1 })}>
+                  <h3 className={css({ fontSize: "sm", fontWeight: 600, mb: "1.5" })}>
+                    {step.title}
+                  </h3>
+                  {step.done ? (
+                    <p className={muted}>{step.complete}</p>
+                  ) : (
+                    <RuntimeCommand
+                      endpoint={status?.ollamaUrl}
+                      loading={loading}
+                      action={step.action}
+                    />
+                  )}
                 </div>
-                {step.done ? (
-                  <p className={muted}>{step.complete}</p>
-                ) : (
-                  <RuntimeCommand
-                    endpoint={status?.ollamaUrl}
-                    loading={loading}
-                    action={step.action}
-                  />
-                )}
-              </div>
+              </li>
             ))}
-            <Link
-              to="/playground"
-              className={css({
-                display: "flex",
-                alignItems: "center",
-                gap: "2",
-                color: "accent",
-                fontSize: "xs",
-                fontWeight: 700,
-                minH: "36px",
-              })}
-            >
-              <Terminal size={15} />
-              Send your first prompt
-              <ArrowRight size={14} />
-            </Link>
-          </div>
-        </section>
-      </div>
-      <section className={panel}>
-        <PanelHeading
+          </ol>
+        </Section>
+
+        <Section
           title="Recent requests"
-          description="A little visibility into every generation."
+          description="Metadata only — prompts and responses are never recorded."
           action={
-            <Link to="/activity" className={button({ variant: "ghost" })}>
-              View activity
+            <Link to="/activity" className={button({ variant: "ghost", size: "sm" })}>
+              All activity
               <ArrowRight size={14} />
             </Link>
           }
-        />
-        <RequestTable requests={requests.slice(0, 5)} error={errors.requests} loading={loading} />
-      </section>
+          flush
+        >
+          <RequestTable requests={requests.slice(0, 5)} error={errors.requests} loading={loading} />
+        </Section>
+      </div>
     </>
   );
 }

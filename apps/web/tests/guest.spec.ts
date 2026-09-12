@@ -175,11 +175,36 @@ async function openGuest(page: Page, key?: string) {
   if (key === undefined) await page.goto(process.env.HOSTAI_GUEST_TEST_URL!);
   else await page.goto(process.env.HOSTAI_GUEST_TEST_URL! + "#access=" + encodeURIComponent(key));
 }
+/**
+ * Session facts, the access-status line and the connection controls live in the
+ * header's session menu, a native <details> that starts closed. Tests open it the
+ * way a guest would. Closing it again without a key press leaves focus wherever the
+ * page put it, which several assertions below depend on.
+ */
+const menuSummary = (page: Page) => page.locator("#guest-session-menu");
+const accessStatus = (page: Page) => page.locator("#guest-access-status");
+const sessionFacts = (page: Page) => page.locator("#guest-session-facts");
+async function openMenu(page: Page) {
+  const summary = menuSummary(page);
+  if (!(await summary.evaluate((node) => !!node.closest("details")?.open))) await summary.click();
+}
+async function closeMenu(page: Page) {
+  await menuSummary(page).evaluate((node) => {
+    const details = node.closest("details");
+    if (details?.open) details.open = false;
+  });
+}
+async function menuButton(page: Page, name: string) {
+  await openMenu(page);
+  return page.getByRole("button", { name, exact: true });
+}
+async function clickMenu(page: Page, name: string) {
+  await (await menuButton(page, name)).click();
+  await closeMenu(page);
+}
 async function connected(page: Page) {
   await openGuest(page, access);
-  await expect(
-    page.getByText("Access was available at the last check.", { exact: true }),
-  ).toBeVisible();
+  await expect(accessStatus(page)).toHaveText("Access was available at the last check.");
 }
 async function send(page: Page, text: string) {
   await page.getByLabel("Message", { exact: true }).fill(text);
@@ -217,11 +242,13 @@ test("direct invite connects without discovery and is removed before requests un
     );
   expect(assets.length).toBeGreaterThan(1);
   expect(assets.every((path) => /^\/assets\/.+-[\w-]+\.(js|css)$/.test(path || ""))).toBe(true);
-  await expect(
-    page.getByText("Host-provided name · not a verified identity", { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText(/Messages go to the operator of this host/)).toBeVisible();
-  await expect(page.getByText(/local-only, with no internet sharing/)).toBeVisible();
+  await expect(sessionFacts(page)).toContainText("Host-provided name · not a verified identity");
+  await expect(page.locator("#guest-disclosure")).toContainText(
+    "Messages go to the operator of this host",
+  );
+  await expect(page.locator("#guest-disclosure")).toContainText(
+    "local-only, with no internet sharing",
+  );
   const expectedExpiry = await page.evaluate(
     (value) =>
       new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "long" }).format(
@@ -236,7 +263,7 @@ test("direct invite connects without discovery and is removed before requests un
   );
   expect(
     await page.evaluate(() => getComputedStyle(document.documentElement).fontFamily),
-  ).toContain("Manrope");
+  ).toContain("Instrument Sans");
   expect(state.unexpected).toEqual([]);
   expect(errors).toEqual([]);
   await expect(page.getByLabel("Message", { exact: true })).toBeInViewport({ ratio: 1 });
@@ -248,9 +275,15 @@ test("invalid key has a uniform safe error and no automatic retries", async ({ p
   state.sessionStatus = 401;
   await openGuest(page);
   expect(state.sessionRequests).toHaveLength(0);
-  await expect(page.getByText(/Messages go to the operator of this host/)).toBeVisible();
-  await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
-  await expect(page.getByText(/Cloudflare can see messages and access keys/)).toBeVisible();
+  await expect(page.locator("#guest-disclosure")).toContainText(
+    "Messages go to the operator of this host",
+  );
+  await expect(page.locator("#guest-disclosure")).toContainText(
+    "transport may use a Cloudflare relay",
+  );
+  await expect(page.locator("#guest-disclosure")).toContainText(
+    "Cloudflare can see messages and access keys",
+  );
   await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
   const input = page.getByLabel("Access key", { exact: true });
   await expect(input).toHaveAttribute("type", "password");
@@ -273,13 +306,13 @@ test("temporary internet metadata enables chat with Cloudflare and host identity
   state.metadata.scope = "temporary-internet";
   await page.setViewportSize({ width: 320, height: 900 });
   await openGuest(page);
-  await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
+  await expect(page.locator("#guest-disclosure")).toContainText(
+    "transport may use a Cloudflare relay",
+  );
   await expect(page.getByText("Local preview", { exact: true })).toHaveCount(0);
   await page.getByLabel("Access key", { exact: true }).fill(` ${access} `);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
-  await expect(
-    page.getByText("Access was available at the last check.", { exact: true }),
-  ).toBeVisible();
+  await expect(accessStatus(page)).toHaveText("Access was available at the last check.");
   await expect(page.getByText("Temporary internet access", { exact: true })).toBeVisible();
   const disclosure = page.locator("#guest-disclosure");
   await expect(disclosure).toContainText("This connection uses a Cloudflare relay");
@@ -287,9 +320,7 @@ test("temporary internet metadata enables chat with Cloudflare and host identity
     "Cloudflare terminates TLS and can see messages and access keys",
   );
   await expect(disclosure).toContainText("host’s name is self-asserted, not a verified identity");
-  await expect(
-    page.getByText("Host-provided name · not a verified identity", { exact: true }),
-  ).toBeVisible();
+  await expect(sessionFacts(page)).toContainText("Host-provided name · not a verified identity");
   await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
   expect(state.chatRequests).toHaveLength(0);
   await send(page, "Hello through the fixture relay");
@@ -306,7 +337,7 @@ test("temporary internet metadata enables chat with Cloudflare and host identity
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(state.unexpected).toEqual([]);
   await page.screenshot({ path: "test-results/guest-internet-mobile.png", fullPage: true });
-  await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await clickMenu(page, "Disconnect");
   await expect(page.getByText("Temporary internet access", { exact: true })).toHaveCount(0);
   await expect(disclosure).toContainText("transport may use a Cloudflare relay");
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
@@ -326,7 +357,7 @@ test("internet Stop closes its socket, retains the draft and never resubmits aut
   await expect.poll(() => state.socketClosed).toBe(1);
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("A public prompt");
   expect(state.chatRequests).toHaveLength(1);
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await clickMenu(page, "Reconnect");
   state.chunks = [{ content: "A completed retry", done: true }];
   await send(page, "Edited public prompt");
   await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
@@ -351,9 +382,11 @@ test("internet admission errors preserve the prompt and honor the retry delay", 
   await send(page, "Retry this public prompt");
   await expect(page.getByRole("alert")).toContainText("busy or the request limit");
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Retry this public prompt");
-  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  await expect(await menuButton(page, "Reconnect")).toBeDisabled();
+  await closeMenu(page);
   await page.clock.runFor(12_001);
-  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeEnabled();
+  await expect(await menuButton(page, "Reconnect")).toBeEnabled();
+  await closeMenu(page);
   expect(state.chatRequests).toHaveLength(1);
   expect(state.httpChats).toBe(0);
   expect(state.unexpected).toEqual([]);
@@ -377,8 +410,10 @@ test("an invite handshake never claims a local transport before metadata arrives
   try {
     await openGuest(page, access);
     await expect.poll(() => requested).toBe(true);
-    await expect(page.getByText("Checking guest access…", { exact: true })).toBeVisible();
-    await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
+    await expect(accessStatus(page)).toHaveText("Checking guest access…");
+    await expect(page.locator("#guest-disclosure")).toContainText(
+      "transport may use a Cloudflare relay",
+    );
     await expect(page.getByText(/local-only, with no internet sharing/)).toHaveCount(0);
     expect(new URL(page.url()).hash).toBe("");
     expect(await page.content()).not.toContain(access);
@@ -409,7 +444,9 @@ for (const scope of [
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
     await expect(page.getByText("Temporary internet access", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Local preview", { exact: true })).toHaveCount(0);
-    await expect(page.getByText(/transport may use a Cloudflare relay/)).toBeVisible();
+    await expect(page.locator("#guest-disclosure")).toContainText(
+      "transport may use a Cloudflare relay",
+    );
     expect(state.sessionRequests).toHaveLength(1);
     expect(state.chatRequests).toHaveLength(0);
     expect(await page.content()).not.toContain(access);
@@ -515,7 +552,7 @@ test("terminal access error keeps partial transcript and next draft; reconnect n
     "An independently typed draft",
   );
   expect(await page.content()).not.toContain(access);
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await clickMenu(page, "Reconnect");
   await expect.poll(() => state.sessionRequests.length).toBe(2);
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
   expect(state.chatRequests).toHaveLength(2);
@@ -625,11 +662,11 @@ for (const [status, message] of [
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
     expect(await page.content()).not.toContain(access);
     if (status === 429) {
-      await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+      await expect(await menuButton(page, "Reconnect")).toBeDisabled();
+      await closeMenu(page);
       await expect(page.getByText(/Try reconnecting in/)).toBeVisible();
-      await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeEnabled({
-        timeout: 5000,
-      });
+      await expect(await menuButton(page, "Reconnect")).toBeEnabled({ timeout: 5000 });
+      await closeMenu(page);
     }
     if (status === 401) await expect(page.getByLabel("Access key", { exact: true })).toBeVisible();
     expect(state.chatRequests).toHaveLength(1);
@@ -650,7 +687,7 @@ test("same-key metadata errors and busy checks retain conversation and draft", a
   await page.getByLabel("Message", { exact: true }).fill("An unsent draft");
   for (const status of [500, 429, 503, 401]) {
     state.sessionStatus = status;
-    await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+    await clickMenu(page, "Reconnect");
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(page.getByText("A fixture answer.", { exact: true })).toBeVisible();
     await expect(page.getByLabel("Message", { exact: true })).toHaveValue("An unsent draft");
@@ -688,9 +725,9 @@ for (const outcome of ["ready", "failed"] as const) {
     const reconnect = page.getByRole("button", { name: "Reconnect", exact: true });
     const composer = page.getByLabel("Message", { exact: true });
     try {
-      await reconnect.click();
+      await clickMenu(page, "Reconnect");
       await expect.poll(() => requested).toBe(true);
-      await expect(page.getByText("Checking guest access…", { exact: true })).toBeVisible();
+      await expect(accessStatus(page)).toHaveText("Checking guest access…");
 
       await composer.fill("Keep this draft while access is checked");
       await composer.press("Enter");
@@ -711,9 +748,7 @@ for (const outcome of ["ready", "failed"] as const) {
 
       release();
       if (outcome === "ready") {
-        await expect(
-          page.getByText("Access was available at the last check.", { exact: true }),
-        ).toBeVisible();
+        await expect(accessStatus(page)).toHaveText("Access was available at the last check.");
         await expect(
           page.getByText("Message not sent. Access is available again.", { exact: false }),
         ).toBeVisible();
@@ -734,7 +769,9 @@ for (const outcome of ["ready", "failed"] as const) {
         await expect(
           page.getByRole("button", { name: "Send message", exact: true }),
         ).toBeDisabled();
+        await openMenu(page);
         await expect(reconnect).toBeEnabled();
+        await closeMenu(page);
         expect(state.chatRequests).toHaveLength(1);
       }
       expect(state.sessionRequests).toHaveLength(2);
@@ -763,7 +800,7 @@ test("re-entering the current key during cooldown explains the wait and preserve
   expect(state.sessionRequests).toHaveLength(1);
   expect(state.chatRequests).toHaveLength(2);
 
-  await page.getByRole("button", { name: "Use another key", exact: true }).click();
+  await clickMenu(page, "Use another key");
   const input = page.getByLabel("Access key", { exact: true });
   await input.fill(` ${access} `);
   await input.press("Enter");
@@ -773,18 +810,18 @@ test("re-entering the current key during cooldown explains the wait and preserve
     "Keep this request during cooldown",
   );
   await expect(page.getByText(/Try reconnecting in/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  await expect(await menuButton(page, "Reconnect")).toBeDisabled();
+  await closeMenu(page);
   expect(state.sessionRequests).toHaveLength(1);
   expect(state.chatRequests).toHaveLength(2);
   expect(await page.content()).not.toContain(access);
 
   await page.clock.runFor(3_001);
-  await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeDisabled();
+  await expect(await menuButton(page, "Reconnect")).toBeDisabled();
+  await closeMenu(page);
   await input.fill("different-fixture-key");
   await input.press("Enter");
-  await expect(
-    page.getByText("Access was available at the last check.", { exact: true }),
-  ).toBeVisible();
+  await expect(accessStatus(page)).toHaveText("Access was available at the last check.");
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
   await expect(page.getByText(/Message not sent/i)).toHaveCount(0);
@@ -826,7 +863,7 @@ test("failed replacement preserves the conversation until that key connects; dis
   await send(page, "Old key's question");
   await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("Old key's draft");
-  await page.getByRole("button", { name: "Use another key", exact: true }).click();
+  await clickMenu(page, "Use another key");
   await expect(page.getByLabel("Access key", { exact: true })).toBeFocused();
   state.sessionStatus = 401;
   await page.getByLabel("Access key", { exact: true }).fill("different-fixture-key");
@@ -838,17 +875,15 @@ test("failed replacement preserves the conversation until that key connects; dis
   expect(state.chatRequests).toHaveLength(1);
   state.sessionStatus = 200;
   state.stream = true;
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
-  await expect(
-    page.getByText("Access was available at the last check.", { exact: true }),
-  ).toBeVisible();
+  await clickMenu(page, "Reconnect");
+  await expect(accessStatus(page)).toHaveText("Access was available at the last check.");
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("");
   await send(page, "New key's question");
   expect(state.chatRequests[1].messages).toEqual([{ role: "user", content: "New key's question" }]);
   expect(state.chatKeys[1]).toBe("Bearer different-fixture-key");
   await push(page, "New partial output");
-  await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+  await clickMenu(page, "Disconnect");
   await expect(page.getByRole("article")).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Access key", { exact: true })).toHaveValue("");
@@ -868,7 +903,7 @@ test("unavailable metadata and host-rejected expired keys never enable sending",
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
   state.metadata.available = true;
   state.sessionStatus = 401;
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await clickMenu(page, "Reconnect");
   await expect(page.getByRole("alert")).toContainText("A valid access key is required");
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Draft while waiting");
   expect(state.chatRequests).toHaveLength(0);
@@ -895,7 +930,7 @@ test("disconnect during a pending handshake cannot restore access or echo the ke
   try {
     await openGuest(page, access);
     await expect.poll(() => requested).toBe(true);
-    await page.getByRole("button", { name: "Disconnect", exact: true }).click();
+    await clickMenu(page, "Disconnect");
     release();
     await expect.poll(() => settled).toBe(true);
     await expect(page.getByLabel("Access key", { exact: true })).toHaveValue("");
@@ -914,11 +949,11 @@ test("metadata transport failure retains the draft; an unsupported scope fails c
   await connected(page);
   await page.getByLabel("Message", { exact: true }).fill("Keep this metadata draft");
   await page.route("**/guest/v1/session", (route) => route.abort(), { times: 1 });
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await clickMenu(page, "Reconnect");
   await expect(page.getByRole("alert")).toContainText("Could not check guest access");
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue("Keep this metadata draft");
   state.metadata.scope = "unsupported-scope";
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await clickMenu(page, "Reconnect");
   await expect(page.getByRole("alert")).toContainText("Could not check guest access");
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeDisabled();
   expect(state.chatRequests).toHaveLength(0);
@@ -933,7 +968,7 @@ for (const hours of [-48, 48]) {
     await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
     expect(state.sessionRequests).toHaveLength(1);
     expect(state.chatRequests).toHaveLength(1);
-    await expect(page.getByText(/Host-reported expiry:/)).toBeVisible();
+    await expect(sessionFacts(page)).toContainText("Host-reported expiry");
     if (hours > 0) {
       await page.evaluate(() => window.scrollTo(0, 0));
       await page.screenshot({
@@ -982,7 +1017,7 @@ test("clock changes cannot interrupt a stream; host expiry preserves partial out
   );
   // Rechecking gets the host's authoritative 401 without generating another answer.
   state.sessionStatus = 401;
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await clickMenu(page, "Reconnect");
   await expect(page.getByRole("alert")).toContainText("A valid access key is required");
   await expect(page.getByLabel("Access key", { exact: true })).toHaveValue("");
   await page.evaluate(() => window.scrollTo(0, 0));
@@ -1002,12 +1037,13 @@ test("wall-clock changes cannot bypass or extend a host cooldown", async ({ page
   state.retryAfter = "2";
   await send(page, "Wait for host capacity");
   await expect(page.getByRole("alert")).toContainText("request limit");
-  const reconnect = page.getByRole("button", { name: "Reconnect", exact: true });
+  const reconnect = await menuButton(page, "Reconnect");
   await page.clock.setFixedTime(new Date(Date.now() + 48 * 3_600_000));
   await expect(reconnect).toBeDisabled();
   await page.clock.setFixedTime(new Date(Date.now() - 48 * 3_600_000));
   await page.clock.runFor(3000);
   await expect(reconnect).toBeEnabled();
+  await closeMenu(page);
   expect(state.sessionRequests).toHaveLength(1);
   expect(state.chatRequests).toHaveLength(1);
 });
@@ -1020,8 +1056,8 @@ test("reconnect refreshes model permissions and leaves earlier-model exchanges o
   await send(page, "First model's question");
   await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
   state.metadata.model = "different-fixture:small";
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
-  await expect(page.getByText("different-fixture:small", { exact: true })).toBeVisible();
+  await clickMenu(page, "Reconnect");
+  await expect(sessionFacts(page)).toContainText("different-fixture:small");
   expect(state.chatRequests).toHaveLength(1);
   await send(page, "Second model's question");
   await expect.poll(() => state.chatRequests.length).toBe(2);
@@ -1081,9 +1117,11 @@ test("320px and 1440px keep long answers and composer bounded with keyboard scro
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
+    // The transcript fills the panel and scrolls inside it: it never grows the page.
     expect(
       await pane.evaluate(
-        (element) => element.clientHeight <= 560 && element.scrollHeight > element.clientHeight,
+        (element) =>
+          element.clientHeight <= innerHeight && element.scrollHeight > element.clientHeight,
       ),
     ).toBe(true);
     await page.screenshot({ path: `test-results/guest-${width}-reading.png`, fullPage: true });
@@ -1122,10 +1160,11 @@ test("a stalled access check times out and reconnect remains manual", async ({ p
   });
   try {
     await openGuest(page, access);
-    await expect(page.getByText("Checking guest access…", { exact: true })).toBeVisible();
+    await expect(accessStatus(page)).toHaveText("Checking guest access…");
     await page.clock.fastForward(12_001);
     await expect(page.getByRole("alert")).toContainText("Could not check guest access");
-    await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeEnabled();
+    await expect(await menuButton(page, "Reconnect")).toBeEnabled();
+    await closeMenu(page);
     await expect(page.getByRole("button", { name: "Send message", exact: true })).toHaveCount(0);
     expect(state.chatRequests).toEqual([]);
   } finally {
@@ -1143,7 +1182,7 @@ for (const width of [320, 768, 1024, 1440]) {
     await send(page, "Keep my earlier question");
     await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
     await page.getByLabel("Message", { exact: true }).fill("Keep my unsent draft");
-    await page.getByRole("button", { name: "Use another key", exact: true }).click();
+    await clickMenu(page, "Use another key");
     const input = page.getByLabel("Access key", { exact: true });
     await input.fill("rejected-replacement");
     state.sessionStatus = 401;
@@ -1170,7 +1209,7 @@ test("returning to the previous key restores its retained context without an aut
   await send(page, "Earlier permission question");
   await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("Return to my draft");
-  await page.getByRole("button", { name: "Use another key", exact: true }).click();
+  await clickMenu(page, "Use another key");
   state.sessionStatus = 401;
   await page.getByLabel("Access key", { exact: true }).fill("invalid-other-key");
   await page.getByRole("button", { name: "Connect", exact: true }).click();
@@ -1202,7 +1241,7 @@ for (const kind of ["unavailable", "malformed", "transport"] as const) {
     await send(page, "Keep this private context");
     await expect(page.getByText("Response complete.", { exact: true })).toBeVisible();
     await page.getByLabel("Message", { exact: true }).fill("A draft for the first permission");
-    await page.getByRole("button", { name: "Use another key", exact: true }).click();
+    await clickMenu(page, "Use another key");
     state.metadata.model = "replacement-model:small";
     state.metadata.available = false;
     if (kind === "malformed") state.metadata.scope = "unsupported-scope";
@@ -1210,7 +1249,7 @@ for (const kind of ["unavailable", "malformed", "transport"] as const) {
     await page.getByLabel("Access key", { exact: true }).fill("replacement-key");
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await expect(page.getByRole("alert")).toBeVisible();
-    await expect(page.getByText(originalModel, { exact: true })).toBeVisible();
+    await expect(sessionFacts(page)).toContainText(originalModel);
     await expect(page.getByText("replacement-model:small", { exact: true })).toHaveCount(0);
     await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
       "A draft for the first permission",
@@ -1230,7 +1269,7 @@ test("initially unavailable access keeps its draft when the same key becomes ava
   await expect(page.getByRole("alert")).toBeVisible();
   await page.getByLabel("Message", { exact: true }).fill("Write while waiting for this model");
   state.metadata.available = true;
-  await page.getByRole("button", { name: "Reconnect", exact: true }).click();
+  await clickMenu(page, "Reconnect");
   await expect(page.getByRole("button", { name: "Send message", exact: true })).toBeEnabled();
   await expect(page.getByLabel("Message", { exact: true })).toHaveValue(
     "Write while waiting for this model",
@@ -1258,6 +1297,10 @@ test("manual key check keeps its field mounted and does not steal focus after a 
     await expect(input).toBeFocused();
     await expect(input).toHaveAttribute("readonly", "");
     await expect(input).toHaveAttribute("aria-busy", "true");
+    // The menu must stay open for this whole stretch. The point of the test is that
+    // focus parked on Disconnect survives the re-render, and closing the menu would
+    // itself move focus.
+    await openMenu(page);
     const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
     await disconnect.focus();
     await expect(disconnect).toBeFocused();
@@ -1265,7 +1308,130 @@ test("manual key check keeps its field mounted and does not steal focus after a 
     await expect(page.getByRole("alert")).toBeVisible();
     await expect(input).toBeEditable();
     await expect(disconnect).toBeFocused();
+    await closeMenu(page);
   } finally {
     release();
   }
+});
+
+test("the session menu opens from the keyboard, closes on Escape and never hides the way in", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  await connected(page);
+  const reconnect = page.getByRole("button", { name: "Reconnect", exact: true });
+  const disconnect = page.getByRole("button", { name: "Disconnect", exact: true });
+  // Closed: the moved content is out of the accessibility tree, not merely off-screen.
+  await expect(reconnect).toHaveCount(0);
+  await expect(
+    page.getByText("Access was available at the last check.", { exact: true }),
+  ).not.toBeVisible();
+  // The whole reason the menu is a native <details>: the composer keeps the disclosure
+  // as its accessible description even while the menu holding it is shut.
+  await expect(page.getByLabel("Message", { exact: true })).toHaveAccessibleDescription(
+    /Messages go to the operator of this host/,
+  );
+
+  await menuSummary(page).focus();
+  await menuSummary(page).press("Enter");
+  await expect(page.locator("#guest-disclosure")).toBeVisible();
+  await expect(accessStatus(page)).toBeVisible();
+  await expect(accessStatus(page)).toHaveText("Access was available at the last check.");
+  await expect(sessionFacts(page)).toBeVisible();
+  await expect(reconnect).toBeVisible();
+  await expect(disconnect).toBeVisible();
+  for (const target of [menuSummary(page), reconnect, disconnect]) {
+    const box = await target.boundingBox();
+    expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+  }
+
+  await menuSummary(page).press("Escape");
+  await expect(menuSummary(page)).toBeFocused();
+  await expect(reconnect).toHaveCount(0);
+
+  await openMenu(page);
+  await expect(reconnect).toBeVisible();
+  // A pointer anywhere outside the menu dismisses it; the way in is never trapped open.
+  await page.locator("body").click({ position: { x: 5, y: 5 } });
+  await expect(reconnect).toHaveCount(0);
+
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await openMenu(page);
+    await expect(reconnect).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: `test-results/guest-session-menu-${width}.png`, fullPage: true });
+    await closeMenu(page);
+  }
+  expect(state.unexpected).toEqual([]);
+});
+
+test("the conversation fills the page at both widths and both palettes, menu closed and open", async ({
+  page,
+}) => {
+  const state = await fixture(page);
+  state.stream = true;
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    for (const [width, height] of [
+      [320, 900],
+      [1440, 1100],
+    ]) {
+      await page.setViewportSize({ width: width!, height: height! });
+      // A hash-only navigation would not reload the bundle, so leave the origin first
+      // and start each capture from a clean transcript.
+      await page.goto("about:blank");
+      // With no session there is no interface to fill, so the way in is the page: a
+      // centred card at a readable measure, never stretched across 1440px.
+      await openGuest(page);
+      const field = page.getByLabel("Access key", { exact: true });
+      await expect(field).toBeVisible();
+      await expect(field).toBeFocused();
+      const card = await page.locator("section[aria-label='Guest connection']").boundingBox();
+      expect(card!.width).toBeLessThanOrEqual(560);
+      expect(Math.abs(card!.x + card!.width / 2 - width! / 2)).toBeLessThanOrEqual(2);
+      await page.screenshot({
+        path: `test-results/guest-layout-${scheme}-${width}-connect.png`,
+        fullPage: true,
+      });
+      await page.goto("about:blank");
+      await connected(page);
+      await send(page, "What can this host do?");
+      await push(page, "A full-width answer from the host runtime.", true);
+      await expect(
+        page.getByText("A full-width answer from the host runtime.", { exact: true }),
+      ).toBeVisible();
+      // The transcript reaches the page gutters. Under the old 880px column this was
+      // ~830px at 1440; anything near the viewport width proves the cap is gone.
+      const pane = page.getByRole("region", { name: "Conversation messages", exact: true });
+      const box = await pane.boundingBox();
+      expect(box!.width).toBeGreaterThan(width! - 60);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.screenshot({
+        path: `test-results/guest-layout-${scheme}-${width}-closed.png`,
+        fullPage: true,
+      });
+      await openMenu(page);
+      await expect(page.locator("#guest-disclosure")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Reconnect", exact: true })).toBeVisible();
+      // Neither edge: left overflow never raises scrollWidth, so measure the sheet.
+      const sheet = await page.locator("#guest-session-menu + div").boundingBox();
+      expect(sheet!.x).toBeGreaterThanOrEqual(0);
+      expect(sheet!.x + sheet!.width).toBeLessThanOrEqual(width!);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
+      await page.screenshot({
+        path: `test-results/guest-layout-${scheme}-${width}-menu.png`,
+        fullPage: true,
+      });
+      await closeMenu(page);
+    }
+  }
+  await page.emulateMedia({ colorScheme: "light" });
+  expect(state.unexpected).toEqual([]);
 });

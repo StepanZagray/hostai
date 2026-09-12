@@ -59,7 +59,7 @@ class AccessRequestFlowTest {
         scheduler = Schedulers.newBoundedElastic(2, 100, "request-flow-test");
         loops = LoopResources.create("request-flow-http", 1, true);
         validators = Validation.buildDefaultValidatorFactory();
-        var gateway = new OllamaGateway(new BackendConfiguration().ollamaClient(LocalOllamaEndpoint.parse(runtime.origin())),
+        var gateway = RuntimeCatalog.single(BackendConfiguration.runtimeClient(LocalOllamaEndpoint.parse(runtime.origin())),
                 scheduler, WAIT, Duration.ofSeconds(30), Duration.ofSeconds(60));
         internet = mock(InternetSharing.class);
         observe("live");
@@ -116,6 +116,12 @@ class AccessRequestFlowTest {
         String token = credential.token(recovered.json().get("grantId").stringValue());
         assertThat(sharing.authenticate(token, ingress.permit()).channel()).isEqualTo("internet");
         assertThatThrownBy(() -> sharing.authenticate(token)).isInstanceOf(GatewayException.class);
+        // The host never learned this key: the guest chose it, so only its hash was ever stored.
+        var approvedId = UUID.fromString(recovered.json().get("grantId").stringValue());
+        assertThat(sharing.status().grants()).singleElement()
+                .satisfies(grant -> assertThat(grant.recoverable()).isFalse());
+        assertThatThrownBy(() -> sharing.key(approvedId)).isInstanceOfSatisfying(GatewayException.class,
+                error -> assertThat(error.status()).isEqualTo(HttpStatus.CONFLICT));
         assertThat(runtime.metadata.get()).isZero(); assertThat(runtime.chats.get()).isZero();
         assertThat(pending.body() + recovered.body() + JSON.writeValueAsString(approved)
                 + Files.readString(temporary.resolve("access/grants.json"))).doesNotContain(credential.bearer(), credential.secret(), token);

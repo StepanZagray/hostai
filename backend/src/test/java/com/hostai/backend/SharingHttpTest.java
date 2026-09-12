@@ -228,7 +228,9 @@ class SharingHttpTest {
     @Test void sessionContainsOnlyGrantedModelAndSafeClientMetadata() throws Exception {
         var response = get(guest + "/guest/v1/session", token);
         assertThat(response.statusCode()).isEqualTo(200);
-        assertThat(object(response)).containsOnlyKeys("hostLabel", "model", "expiresAt", "available", "unavailableReason", "maxConcurrentGuests", "maxTokens", "requestsPerMinute", "scope")
+        assertThat(object(response)).containsOnlyKeys("hostLabel", "model", "expiresAt", "available", "unavailableReason", "maxConcurrentGuests", "maxTokens", "requestsPerMinute", "scope", "ui", "capabilities", "interaction")
+                .containsEntry("ui", null)
+                .containsEntry("capabilities", Map.of("chat", true, "infer", false))
                 .containsEntry("model", "fixture-shared:small").containsEntry("hostLabel", "Fixture host")
                 .containsEntry("available", true).containsEntry("scope", "local-preview");
         assertThat(response.body()).doesNotContain("private-owner", "ollamaUrl", "javaVersion", "totalRequests", "hash", token);
@@ -311,8 +313,31 @@ class SharingHttpTest {
         assertThat(STUB.chats.get()).isEqualTo(SharingService.REQUESTS_PER_MINUTE);
     }
 
+    @Test void ownerReadsAStoredKeyBackWithoutPublicationAndNeverRecoversAnEndedOne() throws Exception {
+        var read = post(owner("/api/sharing/grants/" + grantId + "/key"), Map.of(), null);
+        assertThat(read.statusCode()).isEqualTo(200);
+        assertThat(read.headers().firstValue("Cache-Control")).contains("no-store");
+        assertThat(json.readTree(read.body()).propertyNames()).containsExactly("token");
+        assertThat(object(read).get("token")).isEqualTo(token);
+        var created = post(owner("/api/sharing/grants"), Map.of("label", "Second visitor", "expiresInHours", 1), null);
+        assertThat(json.readTree(created.body()).propertyNames()).containsExactlyInAnyOrder("grant", "token");
+        assertThat(json.readTree(created.body()).get("grant").propertyNames())
+                .contains("id", "label", "model", "createdAt", "expiresAt", "channel", "recoverable")
+                .doesNotContain("secret", "hash", "token");
+        assertThat(json.readTree(created.body()).get("grant").get("recoverable").booleanValue()).isTrue();
+        // A key is stored permission, not a published address: reading it never needs access running.
+        assertThat(post(owner("/api/sharing/stop"), Map.of(), null).statusCode()).isEqualTo(200);
+        assertThat(object(post(owner("/api/sharing/grants/" + grantId + "/key"), Map.of(), null)).get("token")).isEqualTo(token);
+        assertThat(post(owner("/api/sharing/grants/" + UUID.randomUUID() + "/key"), Map.of(), null).statusCode()).isEqualTo(404);
+        assertThat(post(owner("/api/sharing/grants/not-a-uuid/key"), Map.of(), null).statusCode()).isEqualTo(400);
+        assertThat(post(owner("/api/sharing/grants/" + grantId + "/revoke"), Map.of(), null).statusCode()).isEqualTo(200);
+        var revoked = post(owner("/api/sharing/grants/" + grantId + "/key"), Map.of(), null);
+        assertThat(revoked.statusCode()).isEqualTo(409);
+        assertThat(revoked.body()).doesNotContain(token, token.substring(42));
+    }
+
     @Test void ownerMutationsStaySameOriginOnlyAndGuestCallsCannotReachThem() throws Exception {
-        for (String path : List.of("/api/sharing/start", "/api/sharing/stop", "/api/sharing/internet/start", "/api/sharing/internet/stop", "/api/sharing/grants", "/api/sharing/grants/cleanup", "/api/sharing/grants/" + grantId + "/revoke")) {
+        for (String path : List.of("/api/sharing/start", "/api/sharing/stop", "/api/sharing/internet/start", "/api/sharing/internet/stop", "/api/sharing/grants", "/api/sharing/grants/cleanup", "/api/sharing/grants/" + grantId + "/revoke", "/api/sharing/grants/" + grantId + "/key")) {
             var request = HttpRequest.newBuilder(URI.create(owner(path))).header("Content-Type", "application/json")
                     .header("Origin", "https://untrusted.example").POST(HttpRequest.BodyPublishers.ofString("{}")).build();
             assertThat(client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode()).isEqualTo(403);

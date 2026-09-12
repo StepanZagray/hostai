@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { KeyCleanup } from "../components/key-cleanup";
-import { InviteLinkActions } from "../components/invite-link-actions";
 import { AccessRequests } from "../components/access-requests";
+import { QrCode } from "../components/qr-code";
+import { AccessKeyField } from "../components/access-key-field";
 import {
   canRequestAction,
   parseRequests,
@@ -9,11 +10,29 @@ import {
   type RequestsStatus,
 } from "../components/access-requests-model";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { KeyRound, Play, RefreshCw, Square } from "lucide-react";
+import { Globe, KeyRound, Play, RefreshCw, Square } from "lucide-react";
 import { css } from "../../styled-system/css";
-import { Badge, Button, PageHeading, PanelHeading, button, muted, panel } from "../components/ui";
+import {
+  Badge,
+  Button,
+  CopyButton,
+  DataList,
+  Disclosure,
+  Field,
+  Led,
+  Note,
+  PageHeading,
+  Section,
+  button,
+  caption,
+  control,
+  legend,
+  mono,
+  muted,
+  type LedState,
+} from "../components/ui";
 import { useHost } from "../lib/host-context";
-import { chatUnavailableReason } from "../lib/model-admission";
+import { interfaceUnavailableReason } from "../lib/model-admission";
 import { errorMessage } from "../lib/api";
 import { useSharingDraft } from "../lib/sharing-draft-context";
 import { useOwnerConversations } from "../lib/owner-conversations-context";
@@ -33,6 +52,7 @@ interface Grant {
   expiresAt: string;
   revokedAt: string | null;
   channel?: "local" | "internet";
+  recoverable?: boolean;
 }
 interface InternetStatus {
   state: "off" | "starting" | "verifying" | "live" | "interrupted" | "stopping" | "failed";
@@ -54,34 +74,23 @@ interface Status {
   internet?: InternetStatus;
   requests?: RequestsStatus;
 }
-interface Invite {
-  grant: Grant;
+/** A key the host has asked to see. Held in this tab only; the gateway can always reissue it. */
+interface ShownKey {
+  id: string;
   token: string;
-  inviteUrl: string;
 }
 
-const field = css({
-  minH: "44px",
-  w: "full",
-  minW: 0,
-  bg: "canvas",
-  border: "1px solid token(colors.line)",
-  borderRadius: "7px",
-  px: "3",
-  fontSize: "sm",
-});
-const labelStyle = css({ display: "grid", gap: "2", fontSize: "xs", fontWeight: 650, minW: 0 });
 const date = (value: string) =>
   new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 
 const internetLabels: Record<InternetStatus["state"], string> = {
-  off: "Internet sharing is off",
-  starting: "Starting internet sharing…",
-  verifying: "Verifying the public connection…",
-  live: "Internet sharing is live",
-  interrupted: "Internet sharing is interrupted",
-  stopping: "Stopping internet sharing…",
-  failed: "Internet sharing failed",
+  off: "Hosting is off",
+  starting: "Starting hosting…",
+  verifying: "Verifying the public address…",
+  live: "Hosting is live",
+  interrupted: "Hosting is interrupted",
+  stopping: "Stopping hosting…",
+  failed: "Hosting failed",
 };
 
 function httpsOrigin(value: string | null | undefined) {
@@ -101,36 +110,6 @@ function liveOrigin(status: Status | null) {
     Number.isFinite(Date.parse(internet.checkedAt))
     ? httpsOrigin(internet.publicUrl)
     : null;
-}
-
-function inviteUsable(invite: Invite, status: Status | null) {
-  let url: URL;
-  try {
-    url = new URL(invite.inviteUrl);
-  } catch {
-    return false;
-  }
-  const recorded = status?.grants.find((grant) => grant.id === invite.grant.id);
-  return !!(
-    invite.token &&
-    new URLSearchParams(url.hash.slice(1)).get("access") === invite.token &&
-    !url.username &&
-    !url.password &&
-    status?.state === "local" &&
-    invite.grant.model === status.model &&
-    !invite.grant.revokedAt &&
-    Date.parse(invite.grant.expiresAt) > Date.now() &&
-    recorded &&
-    recorded.model === status.model &&
-    !recorded.revokedAt &&
-    Date.parse(recorded.expiresAt) > Date.now() &&
-    (recorded.channel ?? "local") === (invite.grant.channel ?? "local") &&
-    ((invite.grant.channel ?? "local") === "local"
-      ? url.protocol === "http:" &&
-        ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) &&
-        url.origin === status.guestUrl
-      : liveOrigin(status) && httpsOrigin(invite.inviteUrl) === liveOrigin(status))
-  );
 }
 
 class AccessRequestError extends Error {
@@ -153,7 +132,7 @@ async function api(path: string, signal: AbortSignal, body?: object) {
   try {
     return await response.json();
   } catch {
-    throw new Error("Client access status could not be read. Check the gateway and try again.");
+    throw new Error("Guest access status could not be read. Check the gateway and try again.");
   }
 }
 function statusValue(value: Status): Status {
@@ -167,7 +146,7 @@ function statusValue(value: Status): Status {
         value.removableKeys < 0 ||
         value.removableKeys > value.grants.length))
   )
-    throw new Error("Client access status could not be read.");
+    throw new Error("Guest access status could not be read.");
   if (
     value.internet !== undefined &&
     (!value.internet ||
@@ -177,12 +156,46 @@ function statusValue(value: Status): Status {
       (value.internet.restartRequired !== undefined &&
         typeof value.internet.restartRequired !== "boolean"))
   )
-    throw new Error("Internet sharing status could not be read.");
+    throw new Error("Hosting status could not be read.");
   const requests = parseRequests(value.requests);
   if (requests?.available && (value.state !== "local" || value.internet?.state !== "live"))
     throw new Error("Guest access request availability could not be read. Refresh status.");
   return { ...value, requests };
 }
+
+/** A state sentence led by its light: the first thing each panel says. */
+const statusLine = css({
+  display: "grid",
+  gridTemplateColumns: "auto minmax(0, 1fr)",
+  alignItems: "start",
+  columnGap: "2",
+  fontSize: "sm",
+  fontWeight: 500,
+  lineHeight: 1.5,
+  color: "ink",
+  minW: 0,
+  overflowWrap: "anywhere",
+  "& > span[aria-hidden]": { mt: "6px" },
+});
+
+const well = css({
+  px: "3",
+  py: "2.5",
+  bg: "well",
+  border: "1px solid token(colors.line)",
+  borderRadius: "sm",
+  minW: 0,
+});
+
+const internetLights: Record<InternetStatus["state"], LedState> = {
+  off: "off",
+  starting: "busy",
+  verifying: "busy",
+  live: "live",
+  interrupted: "amber",
+  stopping: "busy",
+  failed: "amber",
+};
 
 function Sharing() {
   const { models, status: host, refresh: refreshHost, loading, errors: hostErrors } = useHost();
@@ -196,9 +209,8 @@ function Sharing() {
   const { snapshot: conversations } = useOwnerConversations();
   const [label, setLabel] = useState("");
   const [hours, setHours] = useState("24");
-  const [channel, setChannel] = useState<"local" | "internet">("local");
   const [status, setStatus] = useState<Status | null>(null);
-  const [invite, setInvite] = useState<Invite | null>(null);
+  const [shownKey, setShownKey] = useState<ShownKey | null>(null);
   const [error, setError] = useState("");
   const [actionError, setActionError] = useState("");
   const [cleanupMessage, setCleanupMessage] = useState("");
@@ -209,13 +221,9 @@ function Sharing() {
   const read = useRef<AbortController | null>(null);
   const action = useRef<AbortController | null>(null);
   const hostNameInput = useRef<HTMLInputElement>(null);
-  const servingControls = useRef<HTMLElement>(null);
+  const hostingControls = useRef<HTMLElement>(null);
   const keyControls = useRef<HTMLElement>(null);
-  const recoverInviteFocus = useCallback(
-    () => keyControls.current?.focus({ preventScroll: true }),
-    [],
-  );
-  const eligible = models.filter((model) => chatUnavailableReason(model) === null);
+  const eligible = models.filter((model) => interfaceUnavailableReason(model) === null);
   // Explicit URL intent wins; otherwise resume the server's last configuration.
   // Never silently substitute another model when the intended one disappears.
   const chosen = search.model || status?.model || "";
@@ -230,17 +238,16 @@ function Sharing() {
     : hostErrors.status || hostErrors.models
       ? "The runtime and model library could not be checked. Check model library to try again."
       : !host?.ollamaConnected
-        ? "Connect to your local runtime before starting client access."
+        ? "Connect to your local runtime before hosting."
         : !chosen
           ? eligible.length
-            ? "Choose the model clients may use."
-            : "No model is available for chat. Open your model library to download or check a model."
+            ? "Choose the model guests may use."
+            : "No model has a supported interface. Open your model library to download or check a model."
           : !chosenModel
             ? "The selected model is no longer in your library. Choose another installed model or download it again."
-            : chatUnavailableReason(chosenModel);
+            : interfaceUnavailableReason(chosenModel);
   const running = status?.state === "local";
   const ready = !!status && !error && status.state !== "unavailable";
-  const canStart = ready && !pending && modelIssue === null && !!hostLabel.trim();
   const internet = status?.internet;
   const publicOrigin = liveOrigin(status);
   const internetLive = !!publicOrigin;
@@ -248,16 +255,30 @@ function Sharing() {
     internet?.state === "starting" ||
     internet?.state === "verifying" ||
     internet?.state === "stopping";
-  const canStartInternet =
+  const hostingPending = pending === "start" || pending === "internet-start";
+  // The gateway can only tunnel a model it is already serving, so hosting is one two-step action.
+  const canStartHosting =
     ready &&
-    running &&
+    !pending &&
+    modelIssue === null &&
+    !!hostLabel.trim() &&
     internet?.available === true &&
-    !internet.restartRequired &&
-    (internet.state === "off" || internet.state === "failed");
-  const newInvite = invite && inviteUsable(invite, status) ? invite : null;
+    !internet.restartRequired;
+  // Local access is up but the tunnel is not: the public half needs another attempt.
+  const tunnelIncomplete =
+    running && !!internet && (internet.state === "off" || internet.state === "failed");
   const applyStatus = useCallback((next: Status) => {
     setStatus(next);
-    setInvite((previous) => (previous && inviteUsable(previous, next) ? previous : null));
+    // A key the gateway no longer recognises must not stay legible on screen.
+    setShownKey((previous) =>
+      previous &&
+      next.grants.some(
+        (grant) =>
+          grant.id === previous.id && !grant.revokedAt && Date.parse(grant.expiresAt) > Date.now(),
+      )
+        ? previous
+        : null,
+    );
     setError("");
   }, []);
   const refresh = useCallback(
@@ -282,10 +303,10 @@ function Sharing() {
         if (read.current === abort)
           setError(
             abort.signal.aborted
-              ? "Client access status timed out."
+              ? "Guest access status timed out."
               : error instanceof Error
                 ? error.message
-                : "Client access status is unavailable.",
+                : "Guest access status is unavailable.",
           );
       } finally {
         clearTimeout(timer);
@@ -319,19 +340,11 @@ function Sharing() {
       document.removeEventListener("visibilitychange", visible);
     };
   }, [refresh, internetBusy]);
-  useEffect(() => {
-    if (!invite) return;
-    const timer = setTimeout(
-      () => setInvite(null),
-      Math.max(0, Date.parse(invite.grant.expiresAt) - Date.now()),
-    );
-    return () => clearTimeout(timer);
-  }, [invite]);
 
   async function mutate(name: string, path: string, body: object) {
-    if (action.current) return;
+    if (action.current) return null;
     if ((name.startsWith("request-approve:") || name === "create") && approvalNeedsRefresh.current)
-      return;
+      return null;
     const abort = new AbortController();
     action.current = abort;
     const previous = read.current;
@@ -341,10 +354,11 @@ function Sharing() {
     setPending(name);
     setActionError("");
     setCleanupMessage("");
+    let settled: Record<string, unknown> | null = null;
     const timer = setTimeout(() => abort.abort(), 12_000);
     try {
       const result = await api(path, abort.signal, body);
-      if (action.current !== abort) return;
+      if (action.current !== abort) return null;
       if (name === "cleanup") {
         const next = statusValue(result?.status);
         if (
@@ -363,15 +377,13 @@ function Sharing() {
       } else if (name === "create") {
         if (
           !result?.grant?.id ||
-          typeof result.inviteUrl !== "string" ||
           typeof result.token !== "string" ||
           !Number.isFinite(Date.parse(result.grant.expiresAt)) ||
           ![undefined, "local", "internet"].includes(result.grant.channel)
         )
           throw new Error(
-            "The new access link could not be read. Check the key list before creating another.",
+            "The new key could not be read. Check the key list before creating another.",
           );
-        // The credential remains in this page's memory only and is never reconstructed from history.
         setStatus((previous) =>
           previous
             ? {
@@ -383,8 +395,10 @@ function Sharing() {
               }
             : previous,
         );
-        setInvite(result);
         setLabel("");
+      } else if (name.startsWith("read-key:")) {
+        if (typeof result?.token !== "string" || !result.token)
+          throw new Error("That key could not be read. Refresh access and try again.");
       } else {
         const next = statusValue(result);
         if (name.startsWith("request-") && !next.requests)
@@ -398,8 +412,9 @@ function Sharing() {
         )
           acknowledgeHostLabel(hostLabel);
       }
+      settled = result;
     } catch (error) {
-      if (action.current !== abort) return;
+      if (action.current !== abort) return null;
       if (name.startsWith("request-approve:")) {
         approvalNeedsRefresh.current = true;
         setApprovalUncertain(true);
@@ -421,9 +436,24 @@ function Sharing() {
       if (action.current === abort) {
         action.current = null;
         setPending("");
-        void refresh();
+        // Chained hosting steps refresh once at the end, not between the two calls.
+        if (!settled || name !== "start") void refresh();
       }
     }
+    return settled;
+  }
+
+  /** Reads a stored key without rendering it; copying must not unmask. */
+  async function readKey(id: string) {
+    const result = await mutate(`read-key:${id}`, `/api/sharing/grants/${id}/key`, {});
+    return typeof result?.token === "string" ? result.token : null;
+  }
+
+  // Serving a model and publishing it are one host-facing action in two gateway calls.
+  async function startHosting() {
+    if (!canStartHosting) return;
+    if (await mutate("start", "/api/sharing/start", { model: chosen, hostLabel }))
+      await mutate("internet-start", "/api/sharing/internet/start", {});
   }
 
   function requestAction(intent: RequestAction) {
@@ -458,7 +488,8 @@ function Sharing() {
     <div
       className={css({
         minW: 0,
-        "& button, & a": {
+        // Every control on this page stays a 44px touch target, including compact variants.
+        "& button, & a, & select, & input": {
           minH: "44px",
           maxW: "full",
           whiteSpace: "normal",
@@ -468,136 +499,242 @@ function Sharing() {
       })}
     >
       <PageHeading
-        title="Client access"
-        description="Choose one model and manage who can use the separate client page."
+        title="Guest access"
+        description="Publish one model to the internet, then hand out keys you can revoke."
         action={
           <Button disabled={refreshing || !!pending} onClick={() => void refresh(true)}>
-            <RefreshCw size={16} />
+            <RefreshCw size={15} />
             {refreshing ? "Checking access…" : "Refresh access"}
           </Button>
         }
       />
-      <section
-        className={css({ mb: "6", p: "5", bg: "accentSoft", borderRadius: "10px" })}
-        aria-label="Sharing scope"
-      >
-        <Badge tone={internetLive && !error ? "good" : "neutral"}>
-          {!status
-            ? "Checking sharing scope"
-            : error
-              ? "Sharing status is out of date"
-              : internetLive
-                ? "Temporary internet sharing"
-                : internet?.state === "off" || !internet
-                  ? "Local preview only"
-                  : "Internet link unavailable"}
-        </Badge>
-        <p className={css({ mt: "3", fontSize: "sm", lineHeight: 1.7 })}>
-          {internetLive && !error
-            ? "Internet keys let clients use this model from their own browsers. Local keys still work only on this machine."
-            : "Local preview links work in a browser on this machine. Internet links require a verified public connection and a separate internet key."}{" "}
-          Connections are by invitation only. Share a client link directly with someone you trust.
-        </p>
-        <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
-          The client page is separate from your host controls. Access keys permit one model; clients
-          receive no download controls or request history.
-        </p>
-      </section>
-      {!status && !error && <p role="status">Checking client access…</p>}
-      {error && (
-        <p role="alert" className={css({ mb: "4", color: "warning" })}>
-          {error} Saved access status may be out of date.
-        </p>
-      )}
-      {actionError && (
-        <p role="alert" className={css({ mb: "4", color: "danger" })}>
-          {actionError}
-        </p>
-      )}
-      {status?.error && (
-        <p role="alert" className={css({ mb: "4", color: "danger" })}>
-          {status.error}
-        </p>
-      )}
-      <section
-        ref={servingControls}
-        tabIndex={-1}
-        className={`${panel} ${css({ mb: "6" })}`}
-        aria-label="Serving controls"
-      >
-        <PanelHeading
-          title={
-            !status
-              ? "Client access status unknown"
-              : status.state === "unavailable"
-                ? "Client access unavailable"
-                : running
-                  ? "Local client access is on"
-                  : "Client access is stopped"
+      <div className={css({ display: "grid", gap: "5", minW: 0 })}>
+        {!status && !error && (
+          <p role="status" className={statusLine}>
+            <Led state="busy" />
+            Checking guest access…
+          </p>
+        )}
+        {error && (
+          <Note role="alert" tone="warning">
+            {error} Saved access status may be out of date.
+          </Note>
+        )}
+        {actionError && (
+          <Note role="alert" tone="danger">
+            {actionError}
+          </Note>
+        )}
+        {status?.error && (
+          <Note role="alert" tone="danger">
+            {status.error}
+          </Note>
+        )}
+
+        <Section
+          ref={hostingControls}
+          tabIndex={-1}
+          aria-label="Internet hosting"
+          title="Host on the internet"
+          description="Publish one model at a temporary public address your guests can open."
+          aside={
+            <Badge
+              tone={
+                !status
+                  ? "busy"
+                  : error
+                    ? "warning"
+                    : internetLive
+                      ? "good"
+                      : running
+                        ? "warning"
+                        : "neutral"
+              }
+            >
+              {!status
+                ? "Checking hosting"
+                : error
+                  ? "Hosting status is out of date"
+                  : internetLive
+                    ? "Reachable from the internet"
+                    : running
+                      ? "Not reachable yet"
+                      : "Not hosting"}
+            </Badge>
           }
-          description="Local chat in your playground remains available independently."
-        />
-        <div className={css({ px: "5", pb: "5" })}>
+        >
+          <p role="status" className={statusLine}>
+            <Led
+              state={
+                !status
+                  ? "busy"
+                  : status.state === "unavailable"
+                    ? "amber"
+                    : !running
+                      ? "off"
+                      : !internet
+                        ? "off"
+                        : error
+                          ? "amber"
+                          : internetLights[internet.state]
+              }
+            />
+            {!status
+              ? "Checking hosting…"
+              : status.state === "unavailable"
+                ? "Guest access is unavailable"
+                : !internet
+                  ? "Hosting is not available in this gateway"
+                  : !running
+                    ? "Hosting is off"
+                    : error
+                      ? `Last known status: ${internetLabels[internet.state]}`
+                      : internetLabels[internet.state]}
+          </p>
+
+          {running && !error && (
+            <DataList
+              items={[
+                { term: "Model", value: status.model },
+                { term: "Host name guests see", value: status.hostLabel },
+              ]}
+            />
+          )}
+
+          {publicOrigin && !error && (
+            <div
+              className={css({
+                mt: "3.5",
+                display: "flex",
+                gap: "4",
+                flexWrap: "wrap",
+                alignItems: "start",
+              })}
+            >
+              <div className={css({ flex: "1 1 18rem", minW: 0 })}>
+                <div className={well}>
+                  <p className={legend}>Guest page address</p>
+                  <p className={`${mono} ${css({ fontSize: "sm", color: "ink", mt: "1" })}`}>
+                    {publicOrigin}
+                  </p>
+                </div>
+                <div className={css({ mt: "2" })}>
+                  <CopyButton text={publicOrigin} label="Copy guest address" />
+                </div>
+                <p className={`${caption} ${css({ mt: "2" })}`}>
+                  This address carries no key. Send it to your guest, then send them a key from
+                  Access keys below; they paste the key on the page.
+                </p>
+              </div>
+              <div>
+                <p className={`${legend} ${css({ mb: "1.5" })}`}>Scan to open</p>
+                <QrCode
+                  value={publicOrigin}
+                  title="QR code for the guest page address"
+                  size={168}
+                />
+              </div>
+            </div>
+          )}
+
+          {internet?.error && (
+            <Note
+              role={internet.state === "verifying" ? "status" : "alert"}
+              tone={internet.state === "verifying" ? "neutral" : "warning"}
+              className={css({ mt: "3", overflowWrap: "anywhere" })}
+            >
+              {internet.error}
+            </Note>
+          )}
+          {internet && !internet.available && (
+            <Note tone="warning" className={css({ mt: "3" })}>
+              Cloudflare’s connector (cloudflared) is missing, so this gateway cannot reach the
+              internet. Follow the{" "}
+              <a href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/">
+                official installation instructions
+              </a>
+              , then restart the gateway and refresh access.
+            </Note>
+          )}
+          {tunnelIncomplete && !error && (
+            <Note tone="warning" className={css({ mt: "3" })}>
+              This model is being served locally, but it is not reachable from the internet yet. Try
+              the public connection again, or stop hosting.
+            </Note>
+          )}
+          {internet?.state === "interrupted" && (
+            <p className={`${caption} ${css({ mt: "2.5" })}`}>
+              The address stays hidden while the connection is unverified. The gateway rechecks it
+              periodically; stop hosting to start a new connection.
+            </p>
+          )}
+          {search.model && running && search.model !== status.model && (
+            <Note role="status" tone="warning" className={css({ mt: "3" })}>
+              You selected {search.model} to share. Hosting still serves {status.model}. Stop
+              hosting first, then start the selected model.
+            </Note>
+          )}
+
           {running ? (
             <>
-              <p className={css({ fontFamily: "mono", overflowWrap: "anywhere", mb: "3" })}>
-                {status.model}
-              </p>
-              <p className={`${muted} ${css({ mb: "4", fontSize: "sm" })}`}>
-                Clients see “{status.hostLabel}” as a host-provided name. One guest may generate at
-                a time, leaving capacity for your own chat.
-              </p>
-              {search.model && search.model !== status.model && (
-                <p
-                  role="status"
-                  className={css({ mb: "4", fontSize: "sm", overflowWrap: "anywhere" })}
+              <div className={css({ display: "flex", gap: "2", flexWrap: "wrap", mt: "4" })}>
+                <Button
+                  disabled={!!pending}
+                  onClick={() => void mutate("stop", "/api/sharing/stop", {})}
                 >
-                  You selected {search.model} to share. Client access still serves {status.model}.
-                  Stop client access, then review and start the selected model.
-                </p>
-              )}
-              <Button
-                disabled={!!pending}
-                onClick={() => void mutate("stop", "/api/sharing/stop", {})}
-              >
-                <Square size={16} />
-                Stop client access
-              </Button>
-              {status.model && (
-                <Link
-                  to="/playground"
-                  search={{ model: status.model }}
-                  className={button({ variant: "ghost" })}
-                >
-                  Test the shared model
-                </Link>
-              )}
-              <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
-                Stopping ends active client requests and stops internet sharing. Local keys work
-                again when you start the same model; revoke a key to end its permission. Internet
-                sharing must be started explicitly each time.
+                  <Square size={15} />
+                  {pending === "stop" ? "Stopping hosting…" : "Stop hosting"}
+                </Button>
+                {tunnelIncomplete && (
+                  <Button
+                    variant="primary"
+                    disabled={!!pending || !internet?.available || internet.restartRequired}
+                    onClick={() => void mutate("internet-start", "/api/sharing/internet/start", {})}
+                  >
+                    <Globe size={15} />
+                    {pending === "internet-start"
+                      ? "Connecting…"
+                      : "Try the public connection again"}
+                  </Button>
+                )}
+                {status.model && (
+                  <Link
+                    to="/playground"
+                    search={{ model: status.model }}
+                    className={button({ variant: "ghost" })}
+                  >
+                    Test the shared model
+                  </Link>
+                )}
+              </div>
+              <p className={`${caption} ${css({ mt: "2.5" })}`}>
+                One guest may generate at a time, leaving capacity for your own chat. Stopping ends
+                active requests and takes the public address offline; your keys are kept and work
+                again at the next address.
               </p>
             </>
           ) : (
             <form
               onSubmit={(event) => {
                 event.preventDefault();
-                if (canStart)
-                  void mutate("start", "/api/sharing/start", { model: chosen, hostLabel });
+                void startHosting();
               }}
             >
               <div
                 className={css({
                   display: "grid",
-                  gridTemplateColumns: { base: "1fr", md: "1fr 1fr" },
-                  gap: "4",
-                  mb: "4",
+                  gridTemplateColumns: {
+                    base: "minmax(0, 1fr)",
+                    md: "minmax(0, 1fr) minmax(0, 1fr)",
+                  },
+                  gap: "3",
+                  mb: "3.5",
+                  mt: "3.5",
                 })}
               >
-                <label className={labelStyle}>
-                  Model for clients
+                <Field label="Model for guests">
                   <select
-                    className={field}
+                    className={control}
                     value={chosen}
                     onChange={(event) =>
                       void navigate({
@@ -619,38 +756,34 @@ function Sharing() {
                       </option>
                     ))}
                   </select>
-                </label>
-                <label className={labelStyle}>
-                  Host name shown to clients
+                </Field>
+                <Field
+                  label="Host name shown to guests"
+                  hint={hostLabel.trim() ? undefined : "Enter a host name guests will recognize."}
+                >
                   <input
                     ref={hostNameInput}
-                    className={field}
+                    className={control}
                     maxLength={80}
                     required
                     value={hostLabel}
                     disabled={!!pending}
                     onChange={(event) => setEditedHostLabel(event.target.value)}
                   />
-                </label>
+                </Field>
               </div>
-              <div
-                className={css({
-                  display: "flex",
-                  gap: "3",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                })}
-              >
-                <Button type="submit" variant="primary" disabled={!canStart}>
-                  <Play size={16} />
-                  {pending === "start" ? "Starting client access…" : "Start local client access"}
+              <div className={css({ display: "flex", gap: "2", flexWrap: "wrap" })}>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  aria-describedby="hosting-disclosure"
+                  disabled={!canStartHosting}
+                >
+                  <Play size={15} />
+                  {hostingPending ? "Starting hosting…" : "Start hosting"}
                 </Button>
-                {chosenModel && chatUnavailableReason(chosenModel) === null && (
-                  <Link
-                    to="/playground"
-                    search={{ model: chosen }}
-                    className={button({ variant: "secondary" })}
-                  >
+                {chosenModel && interfaceUnavailableReason(chosenModel) === null && (
+                  <Link to="/playground" search={{ model: chosen }} className={button()}>
                     Test model in playground
                   </Link>
                 )}
@@ -671,44 +804,52 @@ function Sharing() {
                   {modelIssue}
                 </p>
               )}
-              {!hostLabel.trim() && (
-                <p className={`${muted} ${css({ mt: "3" })}`}>
-                  Enter a host name clients will recognize.
-                </p>
-              )}
               {chosen && (
-                <p role="status" className={css({ mt: "3", fontSize: "sm", fontWeight: 650 })}>
+                <p role="status" className={`${statusLine} ${css({ mt: "3" })}`}>
+                  <Led state={modelAnswered ? "live" : "off"} />
                   {modelAnswered
                     ? "This model answered a prompt in this tab."
                     : "No completed answer for this model in this tab."}
                 </p>
               )}
-              <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
+              <p className={`${caption} ${css({ mt: "1.5" })}`}>
                 {modelAnswered
-                  ? "This evidence comes from the retained conversation and clears on reload or Clear. It does not prove current availability or memory fit. "
+                  ? "Evidence from the retained conversation; it clears on reload and does not prove current availability or memory fit. "
                   : modelIssue === null
                     ? "Try a prompt first to check that this model runs on your hardware. "
                     : ""}
-                Starting client access does not test or preload the model.
+                Starting hosting does not test or preload the model.
               </p>
             </form>
           )}
+
           {editedHostLabel !== null && (
-            <div className={css({ mt: "4", pt: "4", borderTop: "1px solid token(colors.line)" })}>
+            <div
+              className={css({
+                mt: "4",
+                pt: "3",
+                borderTop: "1px solid token(colors.lineSoft)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: "3",
+                flexWrap: "wrap",
+              })}
+            >
               <p
-                className={`${muted} ${css({ fontSize: "xs", mb: "2", overflowWrap: "anywhere" })}`}
+                className={`${caption} ${css({ minW: 0, flex: "1 1 20rem", overflowWrap: "anywhere" })}`}
               >
-                Host-name draft kept in this tab: {editedHostLabel || "(empty)"}. It follows you to
-                Playground and back. Starting client access applies the name; reloading or closing
-                this tab clears unsaved edits.
+                Host-name draft kept in this tab: {editedHostLabel || "(empty)"}. Starting hosting
+                applies it; reloading discards it.
               </p>
               <Button
                 type="button"
                 variant="ghost"
+                size="sm"
                 disabled={!!pending}
                 onClick={() => {
                   setEditedHostLabel(null);
-                  (hostNameInput.current ?? servingControls.current)?.focus({
+                  (hostNameInput.current ?? hostingControls.current)?.focus({
                     preventScroll: true,
                   });
                 }}
@@ -717,133 +858,37 @@ function Sharing() {
               </Button>
             </div>
           )}
-        </div>
-      </section>
-      <section className={`${panel} ${css({ mb: "6" })}`} aria-label="Temporary internet sharing">
-        <PanelHeading
-          title="Temporary internet sharing"
-          description="Let clients reach your shared model from their own browsers."
+
+          <Disclosure summary="What hosting exposes" className={css({ mt: "3.5" })}>
+            <p id="hosting-disclosure">
+              Starting makes the guest page reachable through Cloudflare. Anyone with its address
+              can open the page; an access key is required for chat. Cloudflare terminates TLS and
+              can see messages and access keys.
+            </p>
+            <p>
+              The address changes on every start, there is no uptime guarantee, and it is not
+              production hosting.
+            </p>
+          </Disclosure>
+        </Section>
+
+        <AccessRequests
+          status={status}
+          ready={ready && !refreshing && (internet?.state !== "live" || internetLive)}
+          pending={pending}
+          error={!!error || !!actionError}
+          refreshing={refreshing}
+          approvalUncertain={approvalUncertain}
+          onAction={requestAction}
         />
-        <div className={css({ px: "5", pb: "5" })}>
-          <p role="status" className={css({ fontWeight: 650, mb: "3" })}>
-            {!status
-              ? "Checking internet sharing…"
-              : !internet
-                ? "Internet sharing is not available in this gateway"
-                : error
-                  ? `Last known status: ${internetLabels[internet.state]}`
-                  : internetLabels[internet.state]}
-          </p>
-          <p id="internet-disclosure" className={`${muted} ${css({ mb: "3" })}`}>
-            Starting makes the guest page reachable through Cloudflare. Anyone with its address can
-            open the page; an internet access key is required for chat. Cloudflare terminates TLS
-            and can see messages and access keys. This is a temporary connection: the URL changes on
-            every start, there is no uptime guarantee, and it is not production hosting.
-          </p>
-          {publicOrigin && !error && (
-            <div className={css({ mb: "4" })}>
-              <p className={css({ fontSize: "xs", fontWeight: 650 })}>Public guest page</p>
-              <p className={css({ fontFamily: "mono", fontSize: "sm", overflowWrap: "anywhere" })}>
-                {publicOrigin}
-              </p>
-              <p className={`${muted} ${css({ mt: "2", fontSize: "xs" })}`}>
-                This address contains no access key. Create an internet client link below to give
-                someone permission to chat, or send this page directly and approve their access
-                request below.
-              </p>
-            </div>
-          )}
-          {internet?.error && (
-            <p
-              role={internet.state === "verifying" ? "status" : "alert"}
-              className={`${muted} ${css({ mb: "3", overflowWrap: "anywhere" })}`}
-            >
-              {internet.error}
-            </p>
-          )}
-          {internet && !internet.available && (
-            <p className={`${muted} ${css({ mb: "3" })}`}>
-              Cloudflare’s connector (cloudflared) is missing. Follow the{" "}
-              <a
-                href="https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/"
-                className={css({ color: "accent", textDecoration: "underline" })}
-              >
-                official installation instructions
-              </a>
-              , then restart the gateway and refresh access.
-            </p>
-          )}
-          {!running && (
-            <p className={`${muted} ${css({ mb: "3" })}`}>
-              Start local client access to publish a model before starting internet sharing.
-            </p>
-          )}
-          {internet?.state === "interrupted" && (
-            <p className={`${muted} ${css({ mb: "3" })}`}>
-              Internet links are hidden while the connection is unverified. The gateway checks it
-              periodically. To start a new connection, stop internet sharing first.
-            </p>
-          )}
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (canStartInternet && !pending)
-                void mutate("internet-start", "/api/sharing/internet/start", {});
-            }}
-          >
-            <div className={css({ display: "flex", gap: "3", flexWrap: "wrap" })}>
-              <Button
-                type="submit"
-                variant="primary"
-                aria-describedby="internet-disclosure"
-                disabled={!canStartInternet || !!pending}
-              >
-                <Play size={16} />
-                {pending === "internet-start"
-                  ? "Starting internet sharing…"
-                  : "Start internet sharing"}
-              </Button>
-              {internet && internet.state !== "off" && (
-                <Button
-                  type="button"
-                  disabled={!!pending || internet.state === "stopping" || internet.restartRequired}
-                  onClick={() => void mutate("internet-stop", "/api/sharing/internet/stop", {})}
-                >
-                  <Square size={16} />
-                  {pending === "internet-stop" || internet.state === "stopping"
-                    ? "Stopping internet sharing…"
-                    : "Stop internet sharing"}
-                </Button>
-              )}
-            </div>
-          </form>
-          <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
-            Stopping internet sharing leaves local client access and local keys available. It does
-            not automatically restart or publish again. Unexpired internet keys can be used again
-            with the same model and a new tunnel address; revoke a key to end its permission.
-          </p>
-        </div>
-      </section>
-      <AccessRequests
-        status={status}
-        ready={ready && !refreshing && (internet?.state !== "live" || internetLive)}
-        pending={pending}
-        error={!!error || !!actionError}
-        refreshing={refreshing}
-        approvalUncertain={approvalUncertain}
-        onAction={requestAction}
-      />
-      <section
-        ref={keyControls}
-        tabIndex={-1}
-        className={`${panel} ${css({ mb: "6" })}`}
-        aria-label="Create client key"
-      >
-        <PanelHeading
-          title="Create an access key"
-          description="Give each client its own key so you can revoke access separately."
-        />
-        <div className={css({ px: "5", pb: "5" })}>
+
+        <Section
+          ref={keyControls}
+          tabIndex={-1}
+          aria-label="Access keys"
+          title="Access keys"
+          description="One key per guest. Send a key alongside the address; you can look it up or revoke it at any time."
+        >
           <form
             onSubmit={(event) => {
               event.preventDefault();
@@ -852,15 +897,13 @@ function Sharing() {
                 ready &&
                 label.trim() &&
                 !pending &&
-                !invite &&
                 !approvalUncertain &&
-                (channel === "local" || internetLive) &&
                 (status?.grants.length ?? 0) < 100
               )
                 void mutate("create", "/api/sharing/grants", {
                   label: label.trim(),
                   expiresInHours: Number(hours),
-                  channel,
+                  channel: "internet",
                 });
             }}
           >
@@ -869,16 +912,15 @@ function Sharing() {
                 display: "grid",
                 gridTemplateColumns: {
                   base: "minmax(0, 1fr)",
-                  md: "minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)",
+                  md: "minmax(0, 2fr) minmax(0, 1fr)",
                 },
-                gap: "4",
-                mb: "4",
+                gap: "3",
+                mb: "3.5",
               })}
             >
-              <label className={labelStyle}>
-                Key label
+              <Field label="Key label">
                 <input
-                  className={field}
+                  className={control}
                   placeholder="For a friend"
                   required
                   maxLength={80}
@@ -886,28 +928,10 @@ function Sharing() {
                   onChange={(event) => setLabel(event.target.value)}
                   disabled={!!pending || !running}
                 />
-              </label>
-              <label className={labelStyle}>
-                Key channel
+              </Field>
+              <Field label="Expires after">
                 <select
-                  className={field}
-                  value={channel}
-                  onChange={(event) =>
-                    setChannel(event.target.value === "internet" ? "internet" : "local")
-                  }
-                  disabled={!!pending || !running}
-                  aria-describedby="key-channel-help"
-                >
-                  <option value="local">Local preview</option>
-                  <option value="internet" disabled={!internetLive || !ready}>
-                    Temporary internet
-                  </option>
-                </select>
-              </label>
-              <label className={labelStyle}>
-                Expires after
-                <select
-                  className={field}
+                  className={control}
                   value={hours}
                   onChange={(event) => setHours(event.target.value)}
                   disabled={!!pending || !running}
@@ -916,141 +940,114 @@ function Sharing() {
                   <option value="24">24 hours</option>
                   <option value="168">7 days</option>
                 </select>
-              </label>
+              </Field>
             </div>
-            <p id="key-channel-help" className={`${muted} ${css({ mb: "3" })}`}>
-              Local keys work only on this machine and cannot become internet keys. Create a
-              separate internet key while internet sharing is live.
-            </p>
             <Button
               type="submit"
+              variant="primary"
               disabled={
                 !ready ||
                 !running ||
-                (channel === "internet" && !internetLive) ||
                 !!pending ||
                 !label.trim() ||
-                !!invite ||
                 approvalUncertain ||
                 (status?.grants.length ?? 0) >= 100
               }
             >
-              <KeyRound size={16} />
-              {pending === "create" ? "Creating key…" : "Create client link"}
+              <KeyRound size={15} />
+              {pending === "create" ? "Creating key…" : "Create key"}
             </Button>
             {(status?.grants.length ?? 0) >= 100 && (
-              <p className={`${muted} ${css({ mt: "3" })}`}>
-                Client access supports 100 saved keys, including expired and revoked keys. New keys
-                cannot be created at this limit. Remove expired and revoked keys in Access keys
-                below to free space; keys that still have permission must be revoked first.
-              </p>
+              <Note tone="warning" className={css({ mt: "3" })}>
+                All 100 key slots are in use, including expired and revoked keys. Remove expired and
+                revoked keys below; keys that still grant access must be revoked first.
+              </Note>
             )}
             {!running && (
-              <p className={`${muted} ${css({ mt: "3" })}`}>
-                Start local client access before creating a key.
+              <p className={`${caption} ${css({ mt: "2.5" })}`}>
+                A key permits one model, so start hosting first to choose which model it permits.
+                Existing keys stay readable and revocable below.
               </p>
             )}
           </form>
-          {newInvite && (
-            <div
-              className={css({
-                mt: "5",
-                p: "4",
-                border: "1px solid token(colors.line)",
-                borderRadius: "7px",
-              })}
-              role="region"
-              aria-label="New client link"
-            >
-              <p className={css({ fontWeight: 650, mb: "2" })}>
-                {newInvite.grant.channel === "internet"
-                  ? "Your internet link is ready"
-                  : "Your local preview link is ready"}
-              </p>
-              <p className={`${muted} ${css({ mb: "3", fontSize: "sm" })}`}>
-                {newInvite.grant.channel === "internet"
-                  ? "Share this internet link with your client. It works only while this temporary public connection is live."
-                  : "Copy this local preview link into a browser on this machine."}{" "}
-                Anyone with the link can use {newInvite.grant.model} until{" "}
-                {date(newInvite.grant.expiresAt)} (your local time).
-              </p>
-              <InviteLinkActions
-                key={newInvite.grant.id}
-                url={newInvite.inviteUrl}
-                disabled={!ready || !!pending}
-                onDismiss={() => setInvite(null)}
-                onFocusLost={recoverInviteFocus}
-                disabledReason={
-                  pending
-                    ? "Finish the current access change before copying or showing this link."
-                    : "Refresh access to check this link before copying or showing it."
-                }
-              />
-              <p className={`${muted} ${css({ mt: "3", fontSize: "xs" })}`}>
-                This link is shown only once. If you lose it, revoke its key and create another. It
-                is not saved in your browser.
-              </p>
-            </div>
-          )}
-        </div>
-      </section>
-      <section className={panel} aria-label="Access keys">
-        <PanelHeading
-          title="Access keys"
-          description="Revocation ends active requests and survives a gateway restart."
-        />
-        <div className={css({ px: "5", pb: "5" })}>
-          <KeyCleanup
-            removable={status?.removableKeys}
-            total={status?.grants.length ?? 0}
-            ready={ready}
-            pending={!!pending}
-            removing={pending === "cleanup"}
-            message={cleanupMessage}
-            onRemove={() => {
-              if (ready && !pending && status?.removableKeys)
-                void mutate("cleanup", "/api/sharing/grants/cleanup", {});
-            }}
-          />
+
+          <div className={css({ mt: "4", pt: "3", borderTop: "1px solid token(colors.lineSoft)" })}>
+            <KeyCleanup
+              removable={status?.removableKeys}
+              total={status?.grants.length ?? 0}
+              ready={ready}
+              pending={!!pending}
+              removing={pending === "cleanup"}
+              message={cleanupMessage}
+              onRemove={() => {
+                if (ready && !pending && status?.removableKeys)
+                  void mutate("cleanup", "/api/sharing/grants/cleanup", {});
+              }}
+            />
+          </div>
           {status && status.state !== "unavailable" && !error && !status.grants.length && (
-            <p className={muted}>No keys are recorded.</p>
+            <p
+              className={`${muted} ${css({ pt: "3", borderTop: "1px solid token(colors.lineSoft)" })}`}
+            >
+              No keys are recorded.
+            </p>
           )}
-          <ul className={css({ display: "grid", gap: "4" })}>
+          <ul className={css({ display: "grid", minW: 0 })}>
             {status?.grants.map((grant) => {
               const expired = Date.parse(grant.expiresAt) <= Date.now();
               const pausedReason = error
                 ? "Refresh access to check this key’s current availability."
                 : status.state === "unavailable"
-                  ? "Client access is unavailable. Resolve the access error before using this key."
+                  ? "Guest access is unavailable. Resolve the access error before using this key."
                   : !running
-                    ? "Client access is stopped. This permission can resume when its model and access channel are started again."
+                    ? "Hosting is off. This permission resumes when its model is hosted again."
                     : grant.model !== status.model
-                      ? `This key permits ${grant.model}; client access currently serves ${status.model}.`
-                      : grant.channel === "internet" && !internetLive
-                        ? "Internet sharing is not live. Restore the public connection before using this key."
+                      ? `This key permits ${grant.model}; hosting currently serves ${status.model}.`
+                      : !internetLive
+                        ? "Hosting is not reachable from the internet yet. Restore the public address before using this key."
                         : null;
               const request = status.requests?.items.find((item) => item.grantId === grant.id);
               const grantLabel = request
                 ? `Request · ${request.name} · ${request.code}`
                 : grant.label;
+              const usable = !grant.revokedAt && !expired;
+              // Request-approved keys are derived by the guest, so the gateway never holds them.
+              const readable = usable && grant.recoverable !== false;
+              const revealed = shownKey?.id === grant.id ? shownKey.token : null;
               return (
                 <li
                   key={grant.id}
-                  className={css({ borderTop: "1px solid token(colors.line)", pt: "4" })}
+                  className={css({
+                    borderTop: "1px solid token(colors.lineSoft)",
+                    py: "3",
+                    minW: 0,
+                  })}
                 >
                   <div
                     className={css({
                       display: "flex",
                       alignItems: "center",
-                      gap: "3",
+                      gap: "2",
                       flexWrap: "wrap",
                       justifyContent: "space-between",
+                      minW: 0,
                     })}
                   >
-                    <h3 className={css({ fontWeight: 650, overflowWrap: "anywhere" })}>
+                    <h3
+                      className={css({
+                        fontSize: "sm",
+                        fontWeight: 600,
+                        overflowWrap: "anywhere",
+                        minW: 0,
+                      })}
+                    >
                       {grantLabel}
                     </h3>
-                    <Badge tone={grant.revokedAt || expired || pausedReason ? "neutral" : "good"}>
+                    <Badge
+                      tone={
+                        grant.revokedAt || expired ? "neutral" : pausedReason ? "warning" : "good"
+                      }
+                    >
                       {grant.revokedAt
                         ? "Revoked"
                         : expired
@@ -1063,40 +1060,98 @@ function Sharing() {
                     </Badge>
                   </div>
                   <p
-                    className={`${muted} ${css({ fontSize: "xs", mt: "2", overflowWrap: "anywhere" })}`}
+                    className={`${caption} ${css({ mt: "1", fontFamily: "mono", overflowWrap: "anywhere" })}`}
                   >
-                    {grant.channel === "internet" ? "Temporary internet" : "Local preview"} ·{" "}
                     {grant.model} · Expires {date(grant.expiresAt)} (your local time)
                   </p>
-                  {!grant.revokedAt && !expired && pausedReason && (
-                    <p
-                      className={`${muted} ${css({ mt: "2", fontSize: "xs", overflowWrap: "anywhere" })}`}
-                    >
-                      {pausedReason} Pausing access does not revoke the key.
+                  {usable && pausedReason && (
+                    <p className={`${caption} ${css({ mt: "1.5", overflowWrap: "anywhere" })}`}>
+                      {pausedReason} Pausing is not revocation.
                     </p>
                   )}
-                  {!grant.revokedAt && (
-                    <Button
-                      variant="ghost"
-                      disabled={!!pending}
-                      onClick={() =>
-                        void mutate("revoke", `/api/sharing/grants/${grant.id}/revoke`, {})
-                      }
+                  {usable && readable && (
+                    <div className={css({ mt: "2.5", minW: 0 })}>
+                      <AccessKeyField
+                        label={grantLabel}
+                        token={revealed}
+                        reading={pending === `read-key:${grant.id}`}
+                        disabled={!!pending || !ready}
+                        onCopy={() => readKey(grant.id)}
+                        onReveal={() => {
+                          void readKey(grant.id).then(
+                            (token) => token && setShownKey({ id: grant.id, token }),
+                          );
+                        }}
+                        onMask={() => setShownKey(null)}
+                      />
+                    </div>
+                  )}
+                  {usable && (
+                    <div
+                      className={css({ display: "flex", gap: "2", flexWrap: "wrap", mt: "2.5" })}
                     >
-                      Revoke {grantLabel}
-                    </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        disabled={!!pending}
+                        onClick={() =>
+                          void mutate("revoke", `/api/sharing/grants/${grant.id}/revoke`, {})
+                        }
+                      >
+                        Revoke {grantLabel}
+                      </Button>
+                    </div>
+                  )}
+                  {usable && !readable && (
+                    <p className={`${caption} ${css({ mt: "1.5" })}`}>
+                      This guest generated its own key after you approved the request, so the
+                      gateway never stored it. Revoke it to end its permission.
+                    </p>
+                  )}
+                  {usable && revealed && publicOrigin && (
+                    <div
+                      className={css({
+                        mt: "3",
+                        px: "3.5",
+                        py: "3",
+                        bg: "well",
+                        borderLeft: "2px solid token(colors.live)",
+                        borderRadius: "sm",
+                        minW: 0,
+                        display: "flex",
+                        gap: "4",
+                        flexWrap: "wrap",
+                        alignItems: "start",
+                      })}
+                    >
+                      <div>
+                        <p className={`${legend} ${css({ mb: "1.5" })}`}>Scan to connect</p>
+                        <QrCode
+                          value={`${publicOrigin}/#access=${revealed}`}
+                          title={`QR code that opens the guest page with the key for ${grantLabel}`}
+                        />
+                      </div>
+                      <p className={`${caption} ${css({ flex: "1 1 14rem", minW: 0 })}`}>
+                        This image carries the key. It opens the guest page with the key already
+                        filled in, so a phone guest does not retype it. Anyone holding it can use{" "}
+                        <span className={mono}>{grant.model}</span> until{" "}
+                        <span className={mono}>{date(grant.expiresAt)}</span> (your local time).
+                      </p>
+                    </div>
                   )}
                 </li>
               );
             })}
           </ul>
-          <p className={`${muted} ${css({ mt: "5", fontSize: "xs" })}`}>
-            Keys are stored privately by the gateway and cannot be recovered as links. Client access
-            starts stopped after every gateway restart. Up to 100 keys are retained, including
-            revoked keys.
+          <p
+            className={`${caption} ${css({ mt: "3", pt: "3", borderTop: "1px solid token(colors.lineSoft)" })}`}
+          >
+            Keys are stored by the gateway and survive a restart, so you can look one up again
+            instead of reissuing it. Hosting starts off after every gateway restart. Up to 100 keys
+            are retained, including revoked ones.
           </p>
-        </div>
-      </section>
+        </Section>
+      </div>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, dialog, shell } = require('electron')
+const { app, BrowserWindow, Menu, dialog, nativeTheme, shell } = require('electron')
 const { mkdirSync } = require('node:fs')
 
 // The renderer is exactly the browser app. It receives no Node or Electron API.
@@ -37,7 +37,7 @@ function canWriteClipboard(contents, permission, requestingUrl, isMainFrame) {
 async function createWindow() {
   mainWindow = new BrowserWindow({
     title: 'HostAI', width: 1380, height: 940, minWidth: 360, minHeight: 600,
-    backgroundColor: '#f5f7fa', show: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#131416' : '#f2f1ed', show: true,
     webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false, spellcheck: false },
   })
   mainWindow.webContents.session.setPermissionRequestHandler((contents, permission, callback, details) =>

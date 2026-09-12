@@ -26,7 +26,8 @@ required to run it. The listing links include the model's terms.
 The shortlist intentionally avoids promising the latest or best model. These tags
 were verified in the public listings, not downloaded or benchmarked during this UX
 cycle. Successful inference on a particular host still requires an explicit test.
-The frontend supports text chat; listing other family members with vision or tools
+The default interface is text chat; a runtime may instead provide
+[its own interface](model-ui.md). Listing other family members with vision or tools
 does not make those capabilities available in HostAI.
 
 ## Selection and recovery

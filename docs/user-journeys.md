@@ -1,15 +1,16 @@
-# Host and client journeys
+# Host and guest journeys
 
-The product supports a host running a local model and an invited client chatting
-without managing inference software. Hosts download and select a local model,
-test it, start client access, then privately send an invitation. Optional Cloudflare
-Quick Tunnel sharing provides remote guest access with separate channel permissions
-and HTTPS streaming checks. **Connections are invite-only: no host search, public
+The product supports a host running a local model and an invited guest chatting,
+or using the model's own interface, without managing inference software. Hosts download and select a local model,
+test it, start hosting, then privately send the public address and an access key.
+Cloudflare Quick Tunnel sharing provides the remote guest access, with model and
+channel permissions and HTTPS streaming checks. **Connections are invite-only: no host search, public
 listings, registry service, or discovery roadmap.** Stable public hosting and
 verified identities remain unimplemented.
 
-Guests use an invitation key or follow a privately shared guest link and request
-approval when the host enables its [approval inbox](access-requests.md).
+Guests open the address their host sent and paste in the access key that came with
+it, or, when the host enables its [approval inbox](access-requests.md), request
+approval instead. The address and the key are separate: neither is an invite link.
 
 Reviewed with Claude Opus 5 High on 9–10 September 2026. Code and isolated UI fixtures
 are the evidence. Disposable Quick Tunnels have been exercised with synthetic
@@ -24,15 +25,18 @@ real model was downloaded or inference benchmark run.
 | Host: prepare inference | [Setup](../apps/web/src/routes/connection.tsx) shows Ollama commands | Ollama installation/startup are external; a failed status check is not proof that a process is stopped. | Detect existing runtime, explain the missing part, show only the action needed. |
 | Host: choose/download a model | [Library](../apps/web/src/routes/models.tsx) lists installed models and manages explicit tagged downloads; disappearing running records retain an unknown-outcome notice and trigger a library check | A dated [starter shortlist](starter-models.md) supplies exact tags and approximate listed sizes; no live catalog search, hardware-fit estimate or automatic resumption. Model drafts, pending actions and recovery notices survive navigation within the owner tab; reload or closing the tab clears local recovery details. | Review model size/requirements, explicitly start download, see progress, recover, then test that same model. |
 | Host: refresh discovery | [HostProvider](../apps/web/src/lib/host-context.tsx) polls every 15 seconds while visible; manual refresh also exists | Download completion refreshes the library and offers an explicit Try action when the model is admitted. | Confirm the actual installed model before enabling Try; download status polls separately from host metadata. |
-| Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Playground and the Client access start form distinguish available-to-try from a completed, nonempty reply in the retained conversation for that model name. Clear/reload remove this evidence; it is not a durable readiness or memory-fit assessment. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
-| Host: start serving | [Client access](../apps/web/src/routes/sharing.tsx) publishes one selected model on a separate local guest listener | Explicit model links and the gateway’s last configuration survive the start/stop handoff; host-name drafts survive the Playground round trip in tab memory, and missing choices explain recovery. Starting checks library presence, not memory fit or successful inference. Access restarts stopped. | Choose which model clients may use, test it, then enable serving deliberately. |
-| Host: share over internet | [Java config](../backend/src/main/resources/application.properties) and [web server](../apps/web/server.mjs) bind loopback | Temporary Cloudflare Quick Tunnel sharing checks HTTPS streaming before issuing internet keys. Cloudflare sees traffic; there is no production uptime guarantee or verified identity. | Share a verified endpoint with selected clients; expose status and Stop sharing in the same place. |
-| Client: open an invitation | The separate guest page accepts an expiring, model-specific key, or requests explicit host approval after the host privately shares its link | No verified identities; temporary tunnel addresses can change. A guest URL alone grants no chat permission. | Open the host’s invite, check the model and privacy disclosure, connect, then chat. |
+| Host: select and test | [Library](../apps/web/src/routes/models.tsx) links a selected model into [Playground](../apps/web/src/routes/playground.tsx) | Playground and the Guest access start form distinguish available-to-try from a completed, nonempty reply in the retained conversation for that model name. Clear/reload remove this evidence; it is not a durable readiness or memory-fit assessment. | Selected model stays visible during loading/testing; distinguish installed, testing, ready, busy and unavailable. |
+| Owner: use a model's own interface | [Playground](../apps/web/src/routes/playground.tsx) branches on `model.ui`: the [frame component](../apps/web/src/components/model-ui-frame.tsx) replaces transcript, composer and run settings, and the [bridge host](../apps/web/src/lib/model-ui-host.ts) sends inference through the same-origin proxy to `/api/infer` | Requires a HostAI-protocol runtime reached through `HOSTAI_RUNTIME_URLS` or `HOSTAI_OLLAMA_URL`; Ollama models never get one. The frame keeps its own state; leaving Playground unmounts it and nothing is persisted or restored. Verified with browser fixtures and Pebby's local integration script; not verified in Electron. | Select the model and use its interface with the same model select and status light; the runtime decides inputs and outputs, and HostAI stays out of the payload. |
+| Host: start hosting | [Guest access](../apps/web/src/routes/sharing.tsx) serves one selected model on a separate guest listener and starts the Cloudflare tunnel from a single **Start hosting** action | Explicit model links and the gateway’s last configuration survive the start/stop handoff; host-name drafts survive the Playground round trip in tab memory, and missing choices explain recovery. Starting checks library presence, not memory fit or successful inference. A partial start leaves the model served locally but unreachable, with an explicit retry. Missing cloudflared disables the button outright. Hosting restarts stopped. | Choose which model guests may use, test it, then publish it deliberately in one step. |
+| Host: share over internet | [Java config](../backend/src/main/resources/application.properties) and [web server](../apps/web/server.mjs) bind loopback; the temporary Quick Tunnel is the only public path | Hosting checks HTTPS streaming before the public address appears, and the address is copyable with a QR code beside it. Cloudflare sees traffic; there is no production uptime guarantee or verified identity, and the address changes on every start. | Share a verified endpoint with selected guests; expose status and Stop hosting in the same place. |
+| Host: hand out an access key | **Access keys** creates a key bound to the served model; **Show key** reads it back from the gateway on demand, with a copy button and a QR code that carries the key | Creating a key requires hosting to be started, because the key binds to the running model. Looking one up, copying, revoking and cleanup all work with hosting off. Keys survive gateway and tunnel restarts, which means the gateway stores key material at rest. Request-approved keys are guest-derived and can never be shown again. | Send an address and a key separately, then re-send that key later instead of reissuing it. |
+| Guest: open the guest page | The separate guest page takes an expiring, model-specific key in its primary **Access key** field, or requests explicit host approval from a disclosure below it | No verified identities; temporary tunnel addresses can change. The address alone grants no chat permission. A key QR code fills the field in for a phone guest. | Open the host’s address, check the model and privacy disclosure, connect, then chat. |
 | Host: approve a guest | [Request inbox](access-requests.md) shows an unverified name, matching code and model; duration must be chosen explicitly | Intake is internet-only and starts off. Approved permissions survive closing intake; 20 active request keys and 100 total stored keys are the limits. | Review a specific guest, approve a scoped permission, and revoke it from Access keys. |
-| Host: recover invitation capacity | Access keys reports the gateway’s count of expired or revoked records and offers explicit cleanup | Up to 100 records are stored. Cleanup is irreversible, keeps active/paused permissions and never creates or sends an invitation. Browser expiry badges still use the device clock; removal uses the gateway clock. | Remove ended records, then explicitly create a new invitation or approve a pending guest. |
+| Host: recover key capacity | Access keys reports the gateway’s count of expired or revoked records and offers explicit cleanup | Up to 100 records are stored. Cleanup is irreversible, keeps active/paused permissions and never creates or sends anything. It is also what finally erases a revoked key’s stored material. Browser expiry badges still use the device clock; removal uses the gateway clock. | Remove ended records, then explicitly create a new key or approve a pending guest. |
 | Client: request access | Guest page discovers intake, retains the unsent name through details failures and chat connection changes, validates names, and waits for approval | No accounts or identity verification. Reload loses drafts and credentials. Disconnect retains request credentials for cancellation/reconnect; request records have a shorter lifetime than approved keys, which still require expiry or revocation. | Correct an initial rejected submission, retry uncertain responses without duplicate requests, cancel explicitly, then connect without sending a prompt automatically. |
-| Client: connect | [Shell](../apps/web/src/components/shell.tsx) exposes one local host workspace | The separate guest page checks model and channel permissions. An internet invite needs no client installation; the host name remains self-asserted. | See host identity, model and access requirements; connect without installing Java, Ollama or a model. |
-| Client: chat | Current Playground uses same-origin `/api/chat` | Guest chat has its own bundle/API and retains draft and partial output through reconnects and failed replacement-key checks. A successful replacement clears prior-key content before sending; re-entering the original key restores its retained conversation. Temporary internet access requires a live verified tunnel and a separate internet key. | A client-only conversation surface, with authenticated access to allowed models and useful recovery states. |
+| Guest: connect | [Shell](../apps/web/src/components/shell.tsx) exposes one local host workspace | The separate guest page checks model and channel permissions. An internet invite needs no client installation; the host name remains self-asserted. | See host identity, model and access requirements; connect without installing Java, Ollama or a model. |
+| Guest: chat | Current Playground uses same-origin `/api/chat` | Guest chat has its own bundle/API and retains draft and partial output through reconnects and failed replacement-key checks. A successful replacement clears prior-key content before sending; re-entering the original key restores its retained conversation. Guest access requires a live verified tunnel and a key for the hosted model. | A guest-only conversation surface, with authenticated access to allowed models and useful recovery states. |
+| Guest: use a model's own interface | [Guest chat](../apps/web/src/guest/guest-chat.tsx) shows the frame once the session reports `ui`; [guest infer](../apps/web/src/guest/infer.ts) posts to `/guest/v1/infer` locally and sends the `infer` WebSocket envelope publicly | Interface files load without a key but only while access is running for that runtime; the key never enters the frame and guests see fixed failure text, not server messages. Frame state lives in the tab only. Verified with intercepted fixtures and Pebby's local guest API call; not verified over a real tunnel. | Connect with a key and use the same interface the owner sees, under the same sandbox, without installing anything. |
 | Either: recover a send | Failed/stopped prompt stays in the transcript; partial answers are excluded from later context | Owner Playground and guest chat restore failed/stopped prompts and exclude the entire unfinished exchange. Both owner and guest chat respect valid Retry-After delays. Owner waits span models in the same tab, retain editable drafts while the runtime is available, and never resend automatically. | Edit/retry the failed turn without manually copying text or duplicating its context; preserve partial output. |
 | Either: return to work | Owner conversations, drafts and settings are retained per model in workspace tab memory; guests retain work through same-key reconnects | Reload/closing the tab clears work. Owner Clear removes only the selected history, retaining its draft/settings; no undo or durable conversation storage. | Return to the same model without losing work or automatically sending; make deletion explicit and recoverable. |
 
@@ -51,9 +55,10 @@ unnecessary. Sharing copy distinguishes the local owner workspace from optional 
 Cloudflare guest access and explains why copying the owner address does not grant access.
 
 The design intent is a host owner completing the next unfinished step without
-learning the process topology first. The existing Manrope/Geist typography,
-4px spacing scale, teal action/status tokens and bordered white sections stay in
-place. Completion text is quieter than the next action. Relevant domain concepts
+learning the process topology first. At the time, the Manrope/Geist typography,
+4px spacing scale, teal action/status tokens and bordered white sections stayed
+in place; the later interface redesign replaced them with the instrument-panel
+system recorded in the improvement log. Completion text is quieter than the next action. Relevant domain concepts
 are runtime, local model, download, test prompt, serving endpoint and access grant;
 the useful signature is progress from local runtime to a tested, explicitly shared
 model—not a generic metrics dashboard.
@@ -82,7 +87,7 @@ model—not a generic metrics dashboard.
    eligible. Owner capacity/retry delays now survive navigation and model changes without automatically generating extra work.
 3. **Build one private sharing journey end to end.** Separate operator-only runtime,
    request history and management APIs from guest model/chat APIs. Add durable
-   access grants, revocation and per-client admission before internet exposure.
+   access grants, revocation and per-guest admission before internet exposure.
    Owner access must remain usable when guests fill capacity. Expose only selected
    models, not every installed model. An outbound tunnel or relay still needs an
    authenticated guest surface, HTTPS, and a public reachability check. Show
@@ -90,15 +95,16 @@ model—not a generic metrics dashboard.
    terminate access and release guest work. The temporary Cloudflare Quick Tunnel
    path now implements this boundary; stable hosting and verified identity remain
    separate follow-up work. Stop closes transport; Revoke ends durable key permission.
-4. **Give clients a complete invite-to-chat path.** Opening an invitation should
-   identify the host and model, establish access, then enter chat. Clients should
+4. **Give guests a complete address-to-chat path.** Opening the host's address and
+   entering the key should identify the host and model, establish access, then
+   enter chat. Clients should
    not run the owner's Java/Ollama launcher. Distinguish unreachable host, invalid
    or revoked access, incompatible protocol, unavailable model and full capacity.
    Keep the draft/transcript through reconnects; never silently switch host/model.
    Explain who operates the host and receives the submitted messages before the
-   first send. Guest access must not reveal owner telemetry or other clients' data.
+   first send. Guest access must not reveal owner telemetry or other guests' data.
 5. **Keep access invite-only.** Do not add host search, public listings or a registry.
-   Improve the private invitation, approval, expiry and revocation journey instead.
+   Improve the private key, approval, expiry and revocation journey instead.
    Explain that recipients can forward bearer keys and that a changed tunnel URL
    requires the host to send a new address.
 
@@ -148,29 +154,38 @@ Layer totals are not aggregate download size. Ollama may retain partial layers a
 multiple clients may share a pull, so cancellation is described as stopping this
 request. No real model was pulled during verification.
 
-## Local guest access implemented
+## Guest access implemented
 
-The owner selects a model, explicitly starts a separate guest listener, creates a
-key for one model and an expiry, and copies a one-time client link. Guest startup
-removes the key fragment before requesting session metadata. It explains who
-receives messages, shows a self-asserted host name and permitted model, and lets
-the client chat, Stop, reconnect or disconnect. Revocation and expiry terminate
-active guest streams; interruption keeps partial output and an editable draft.
-The incomplete exchange is excluded from later context to avoid duplicate retries.
+The owner selects a model, presses **Start hosting** to serve it and publish it
+through Cloudflare as one action, creates a key for that model and an expiry, then
+privately sends the guest the public address and the key as two separate things.
+Guest startup removes an `#access=` fragment before requesting session metadata,
+so the QR code beside a revealed key can open the page with the key already filled
+in. The page explains who receives messages, shows a self-asserted host name and
+permitted model, and lets the guest chat, Stop, reconnect or disconnect. Revocation
+and expiry terminate active guest streams; interruption keeps partial output and an
+editable draft. The incomplete exchange is excluded from later context to avoid
+duplicate retries.
 
-Local keys remain labeled local preview. Optional internet sharing now adds a
-verified temporary Cloudflare endpoint and explicitly separate internet keys.
-Guests see the relay privacy disclosure and self-asserted host identity before
-sending. Public chat uses WebSockets, with the same expiry, revocation, Stop and
-admission behavior as local chat. [Guest access](guest-access.md) documents its
-limits. Public host discovery is explicitly outside the product scope.
+Keys are durable and recoverable. **Show key** reads one back from the gateway at
+any time, so a host can re-send a key instead of reissuing it, and keys survive
+gateway and tunnel restarts. That is a deliberate trade: the gateway now stores key
+material at rest rather than only hashes, which [guest access](guest-access.md)
+documents in full. The local-preview channel is gone from the UI, because every
+listener binds to 127.0.0.1 and a local key could therefore only ever be used by
+someone already at the host's own keyboard; the gateway still enforces the
+`local`/`internet` binding as a security boundary and pre-existing local keys still
+authenticate. Guests see the relay privacy disclosure and self-asserted host
+identity before sending. Public chat uses WebSockets, with the same expiry,
+revocation, Stop and admission behavior as local chat. Public host discovery is
+explicitly outside the product scope.
 
 
 ## Testing a local model and recovering a prompt
 
 Playground now labels metadata admission **Available to try**. A completed,
 nonempty reply changes that to **Model answered a prompt** and offers **Set up
-client access** for the same model. This records evidence only within the current
+guest access** for the same model. This records evidence only within the current
 conversation, retained across in-app navigation; it does not benchmark memory fit or
 survive a reload. The link opens settings and never starts sharing or inference by itself.
 

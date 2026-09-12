@@ -6,7 +6,10 @@ import java.util.Set;
 
 /** Validates an origin without DNS; localhost is pinned to IPv4 loopback. */
 public record LocalOllamaEndpoint(String displayUrl, URI requestUrl) {
-    public static LocalOllamaEndpoint parse(String value) {
+    public static LocalOllamaEndpoint parse(String value) { return parse(value, "HOSTAI_OLLAMA_URL"); }
+
+    /** Same rules for every configured runtime origin; {@code setting} names the variable in errors. */
+    public static LocalOllamaEndpoint parse(String value, String setting) {
         try {
             URI uri = new URI(value);
             String host = uri.getHost();
@@ -16,14 +19,14 @@ public record LocalOllamaEndpoint(String displayUrl, URI requestUrl) {
                     || uri.getRawFragment() != null
                     || !(uri.getRawPath().isEmpty() || uri.getRawPath().equals("/"))
                     || uri.getPort() == 0 || uri.getPort() > 65535) {
-                throw new IllegalArgumentException("HOSTAI_OLLAMA_URL must be a loopback HTTP(S) origin without credentials, path, query, or fragment");
+                throw new IllegalArgumentException(setting + " must be a loopback HTTP(S) origin without credentials, path, query, or fragment");
             }
             URI pinned = new URI(uri.getScheme(), null,
                     host.equals("localhost") ? "127.0.0.1" : host, uri.getPort(), null, null, null);
             String display = value.endsWith("/") ? value.substring(0, value.length() - 1) : value;
             return new LocalOllamaEndpoint(display, pinned);
         } catch (URISyntaxException | NullPointerException e) {
-            throw new IllegalArgumentException("HOSTAI_OLLAMA_URL must be a valid loopback HTTP(S) origin");
+            throw new IllegalArgumentException(setting + " must be a valid loopback HTTP(S) origin");
         }
     }
 }

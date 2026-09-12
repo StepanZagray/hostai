@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { readChatStream } from "../lib/api";
+import { modelInterface } from "../lib/model-admission";
 import { prepareChatRequest, type ConversationTurn } from "../lib/conversation";
+import { guestInfer } from "./infer";
 import { guestSocket } from "./socket";
 import {
   guestFetch,
@@ -38,7 +40,11 @@ export function useGuestChat() {
   const active = useRef<ActiveChat | null>(null);
   const sequence = useRef(0);
   const retrySeconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
-  const ready = phase === "ready" && !!session?.available && retrySeconds === 0;
+  const ready =
+    phase === "ready" &&
+    !!session?.available &&
+    modelInterface(session) !== "unsupported" &&
+    retrySeconds === 0;
 
   function abortAll() {
     availableSession.current = null;
@@ -177,6 +183,7 @@ export function useGuestChat() {
     if (
       !ready ||
       !session ||
+      modelInterface(session) !== "chat" ||
       !key.current ||
       key.current !== sessionKey.current ||
       availableSession.current !== session ||
@@ -273,6 +280,26 @@ export function useGuestChat() {
     }
   }
 
+  /**
+   * One model-UI inference for the connected session. The key stays inside this hook:
+   * the frame host only receives the Response. Access failures update the access panel
+   * the same way a rejected chat does; per-request outcomes (400, 429) stay in the frame.
+   */
+  async function infer(input: unknown, signal: AbortSignal): Promise<Response> {
+    if (
+      !session ||
+      !key.current ||
+      key.current !== sessionKey.current ||
+      availableSession.current !== session ||
+      metadata.current
+    )
+      throw new Error("Guest access is not connected. Reconnect to use this interface.");
+    const response = await guestInfer(key.current, session, input, signal);
+    if ([401, 403, 503].includes(response.status) && availableSession.current === session)
+      rejectResponse(response);
+    return response;
+  }
+
   useEffect(() => {
     if (key.current !== null) void connect(key.current);
     return () => {
@@ -324,6 +351,7 @@ export function useGuestChat() {
     stop,
     pauseAccess,
     send,
+    infer,
     reconnect: () => {
       if (key.current !== null) void connect(key.current);
     },

@@ -1,4 +1,11 @@
-import { getJson, type HostStatus, type Model, type RequestRecord } from "./api";
+import {
+  getJson,
+  normalizeCapabilities,
+  normalizeModelUi,
+  type HostStatus,
+  type Model,
+  type RequestRecord,
+} from "./api";
 
 export interface HostSnapshot {
   status: HostStatus | null;
@@ -23,7 +30,12 @@ export async function readHostSnapshot(signal: AbortSignal): Promise<HostSnapsho
     requests.status === "fulfilled" && Array.isArray(requests.value?.requests);
   return {
     status: statusAvailable ? status.value : null,
-    models: discovered ? models.value.models : [],
+    models: discovered
+      ? models.value.models.map((model) => {
+          const ui = normalizeModelUi(model.ui);
+          return { ...model, ui, capabilities: normalizeCapabilities(model.capabilities, ui) };
+        })
+      : [],
     requests: historyAvailable ? requests.value.requests : [],
     errors: {
       status: !statusAvailable ? "Gateway status could not be refreshed." : null,

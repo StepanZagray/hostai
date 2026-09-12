@@ -13,6 +13,7 @@ import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.util.List;
+import tools.jackson.databind.JsonNode;
 
 public final class Api {
     private Api() {}
@@ -58,8 +59,57 @@ public final class Api {
                          int activeRequests, int maxConcurrentRequests,
                          long totalRequests, long failedRequests) {}
 
+    /** Where a model's own user interface lives; null when the model uses the default chat panel. */
+    public record ModelUi(String runtime, String entry) {}
+
+    /** Supported wire contracts, independent of presentation or who implements an agent loop. */
+    public record Capabilities(boolean chat, boolean infer) {
+        public static final Capabilities CHAT = new Capabilities(true, false);
+        public static final Capabilities INFER = new Capabilities(false, true);
+        public static final Capabilities NONE = new Capabilities(false, false);
+    }
+
+    @JsonInclude(JsonInclude.Include.ALWAYS)
     public record Model(String name, long sizeBytes, String parameterSize,
-                        String quantization, String modifiedAt, String chatUnavailableReason) {}
+                        String quantization, String modifiedAt, String chatUnavailableReason, ModelUi ui,
+                        Capabilities capabilities, JsonNode interaction) {
+        public Model(String name, long sizeBytes, String parameterSize, String quantization, String modifiedAt,
+                     String chatUnavailableReason, ModelUi ui, Capabilities capabilities) {
+            this(name, sizeBytes, parameterSize, quantization, modifiedAt, chatUnavailableReason, ui, capabilities, null);
+        }
+        public Model(String name, long sizeBytes, String parameterSize, String quantization, String modifiedAt,
+                     String chatUnavailableReason, ModelUi ui) {
+            this(name, sizeBytes, parameterSize, quantization, modifiedAt, chatUnavailableReason, ui,
+                    ui == null ? Capabilities.CHAT : Capabilities.INFER);
+        }
+        public Model(String name, long sizeBytes, String parameterSize, String quantization, String modifiedAt,
+                     String chatUnavailableReason) {
+            this(name, sizeBytes, parameterSize, quantization, modifiedAt, chatUnavailableReason, null);
+        }
+
+        @JsonIgnore
+        public boolean hasSupportedInterface() {
+            return ModelAdmission.reason(name) == null && ((ui != null && capabilities.infer())
+                    || (capabilities.chat() && chatUnavailableReason == null));
+        }
+    }
+
+    /** Opaque inference input; the gateway never interprets it. */
+    public record InferRequest(@NotBlank String model, @NotNull JsonNode input) {
+        @AssertTrue(message = "This model name is not supported by the local gateway")
+        @JsonIgnore
+        public boolean isModelSupported() {
+            return ModelAdmission.reason(model) == null;
+        }
+        @Override public String toString() { return "InferRequest[model=" + model + ", input=<redacted>]"; }
+    }
+
+    /** One streamed inference record. {@code done} is always present; {@code event} and {@code error} only when set. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record InferRecord(JsonNode event, boolean done, String error) {
+        public static InferRecord error(String message) { return new InferRecord(null, true, message); }
+        @Override public String toString() { return "InferRecord[done=" + done + ", event=<redacted>]"; }
+    }
 
     public record Models(List<Model> models, boolean connected) {}
 

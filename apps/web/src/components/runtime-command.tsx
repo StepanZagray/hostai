@@ -1,6 +1,6 @@
 import { css } from "../../styled-system/css";
 import { runtimeCommands } from "../lib/runtime-commands";
-import { CodeBlock, ExternalLink, muted } from "./ui";
+import { CodeBlock, ExternalLink, caption, muted } from "./ui";
 
 export function RuntimeCommand({
   endpoint,
@@ -15,33 +15,28 @@ export function RuntimeCommand({
   if (loading) return <p className={muted}>Checking your Ollama address…</p>;
   if (!commands)
     return (
-      <p className={muted}>
-        Ollama’s address is unavailable. Check the gateway connection before using terminal
-        commands.
-      </p>
+      <p className={muted}>Ollama’s address is unavailable. Check the gateway connection first.</p>
     );
   if (action === "serve" && !commands.serve)
     return (
       <p className={`${muted} ${css({ overflowWrap: "anywhere" })}`}>
-        HostAI expects HTTPS at {commands.endpoint}. Check your existing TLS endpoint and the Ollama
-        runtime behind it, then check the connection again. Starting Ollama alone does not provide
-        HTTPS.
+        HostAI expects HTTPS at {commands.endpoint}. Point that endpoint at your Ollama runtime and
+        check the connection again — starting Ollama alone does not provide HTTPS.
       </p>
     );
   return (
     <div className={css({ minW: "0", maxW: "full" })}>
-      <p className={`${muted} ${css({ mb: "3" })}`}>
+      <p className={`${muted} ${css({ mb: "2" })}`}>
         {action === "serve" ? (
           <>
-            <ExternalLink href="https://ollama.com/download">Install Ollama</ExternalLink> if
-            needed. If it is already running, check that its address matches HostAI before starting
-            another copy.
+            <ExternalLink href="https://ollama.com/download">Install Ollama</ExternalLink> if you do
+            not have it. If it is already running, check that it listens on this address.
           </>
         ) : (
-          "With Ollama running, this downloads a small first model to HostAI’s configured runtime. Refresh the library when it finishes."
+          "Pulls a small model into the runtime HostAI is configured to use. Refresh the library when it finishes."
         )}
       </p>
-      <p className={`${muted} ${css({ mb: "2" })}`}>Run in a Linux or macOS terminal:</p>
+      <p className={`${caption} ${css({ mb: "1.5" })}`}>Linux or macOS terminal</p>
       <CodeBlock
         code={commands[action]!}
         copyLabel={action === "serve" ? "Copy Ollama start command" : "Copy model download command"}

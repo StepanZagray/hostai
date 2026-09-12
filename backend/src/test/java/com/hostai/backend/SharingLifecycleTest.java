@@ -18,6 +18,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
@@ -58,7 +59,7 @@ class SharingLifecycleTest {
     private ExecutorService executor;
     private Scheduler scheduler;
     private ValidatorFactory validators;
-    private OllamaGateway gateway;
+    private RuntimeCatalog gateway;
     private ChatService owner;
 
     @BeforeEach void prepare() throws Exception {
@@ -79,8 +80,36 @@ class SharingLifecycleTest {
                 .codecs(codecs -> codecs.defaultCodecs().maxInMemorySize(BackendConfiguration.MAX_BODY_BYTES))
                 .build();
         // Stream deadlines must not be mistaken for an access lifecycle cancellation.
-        gateway = new OllamaGateway(client, scheduler, WAIT, Duration.ofSeconds(30), Duration.ofSeconds(60));
+        gateway = RuntimeCatalog.single(client, scheduler, WAIT, Duration.ofSeconds(30), Duration.ofSeconds(60));
         owner = new ChatService(registry, gateway);
+    }
+
+    @Test
+    void storedKeysAreReadableBackAcrossRestartUntilTheyAreRevokedOrExpire() {
+        Path directory = temporary.resolve("access");
+        SharingService first = service(directory);
+        start(first);
+        var kept = first.create("Keep this visitor", 168);
+        var expiring = first.create("Short visitor", 1);
+        var revoked = first.create("Revoke this visitor", 168);
+        assertThat(first.key(kept.grant().id()).token()).isEqualTo(kept.token());
+        assertThat(first.key(expiring.grant().id()).token()).isEqualTo(expiring.token());
+        first.revoke(revoked.grant().id());
+        assertRejected(HttpStatus.CONFLICT, () -> first.key(revoked.grant().id()));
+        assertRejected(HttpStatus.NOT_FOUND, () -> first.key(UUID.randomUUID()));
+        first.close();
+
+        SharingService restarted = service(directory);
+        // Stopped, unpublished, and freshly restarted: the key is still exactly the issued one.
+        assertThat(restarted.status().state()).isEqualTo("stopped");
+        assertThat(restarted.key(kept.grant().id()).token()).isEqualTo(kept.token());
+        assertThat(restarted.key(kept.grant().id()).toString()).doesNotContain(kept.token());
+        // Revocation drops key material; the two live keys keep theirs.
+        assertThat(restarted.status().grants()).filteredOn(AccessGrantStore.Grant::recoverable).hasSize(2);
+        clock.set(START.plus(Duration.ofHours(1)));
+        assertRejected(HttpStatus.CONFLICT, () -> restarted.key(expiring.grant().id()));
+        assertThat(restarted.key(kept.grant().id()).token()).isEqualTo(kept.token());
+        assertRejected(HttpStatus.CONFLICT, () -> restarted.key(revoked.grant().id()));
     }
 
     @ParameterizedTest @ValueSource(booleans = {false, true})
@@ -341,7 +370,7 @@ class SharingLifecycleTest {
         start(sharing);
         var invite = sharing.create("Visitor", 1);
         org.mockito.Mockito.doThrow(new IllegalStateException("Fixture assembly failure"))
-                .doCallRealMethod().when(probe).models();
+                .doCallRealMethod().when(probe).read();
         assertThrows(IllegalStateException.class, () -> sharing.chat(invite.token(), request(MODEL)).blockLast(WAIT));
         assertCompleted(sharing.chat(invite.token(), request(MODEL)).collectList().block(WAIT));
         awaitIdle();

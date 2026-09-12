@@ -32,9 +32,11 @@ final class SharingController {
     SharingService.Cleanup cleanup(@RequestBody Empty request) { return sharing.cleanup(); }
     @PostMapping(value = "/grants/{id}/revoke", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Status revoke(@PathVariable String id, @RequestBody Empty request) {
-        if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
-            throw new GatewayException(org.springframework.http.HttpStatus.BAD_REQUEST, "A grant UUID is required.");
-        return sharing.revoke(UUID.fromString(id));
+        return sharing.revoke(grantId(id));
+    }
+    @PostMapping(value = "/grants/{id}/key", consumes = MediaType.APPLICATION_JSON_VALUE)
+    SharingService.Key key(@PathVariable String id, @RequestBody Empty request) {
+        return sharing.key(grantId(id));
     }
     @PostMapping(value = "/internet/start", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Status startInternet(@RequestBody Empty request) { return sharing.startInternet(); }
@@ -51,6 +53,11 @@ final class SharingController {
     @PostMapping(value = "/requests/{id}/reject", consumes = MediaType.APPLICATION_JSON_VALUE)
     SharingService.Status rejectRequest(@PathVariable String id, @Valid @RequestBody Reject request) {
         return sharing.rejectRequest(requestId(id), request.code());
+    }
+    private static UUID grantId(String id) {
+        if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))
+            throw new GatewayException(org.springframework.http.HttpStatus.BAD_REQUEST, "A grant UUID is required.");
+        return UUID.fromString(id);
     }
     private static UUID requestId(String id) {
         if (!id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"))

@@ -1,3 +1,10 @@
+import {
+  normalizeCapabilities,
+  normalizeModelUi,
+  type ModelCapabilities,
+  type ModelUi,
+} from "../lib/api";
+
 export interface GuestSession {
   hostLabel: string;
   model: string;
@@ -8,6 +15,9 @@ export interface GuestSession {
   maxTokens: 1024;
   requestsPerMinute: 6;
   scope: "local-preview" | "temporary-internet";
+  /** A runtime interface; otherwise the default chat requires the chat capability. */
+  ui: ModelUi | null;
+  capabilities?: ModelCapabilities;
 }
 
 let invite: string | null = null;
@@ -40,7 +50,11 @@ export function parseSession(value: unknown): GuestSession | null {
     session.maxTokens === 1024 &&
     session.requestsPerMinute === 6 &&
     (session.scope === "local-preview" || session.scope === "temporary-internet")
-    ? (session as GuestSession)
+    ? {
+        ...(session as GuestSession),
+        ui: normalizeModelUi(session.ui),
+        capabilities: normalizeCapabilities(session.capabilities, normalizeModelUi(session.ui)),
+      }
     : null;
 }
 
@@ -67,10 +81,11 @@ export function responseProblem(status: number) {
 export { retryAfter } from "../lib/retry-after";
 
 export function guestFetch(
-  path: "/guest/v1/session" | "/guest/v1/chat",
+  path: "/guest/v1/session" | "/guest/v1/chat" | "/guest/v1/infer",
   key: string,
   init: RequestInit,
 ) {
+  const streaming = path !== "/guest/v1/session";
   return fetch(path, {
     ...init,
     credentials: "omit",
@@ -79,8 +94,8 @@ export function guestFetch(
     redirect: "error",
     referrerPolicy: "no-referrer",
     headers: {
-      Accept: path.endsWith("/chat") ? "application/x-ndjson" : "application/json",
-      ...(path.endsWith("/chat") ? { "Content-Type": "application/json" } : {}),
+      Accept: streaming ? "application/x-ndjson" : "application/json",
+      ...(streaming ? { "Content-Type": "application/json" } : {}),
       Authorization: `Bearer ${key}`,
     },
   });

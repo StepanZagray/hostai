@@ -1,5 +1,254 @@
 # Verification
 
+## Durable access keys and internet-first hosting — 12 September 2026
+
+`node scripts/backend.mjs test` passes 544 backend tests. Coverage added for
+access-grant storage schema v3: a recoverable key round-trips, `token(id)`
+returns exactly what `create()` returned, a v2 file on disk still loads and
+authenticates while reporting `recoverable: false`, `token(id)` is empty for
+revoked, expired and `createCommitted` grants, revocation erases the stored
+secret while keeping the hash, and key creation succeeds while internet sharing
+is off. `SharingHttpTest` exercises `POST /api/sharing/grants/{id}/key` against a
+real Spring listener: token equality, 404 unknown, 400 malformed UUID, 409
+revoked, and the same-origin guard.
+
+`pnpm check` and `pnpm build` pass. `pnpm test` passes 417 frontend tests,
+including four new `uqr` QR-encoding tests and three new proxy-allowlist cases
+for the key endpoint.
+
+`pnpm test:ui` on the isolated Sway/pixman display, per suite:
+`tests/sharing.spec.ts` + `tests/key-cleanup.spec.ts` 60 passed / 1 skipped;
+`tests/guest.spec.ts` + `tests/access-requests.spec.ts` 73 passed;
+`tests/guest-model-ui.spec.ts` + `tests/model-capabilities.spec.ts` included in a
+77-passed guest run. The skip is the env-gated `HOSTAI_INTEGRATION` hosting
+scenario. A full-suite run before the guest layout change reported 162 passed,
+2 failed, 89 skipped.
+
+**Those two failures are pre-existing and unrelated to this change**:
+`tests/model-ui.spec.ts:125` (API example shows `/api/infer`) and
+`tests/owner-memory.spec.ts:7` (per-model temperature retention). Both exercise
+Playground and runtime-command code that was already modified in this working
+tree before this change began. This was concluded from the change surface, not
+from a bisection, so it is evidence rather than proof.
+
+Keys are masked by default: a key row renders 24 bullet characters, the token is
+absent from the document until **Show key**, and **Copy key** reads the gateway
+and writes to the clipboard without rendering the credential. Tests assert the
+token is absent from `outerHTML` on load, after Create key, after Copy key,
+after Hide key, after revoke, after expiry and after navigating away, and absent
+from the URL, title, `localStorage` and `sessionStorage` throughout.
+
+The guest page now fills the viewport: `<main>` has no width cap, the transcript
+takes the remaining height and scrolls inside it, and session facts, the
+disclosure, access status, the retention note and the connection controls moved
+into a header **Session details** `<details>` menu carrying a state lamp. The
+menu content stays in the DOM when closed so the composer's
+`aria-describedby="guest-disclosure"` keeps resolving; a test asserts that.
+
+Design captures at 320 and 1440, light and dark, were regenerated and visually
+inspected; `zbarimg` decoded the rendered guest-address QR to the exact expected
+origin in all four variants. Two layout defects found in the first capture (a
+dead gap under the address block and the model facts stranded below the QR) and
+one 320px overflow regression from an 80-character key label were fixed and
+re-verified.
+
+Boundaries: no real Cloudflare tunnel was opened, so the merged **Start hosting**
+action was exercised only against the intercepted browser fixture and the Java
+stub — **the two-step start has not been verified against a live tunnel**. The
+`HOSTAI_INTEGRATION` sharing scenario remains skipped and now additionally
+requires a working connector. No real Ollama model was contacted. Storing
+recoverable key material means `grants.json` holds live guest credentials at
+rest; see [guest access](guest-access.md) for that trade.
+
+## UI modes, headless CLI and Python SDK — 12 September 2026
+
+`./mvnw -q test` passes 481 backend tests, including separately configured
+OpenAI-compatible text engines, HostAI chat/infer capabilities, required
+interaction metadata, Unicode limits, dedicated UI asset roots, and real CLI
+subprocesses against the Java HTTP gateway. Old Directory test reports left in
+`target/` are not included. No real Ollama/vLLM model was contacted.
+
+`pnpm test` passes 409 frontend tests; `pnpm test:cli` passes 10 tests.
+`pnpm check` and `pnpm build` pass. Isolated browser runs cover the two existing
+custom-owner scenarios, two custom-guest scenarios, and two new capability
+selection/unsupported/recovery scenarios. The latter were also checked at
+320, 768, 1024 and 1440 pixels. Screenshots under `test-results/capability-*`
+were visually inspected.
+
+The Python SDK passes 118 unit/real-loopback HTTP tests, Ruff checks and
+formatting. A wheel and source distribution build with `uv build --project
+python --no-sources`. Pebby installs the actual versioned wheel through its
+locked dependency, with no source-path import workaround. Its 20 server tests
+and 2 SDK integration tests pass. Tests cover all six operations on `/predict`
+and `/hostai/infer`, provider/schema failures, manifest docs, real UI asset
+bytes, safety checks and import/startup without loading torch or weights.
+
+`scripts/test-provider-sdk.py` passed against both a synthetic Python provider
+and the actual migrated Pebby server. It starts ephemeral provider/gateway
+listeners and verifies owner CLI discovery/description/inference, authorized
+local guest CLI use, stop-access rejection and gateway UI headers. The final
+Pebby run used the rebuilt SDK wheel and Java JAR, plus `--ui-test`: one real
+browser scenario loads Pebby's UI in HostAI, loads a shipped level, moves and
+undoes through the bridge, then checks model-library metadata. Captures were
+visually inspected:
+
+- `test-results/pebby-sdk-playground.png`
+- `test-results/pebby-sdk-models.png`
+
+Browser tests used the repository's verified private Sway/pixman display and
+device/session sandbox, never the live desktop. Test processes and temporary
+agent snapshots were cleaned up; screenshots are retained.
+
+Boundaries: Pebby tests explicitly use an absent checkpoint. They validate the
+real environment and SDK wiring, **not learned-policy quality or GPU inference**.
+The initial SDK supports synchronous single-response JSON inference, not async
+or streaming callbacks, training, or model lifecycle. The CLI supports local
+owner and local guest access, not the public tunnel WebSocket. MCP, a HostAI
+tool-execution loop, approvals and persistent provider sessions remain
+unimplemented. Old custom providers must add interaction docs before this
+gateway will admit them. The SDK is not published to PyPI, and its project
+license has not been chosen.
+
+Reproduce the final cross-project/UI check from HostAI:
+
+```sh
+uv run --project python python scripts/test-provider-sdk.py \
+  --java /path/to/jdk-26/bin/java \
+  --pebby-root /path/to/Pebby --ui-test
+```
+
+## Model UI and the runtime protocol — 11 September 2026
+
+Backend: `./mvnw -q verify` passes 459 tests with no failures, including the new
+`ModelUiHttpTest` (8 tests) and `ModelUiSocketTest` (3 tests). Both run a
+HostAI-protocol stub next to an Ollama stub on ephemeral loopback ports and cover
+the mixed-runtime catalog merge, `/api/infer` streaming and its runtime-specific
+error mapping, `/api/model-ui` path/extension validation and headers, the bridge
+script, guest infer/session/model-ui gating on the local channel, and, with a
+directly started internet-channel listener, the WebSocket `infer` envelope,
+malformed envelopes and the model-UI route behind the tunnel origin. No test
+contacts a real Ollama or downloads a model.
+
+Web: `pnpm --filter @hostai/web test` passes 405 tests in 19 files, and
+`pnpm --filter @hostai/web check` is clean.
+
+Isolated browser runs used the proved-private Sway/pixman display through
+`scripts/test-ui.py`. `apps/web/tests/model-ui.spec.ts` has two scenarios (a
+runtime interface replaces the chat panel and reaches `/api/infer`; the API
+example shows `/api/infer` for a runtime interface); they passed together with
+`workspace.spec.ts`, 24 scenarios in total. `apps/web/tests/guest-model-ui.spec.ts`
+has two scenarios (the frame replaces the guest composer and reaches
+`/guest/v1/infer` with the bearer key; temporary internet access sends the
+`infer` envelope as the first WebSocket message); both passed, and the full
+`guest.spec.ts` regression passed 51 scenarios, both against the rebuilt guest
+bundle served on 127.0.0.1:3002. Owner and guest API responses in these browser
+runs are intercepted fixtures. Captures are retained as
+`test-results/playground-model-ui.png` and `test-results/guest-model-ui.png`.
+
+Real runtime: Pebby's integration script (`uv run test_hostai.py --jar … --java …`
+from the Pebby repository) started this gateway's JAR against a real,
+checkpoint-backed Pebby server on ephemeral loopback ports with a temporary
+private access store. Its PASS lines cover discovery through `/hostai/manifest`
+with `ui` reported by `GET /api/models`; the model-UI page, bridge script and
+assets proxied with `Cache-Control: no-store` and a Content-Security-Policy
+header; 256 of 256 owner `/api/infer` predictions matching the model's direct
+output; the owner CLI; the guest API with a local key; and rejection of a
+revoked key.
+
+Pebby in Playground (real model, arrow keys): `apps/web/tests/pebby.spec.ts`,
+gated by `HOSTAI_PEBBY=1`, ran in the isolated harness against a real stack:
+Pebby `uv run serve.py --port 11440`, the gateway jar with
+`HOSTAI_OLLAMA_URL=http://127.0.0.1:11440` on port 8090, and the built web app
+(`node server.mjs`) on port 3210. Result: 1 passed. It proves the frame loads
+with `sandbox="allow-scripts"`, the grid takes keyboard focus once the bridge is
+ready, ArrowRight moves the object from row 3 column 3 to row 3 column 4, the Up
+button moves it to row 2 column 4, ArrowLeft to row 2 column 3, exactly one
+object remains, three real `POST /api/infer` requests reached the PyTorch
+checkpoint, the theme toggle reaches the frame, and no CSP violations occurred
+in the host document or the frame. Screenshots:
+`test-results/pebby-playground-light.png` and
+`test-results/pebby-playground-dark.png`. All three processes were stopped by
+PID afterwards.
+
+Not verified in this cycle: sharing a model interface over a real Cloudflare
+tunnel (only the stubbed WebSocket path in `ModelUiSocketTest` and the
+intercepted browser fixture were exercised), and Electron with a model
+interface. No Ollama model was downloaded or run.
+
+## Instrument-panel redesign — 10 September 2026
+
+Before any change, the working tree passed `pnpm check` and 333 unit tests. After
+the redesign the same checks pass, both production bundles build, and the isolated
+browser suite passes 232 scenarios with 13 skipped by their existing opt-in gates
+(three runtime-integration scenarios, one public-tunnel scenario, two rendering
+benchmarks, one sharing integration scenario, and the six new capture scenarios).
+Nothing failed on the final run.
+
+The browser runs used the proved-private Sway/pixman display through
+`scripts/test-ui.py`, against the built owner server on port 3001
+(`HOSTAI_UI_PORT=3001 node apps/web/server.mjs`) and the built guest bundle on
+port 3002, served by a loopback-only Python static server that maps `/` to
+`dist/guest/guest.html` the way the gateway does. `HOSTAI_TEST_URL` and
+`HOSTAI_GUEST_TEST_URL` were passed through the runner; the runner's
+`isolation.json` records the compositor environment, descriptors and single
+headless output for each run. The Electron scenario passed and its capture is
+retained as `test-results/electron-overview.png`.
+
+The first full run failed one scenario and passed 231. The multi-chunk answer
+test counts every `listitem` on the page and found 154 instead of 150: the new
+header signal strip was an ordered list with four items. The strip is now a
+labelled group of spans, and the rerun on the rebuilt bundles passed. Two test
+files changed on purpose: the guest bundle's computed-style assertion now expects
+Instrument Sans rather than Manrope, and `scripts/test-ui.py` forwards the
+`HOSTAI_CAPTURES` opt-in for the new `tests/captures.spec.ts`. That spec is
+skipped unless `HOSTAI_CAPTURES=1` and photographs every owner and guest surface
+in light and dark at 1440 and 320 pixels; the 50 captures from the final build are
+retained under `test-results/design/` and were inspected page by page. Every other
+string, landmark, id, element type and attribute order the suites assert was left
+unchanged, which the unit suite's static-markup tests and the browser suite confirm.
+
+Two guest constraints were re-verified by the existing suite rather than assumed:
+no inline `style` attribute, `<style>` element or inline script appears in the
+guest document, and the connected guest page keeps the composer fully in view at
+1440×1100 with the conversation pane capped at 560 pixels. The 44-pixel control
+assertion on the Guest access page still passes at 320, 768 and 1440 pixels.
+
+Boundaries: no real model was downloaded or run, no Cloudflare tunnel was opened,
+and the Java gateway was not changed or rebuilt for this cycle. Instrument Sans
+Variable ships weights 400–700, so the type system uses nothing heavier than 600.
+One early runner invocation was stopped during its build; it left an empty
+compositor runtime directory in `/tmp` which was removed by hand after confirming
+no process referenced it. No remote push or deployment was performed.
+
+## Redesigned interface, dark mode and guest vocabulary
+
+Baseline behaviour was preserved while the interface was rebuilt: 333 unit tests
+and 233 isolated browser scenarios pass, together with `pnpm check` and both owner
+and guest production builds. Browser runs used the proved-private Sway/pixman
+display against a built server on port 3001 and a static guest bundle on 3002, so
+hydration timing matches production rather than an on-demand dev transform. An
+earlier dev-server run failed three host-name-draft scenarios purely because
+`fill()` landed before hydration; instrumenting the draft provider showed one
+mount and no state change, and the same scenarios pass against the build.
+
+Two real defects surfaced from the suite rather than from inspection. Grid and
+card containers without `min-width: 0` let a long IPv6 setup command push its copy
+button outside the card at 320 and 768px, reproducing the clipping the existing
+bounds assertion was written to catch. Compact button and control variants dropped
+below the project's 44px touch target on the guest access page; the page-level
+override was restored and widened to selects and inputs.
+
+One browser scenario was genuinely racy and was corrected rather than retimed:
+it typed into the composer while a replacement-key check was still in flight, and
+a successful replacement clears the draft by design. It now waits for the
+connection to settle first, and passes on repeat runs.
+
+Dark mode was inspected page by page on the same private display; captures are
+retained as `test-results/dark-*.png`. Guest scenarios ran against the rebuilt
+guest bundle, confirming the Content-Security-Policy constraints still hold: no
+inline script or style attribute, no storage writes, and no access key in the
+document, title or history.
+
 ## Commands for the configured local runtime
 
 The custom-port browser regression fails against the previous production bundle:
@@ -448,7 +697,7 @@ Use separate terminals for the explicit fixture and Java service:
 ```sh
 node apps/web/tests/support/ollama-stub.mjs
 HOSTAI_OLLAMA_URL=http://127.0.0.1:11435 pnpm backend:dev
-pnpm dev
+pnpm dev:web
 HOSTAI_INTEGRATION=1 pnpm test:ui
 ```
 
@@ -1039,7 +1288,7 @@ No remote push or deployment was performed.
 
 ## Host model handoff and paused key status — 10 September 2026
 
-Client access now derives model intent from the current URL or the model last
+Guest access now derives model intent from the current URL or the model last
 reported by the gateway. The model picker updates the URL without adding history
 entries or resetting scroll. A mobile test preserves focus and a nonzero scroll
 position across the selection after animation frames settle. An unconfigured gateway requires explicit selection; stopping a configured
@@ -1051,10 +1300,10 @@ backend contract or authorization code changed.
 
 Claude Opus 5 High inspected the named host journey files and supplied three
 findings: model selection drift and missing recovery, misleading key validity
-badges, and test evidence not crossing into Client access. This cycle resolves the
+badges, and test evidence not crossing into Guest access. This cycle resolves the
 first two. The per-tab Playground test indicator remains separate, and unsaved
 host-name edits remain page-local. No claim of hardware fit or successful inference
-is added when starting client access. Active key permission is not a reachability
+is added when starting guest access. Active key permission is not a reachability
 or capacity guarantee; paused and unknown states explain the current limitation.
 
 Validation passed 301 frontend tests, type/lint/format checks and production bundle
@@ -1091,7 +1340,7 @@ a matching returned model/name and only the unchanged submitted draft. Polls and
 lost/rejected mutation responses cannot silently discard it. No browser storage
 or additional API is introduced; reload clears the unsaved draft.
 
-The Client access start form and Playground share a derived completed/nonempty
+The Guest access start form and Playground share a derived completed/nonempty
 answer predicate. Evidence is scoped to the model name and retained conversation;
 model-file digests are not tracked. Model changes select separate histories, and
 Clear/reload remove evidence. Starting remains available without a test response,

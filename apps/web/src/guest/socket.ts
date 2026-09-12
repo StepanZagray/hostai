@@ -4,18 +4,51 @@ const MAX_REQUEST_BYTES = 262_144;
 const MAX_FRAME_BYTES = 1_048_576;
 const encoder = new TextEncoder();
 
+/** A public chat generation: the envelope is `{ key, request }`. */
 export function guestSocket(key: string, body: string, signal: AbortSignal): Promise<Response> {
-  if (signal.aborted) return Promise.reject(new DOMException("Operation aborted", "AbortError"));
-  if (!key.length || key.length > 256 || encoder.encode(body).byteLength > MAX_REQUEST_BYTES)
-    return Promise.reject(new Error("Invalid client request."));
-  let envelope: string;
   try {
-    envelope = JSON.stringify({ key, request: JSON.parse(body) });
-    if (encoder.encode(envelope).byteLength > MAX_REQUEST_BYTES + 1024)
-      throw new Error("Invalid client request.");
+    JSON.parse(body);
   } catch {
     return Promise.reject(new Error("Invalid client request."));
   }
+  return openGuestStream(key, "request", body, signal);
+}
+
+/**
+ * A public model-UI inference: the envelope is `{ key, infer: { model, input } }` and
+ * the frames are infer records, so the same Response plumbing applies.
+ */
+export function guestInferSocket(
+  key: string,
+  model: string,
+  input: unknown,
+  signal: AbortSignal,
+): Promise<Response> {
+  let payload: string;
+  try {
+    // Structured clone can carry values JSON cannot (BigInt); the frame gets a plain error.
+    payload = JSON.stringify({ model, input });
+    if (typeof payload !== "string") throw new Error("Invalid client request.");
+  } catch {
+    return Promise.reject(new Error("Invalid client request."));
+  }
+  return openGuestStream(key, "infer", payload, signal);
+}
+
+/** `payload` is validated JSON text; it becomes the `field` member after the key. */
+function openGuestStream(
+  key: string,
+  field: "request" | "infer",
+  payload: string,
+  signal: AbortSignal,
+): Promise<Response> {
+  if (signal.aborted) return Promise.reject(new DOMException("Operation aborted", "AbortError"));
+  if (!key.length || key.length > 256 || encoder.encode(payload).byteLength > MAX_REQUEST_BYTES)
+    return Promise.reject(new Error("Invalid client request."));
+  // The key is the first member so the listener can authenticate before reading the rest.
+  let envelope = `{"key":${JSON.stringify(key)},"${field}":${payload}}`;
+  if (encoder.encode(envelope).byteLength > MAX_REQUEST_BYTES + 1024)
+    return Promise.reject(new Error("Invalid client request."));
   const url = new URL("/guest/v1/chat-stream", window.location.href);
   url.protocol = "wss:";
 

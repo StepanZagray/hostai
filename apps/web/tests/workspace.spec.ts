@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { hostFixture } from "./support/host-fixture";
 
 test("offline host has useful setup and disabled generation", async ({ page }) => {
@@ -40,7 +40,7 @@ test("model search, navigation and streamed conversation", async ({ page }) => {
   await expect(page.getByRole("status").filter({ hasText: "7 output tokens" })).toBeVisible();
   await page.screenshot({ path: "test-results/playground-completed.png", fullPage: true });
   await page.getByRole("button", { name: "Clear", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "What’s on your mind?" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No messages yet" })).toBeVisible();
   expect(errors).toEqual([]);
 });
 
@@ -89,7 +89,7 @@ test("mobile navigation and layout fit the viewport", async ({ page }) => {
   for (const width of [320, 768, 1024, 1440]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: "Host overview" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
     await expect(page.getByText("Gateway online", { exact: true })).toBeVisible();
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
@@ -138,7 +138,7 @@ test("activity refresh failure keeps chat usable and recovers on retry", async (
   failed = true;
   await page.getByRole("button", { name: "Refresh activity" }).click();
   await expect(page.getByRole("heading", { name: "Request activity unavailable" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "A quiet workspace" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "No requests yet" })).toHaveCount(0);
   await expect(page.getByText("Gateway online", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "Playground", exact: true }).click();
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("Hello");
@@ -176,7 +176,7 @@ test("failed model discovery is unavailable, not an empty library", async ({ pag
   await page.getByRole("link", { name: "Playground", exact: true }).click();
   await expect(page.getByRole("button", { name: "Send message" })).toBeDisabled();
   await page.getByRole("link", { name: "Request activity", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "A quiet workspace" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "No requests yet" })).toBeVisible();
 });
 
 test("failed status refresh never claims readiness from a successful model fetch", async ({
@@ -512,22 +512,18 @@ test("oversized new messages remain editable and show validation before sending"
   expect(calls).toBe(1);
 });
 
-test("page headings stay inside the mobile content area", async ({ page }) => {
+test("page text stays inside the mobile content area", async ({ page }) => {
   await hostFixture(page);
   await page.setViewportSize({ width: 320, height: 1000 });
-  for (const path of ["/", "/models", "/playground", "/activity", "/connection"]) {
-    await page.goto(path);
-    await expect(page.getByText("Gateway online", { exact: true })).toBeVisible();
-    await page.evaluate(() => document.fonts.ready.then(() => undefined));
-    const description = page.getByRole("heading", { level: 1 }).locator("..").locator("p");
-    await expect(description).toBeVisible();
-    const bounds = await description.evaluate((element) => {
-      const text = document.createRange();
-      text.selectNodeContents(element);
+  const insideMain = async (text: Locator) => {
+    await expect(text).toBeVisible();
+    const bounds = await text.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
       const main = document.querySelector("main")!.getBoundingClientRect();
       return {
-        left: text.getBoundingClientRect().left,
-        right: text.getBoundingClientRect().right,
+        left: range.getBoundingClientRect().left,
+        right: range.getBoundingClientRect().right,
         mainLeft: main.left,
         mainRight: main.right,
         viewport: document.documentElement.clientWidth,
@@ -536,11 +532,21 @@ test("page headings stay inside the mobile content area", async ({ page }) => {
     expect(bounds.left).toBeGreaterThanOrEqual(bounds.mainLeft);
     expect(bounds.right).toBeLessThanOrEqual(bounds.mainRight);
     expect(bounds.mainRight).toBeLessThanOrEqual(bounds.viewport);
-    if (path === "/playground") {
-      await page.screenshot({ path: "test-results/mobile-playground-heading.png", fullPage: true });
-      await page.screenshot({ path: "test-results/mobile-playground-viewport.png" });
-    }
+  };
+  for (const path of ["/", "/models", "/activity", "/connection"]) {
+    await page.goto(path);
+    await expect(page.getByText("Gateway online", { exact: true })).toBeVisible();
+    await page.evaluate(() => document.fonts.ready.then(() => undefined));
+    await insideMain(page.getByRole("heading", { level: 1 }).locator("..").locator("p"));
   }
+  // Playground carries no page heading: the model panel starts the page, so its
+  // own copy is what has to stay inside the content area.
+  await page.goto("/playground");
+  await expect(page.getByText("Gateway online", { exact: true })).toBeVisible();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await insideMain(page.getByText("Everything you send stays on this machine.", { exact: true }));
+  await page.screenshot({ path: "test-results/mobile-playground-heading.png", fullPage: true });
+  await page.screenshot({ path: "test-results/mobile-playground-viewport.png" });
 });
 
 const cloudReason = "Cloud models are not supported by this local gateway.";

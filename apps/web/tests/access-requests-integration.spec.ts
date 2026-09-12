@@ -1,7 +1,22 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 // Explicit disposable backend/model fixture only. The public tunnel is real;
 // No models are downloaded; guest access uses a directly shared link and host approval.
+/**
+ * The guest's connection controls live in the header's session menu, a native
+ * <details> that starts closed. Guard against an already-open menu (clicking the
+ * summary toggles), and close it afterwards so the sheet cannot cover the page.
+ */
+async function useGuestMenu(page: Page, name: string) {
+  const summary = page.locator("#guest-session-menu");
+  if (!(await summary.evaluate((node) => !!node.closest("details")?.open))) await summary.click();
+  await page.getByRole("button", { name, exact: true }).click();
+  await summary.evaluate((node) => {
+    const details = node.closest("details");
+    if (details?.open) details.open = false;
+  });
+}
+
 test.skip(
   process.env.HOSTAI_INTEGRATION !== "1" || process.env.HOSTAI_PUBLIC_INTEGRATION !== "1",
   "Requires the isolated runtime and explicit opt-in to a real public tunnel",
@@ -51,6 +66,9 @@ test("public guest requests access, host chooses permission, and revocation ends
     await expect(inbox.getByText("Accepting access requests", { exact: true })).toBeVisible();
 
     await guest.goto(publicUrl);
+    // The key form is the primary way in; asking the host waits behind its disclosure.
+    await expect(guest.getByLabel("Access key", { exact: true })).toBeFocused();
+    await guest.getByText("No key? Ask the host for access", { exact: true }).click();
     await guest.getByLabel("Your name", { exact: true }).fill("Fixture visitor");
     await guest.getByRole("button", { name: "Request access", exact: true }).click();
     await expect(
@@ -129,7 +147,7 @@ test("public guest requests access, host chooses permission, and revocation ends
       .toBe(0);
     // A midstream interruption cannot identify its cause until a new metadata check.
     // Reconnect is explicit and must reveal revocation without starting inference.
-    await guest.getByRole("button", { name: "Reconnect", exact: true }).click();
+    await useGuestMenu(guest, "Reconnect");
     await expect(
       guest.getByText("The host revoked this request’s access.", { exact: true }),
     ).toBeVisible({ timeout: 12_000 });
